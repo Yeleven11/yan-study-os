@@ -934,37 +934,13 @@ export default function StudyDashboard() {
   const maxSubjectSeconds = Math.max(...Object.values(subjectTotals), 1);
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
-      <div className="mx-auto w-full max-w-[1780px] px-4 py-4 md:px-6 md:py-6">
-        <header className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--panel-border)] bg-[var(--panel)] px-4 py-3">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Yan Study OS</p>
-            <h1 className="text-sm font-semibold">80-Day Command Center</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-              Mode: {repository.mode.toUpperCase()}
-            </span>
-            <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-              Pending sync: {offlineQueue.length}
-            </span>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded border border-[var(--panel-border)] px-2 py-1 transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
-        {statusMessage ? (
-          <div className="mb-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
-            {statusMessage}
-          </div>
-        ) : null}
-
-        <div className="grid gap-4 xl:grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px]">
+    <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
+      <div className="h-full w-full p-3 md:p-4">
+        <div
+          className={`grid h-full min-h-0 gap-4 transition duration-200 lg:grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px] ${
+            isExamHoverOpen ? "blur-[2px]" : ""
+          }`}
+        >
           <TodoRail
             activeTodos={activeTodos}
             archivedTodos={archivedTodos}
@@ -973,9 +949,9 @@ export default function StudyDashboard() {
             onRestore={handleRestoreTodo}
           />
 
-          <main className="grid auto-rows-min gap-4">
+          <main className="grid h-full min-h-0 gap-4 lg:grid-rows-[minmax(170px,0.85fr)_minmax(270px,1.35fr)_minmax(220px,1fr)]">
             <section
-              className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
+              className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
               onMouseEnter={() => setIsExamHoverOpen(true)}
               onMouseLeave={() => setIsExamHoverOpen(false)}
             >
@@ -990,6 +966,22 @@ export default function StudyDashboard() {
                   className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                 >
                   Expand
+                </button>
+              </div>
+
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+                  Mode: {repository.mode.toUpperCase()}
+                </span>
+                <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+                  Pending Sync: {offlineQueue.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded border border-[var(--panel-border)] px-2 py-1 transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                >
+                  Logout
                 </button>
               </div>
 
@@ -1025,7 +1017,7 @@ export default function StudyDashboard() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
@@ -1079,8 +1071,8 @@ export default function StudyDashboard() {
               </p>
             </section>
 
-            <div className="grid gap-4 2xl:grid-cols-2">
-              <section className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-2">
+              <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Timer</p>
@@ -1162,7 +1154,7 @@ export default function StudyDashboard() {
                 </p>
               </section>
 
-              <section className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+              <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Cumulative Time</p>
@@ -1213,6 +1205,12 @@ export default function StudyDashboard() {
           />
         </div>
       </div>
+
+      {statusMessage ? (
+        <div className="pointer-events-none fixed bottom-3 left-3 z-40 max-w-[460px] rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
+          {statusMessage}
+        </div>
+      ) : null}
 
       {isExamHoverOpen ? (
         <>
@@ -1443,7 +1441,7 @@ function TodoRail({
   };
 
   return (
-    <aside className="h-full min-h-[660px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 xl:sticky xl:top-6 xl:min-h-[calc(100vh-170px)]">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
@@ -1541,7 +1539,7 @@ function TodoRail({
         </button>
       </div>
 
-      <div className="max-h-[420px] space-y-2 overflow-auto pr-1 xl:max-h-[calc(100vh-360px)]">
+      <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
         {(showArchive ? archivedTodos : activeTodos).map((todo) => (
           <article
             key={todo.id}
@@ -1591,7 +1589,7 @@ function StudyLogRail({
   onExpand: () => void;
 }) {
   return (
-    <aside className="h-full min-h-[660px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 xl:sticky xl:top-6 xl:min-h-[calc(100vh-170px)]">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Log</p>
@@ -1606,7 +1604,7 @@ function StudyLogRail({
         </button>
       </div>
 
-      <div className="max-h-[520px] space-y-2 overflow-auto pr-1 xl:max-h-[calc(100vh-280px)]">
+      <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
         {sortedSessions.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No study sessions logged yet.</p>
         ) : (
