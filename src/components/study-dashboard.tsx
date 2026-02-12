@@ -211,14 +211,6 @@ function monthDayToIso(monthDay: string, timeValue: string): string | null {
   return candidate.toISOString();
 }
 
-function formatDayLabel(dateKey: string): string {
-  return new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
 function readStoredTimer(): ActiveTimerState | null {
   if (typeof window === "undefined") {
     return null;
@@ -931,7 +923,12 @@ export default function StudyDashboard() {
   return (
     <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <div className="h-full w-full p-3 md:p-4">
-        <div className="grid h-full min-h-0 gap-4 grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px]">
+        <div
+          className="grid h-full min-h-0 gap-4"
+          style={{
+            gridTemplateColumns: "320px minmax(0, 1fr) 320px",
+          }}
+        >
           <TodoRail
             activeTodos={activeTodos}
             archivedTodos={archivedTodos}
@@ -940,8 +937,13 @@ export default function StudyDashboard() {
             onRestore={handleRestoreTodo}
           />
 
-          <main className="grid h-full min-h-0 gap-4 grid-rows-[minmax(170px,0.85fr)_minmax(270px,1.35fr)_minmax(220px,1fr)]">
-            <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+          <main
+            className="grid h-full min-h-0 gap-4 overflow-hidden"
+            style={{
+              gridTemplateRows: "220px minmax(0, 1fr) 280px",
+            }}
+          >
+            <section className="h-full min-h-0 overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
@@ -972,7 +974,10 @@ export default function StudyDashboard() {
                 </button>
               </div>
 
-              <div className="grid gap-2 lg:grid-cols-3">
+              <div
+                className="grid gap-2"
+                style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+              >
                 {nearestExams.map((exam) => {
                   const countdown = getCountdown(exam, new Date(timePulse));
                   return (
@@ -1004,7 +1009,7 @@ export default function StudyDashboard() {
               </div>
             </section>
 
-            <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
@@ -1019,7 +1024,8 @@ export default function StudyDashboard() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(15,minmax(0,1fr))] md:grid-cols-[repeat(20,minmax(0,1fr))] xl:grid-cols-[repeat(24,minmax(0,1fr))]">
+              <div className="min-h-0 flex-1 overflow-auto pr-1">
+                <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(15,minmax(0,1fr))] md:grid-cols-[repeat(20,minmax(0,1fr))] xl:grid-cols-[repeat(24,minmax(0,1fr))]">
                 {calendarDays.map((dateKey) => {
                   const aggregate = dayAggregates[dateKey];
                   const exams = examsByDate[dateKey] || [];
@@ -1032,14 +1038,13 @@ export default function StudyDashboard() {
                     <button
                       key={dateKey}
                       type="button"
+                      title={`${dateKey} • ${
+                        aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "No study"
+                      }`}
                       className="group relative aspect-square rounded-[4px] border border-white/5 transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       style={{ backgroundColor: dominantColor }}
                       aria-label={dateKey}
                     >
-                      <span className="pointer-events-none absolute left-1/2 top-0 z-10 hidden -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-[10px] text-[var(--text)] shadow-lg group-hover:block">
-                        {formatDayLabel(dateKey)} •{" "}
-                        {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "No study"}
-                      </span>
                       {exams.length > 0 ? (
                         <span
                           className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
@@ -1052,13 +1057,17 @@ export default function StudyDashboard() {
                     </button>
                   );
                 })}
+                </div>
               </div>
               <p className="mt-3 text-xs text-[var(--muted)]">
                 120-day forward study calendar. Color = most studied subject for the day.
               </p>
             </section>
 
-            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-2">
+            <div
+              className="grid h-full min-h-0 gap-4"
+              style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}
+            >
               <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
