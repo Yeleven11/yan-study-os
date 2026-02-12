@@ -160,6 +160,65 @@ function datetimeLocalToIso(input: string): string {
   return date.toISOString();
 }
 
+function monthDayToIso(monthDay: string, timeValue: string): string | null {
+  const trimmed = monthDay.trim();
+  const match = /^(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+
+  if (!match) {
+    return null;
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const [hourString, minuteString] = (timeValue || "18:00").split(":");
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+
+  if (
+    Number.isNaN(hour) ||
+    Number.isNaN(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  const now = new Date();
+  let year = now.getFullYear();
+  let candidate = new Date(year, month - 1, day, hour, minute, 0, 0);
+
+  if (
+    candidate.getMonth() !== month - 1 ||
+    candidate.getDate() !== day ||
+    candidate.getHours() !== hour ||
+    candidate.getMinutes() !== minute
+  ) {
+    return null;
+  }
+
+  if (candidate.getTime() < now.getTime()) {
+    year += 1;
+    candidate = new Date(year, month - 1, day, hour, minute, 0, 0);
+  }
+
+  return candidate.toISOString();
+}
+
+function formatDayLabel(dateKey: string): string {
+  return new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function readStoredTimer(): ActiveTimerState | null {
   if (typeof window === "undefined") {
     return null;
@@ -330,6 +389,7 @@ export default function StudyDashboard() {
   const [data, setData] = useState<AppData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<ExpandedCard>(null);
+  const [isExamHoverOpen, setIsExamHoverOpen] = useState(false);
 
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(() =>
     readStoredTimer(),
@@ -560,6 +620,10 @@ export default function StudyDashboard() {
 
   const nearestExams = useMemo(() => {
     return data ? getNearestExams(data.exams, 3, new Date(timePulse)) : [];
+  }, [data, timePulse]);
+
+  const allUpcomingExams = useMemo(() => {
+    return data ? getNearestExams(data.exams, 99, new Date(timePulse)) : [];
   }, [data, timePulse]);
 
   const calendarDays = useMemo(
@@ -900,7 +964,7 @@ export default function StudyDashboard() {
           </div>
         ) : null}
 
-        <div className="grid gap-4 xl:grid-cols-[340px,1fr]">
+        <div className="grid gap-4 xl:grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px]">
           <TodoRail
             activeTodos={activeTodos}
             archivedTodos={archivedTodos}
@@ -910,7 +974,11 @@ export default function StudyDashboard() {
           />
 
           <main className="grid auto-rows-min gap-4">
-            <section className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <section
+              className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
+              onMouseEnter={() => setIsExamHoverOpen(true)}
+              onMouseLeave={() => setIsExamHoverOpen(false)}
+            >
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
@@ -985,21 +1053,14 @@ export default function StudyDashboard() {
                     <button
                       key={dateKey}
                       type="button"
-                      title={`${dateKey}\n${
-                        aggregate?.totalSec
-                          ? `${formatDuration(aggregate.totalSec)} studied`
-                          : "No logged study"
-                      }${
-                        exams.length
-                          ? `\nExam: ${exams
-                              .map((exam) => `${SUBJECT_BY_ID[exam.subjectId].shortName} ${exam.paper}`)
-                              .join(", ")}`
-                          : ""
-                      }`}
                       className="group relative aspect-square rounded-[4px] border border-white/5 transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       style={{ backgroundColor: dominantColor }}
                       aria-label={dateKey}
                     >
+                      <span className="pointer-events-none absolute left-1/2 top-0 z-10 hidden -translate-x-1/2 -translate-y-[110%] whitespace-nowrap rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-[10px] text-[var(--text)] shadow-lg group-hover:block">
+                        {formatDayLabel(dateKey)} •{" "}
+                        {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "No study"}
+                      </span>
                       {exams.length > 0 ? (
                         <span
                           className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
@@ -1144,48 +1205,52 @@ export default function StudyDashboard() {
               </section>
             </div>
 
-            <section className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Log</p>
-                  <h2 className="text-sm font-semibold">Recent Sessions</h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setExpandedCard("log")}
-                  className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                >
-                  Expand
-                </button>
-              </div>
-
-              <div className="max-h-[260px] space-y-2 overflow-auto pr-1">
-                {sortedSessions.length === 0 ? (
-                  <p className="text-sm text-[var(--muted)]">No study sessions logged yet.</p>
-                ) : (
-                  sortedSessions.slice(0, 12).map((session) => (
-                    <article
-                      key={session.id}
-                      className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2"
-                    >
-                      <div className="mb-2 h-1 rounded" style={{ backgroundColor: SUBJECT_BY_ID[session.subjectId].color }} />
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
-                        <span className="font-semibold text-[var(--text)]">
-                          {SUBJECT_BY_ID[session.subjectId].name}
-                        </span>
-                        <span>{formatDuration(session.durationSec)}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-[var(--muted)]">
-                        {formatDateTime(session.startedAt)}
-                      </p>
-                    </article>
-                  ))
-                )}
-              </div>
-            </section>
           </main>
+
+          <StudyLogRail
+            sortedSessions={sortedSessions}
+            onExpand={() => setExpandedCard("log")}
+          />
         </div>
       </div>
+
+      {isExamHoverOpen ? (
+        <>
+          <div className="pointer-events-none fixed inset-0 z-30 bg-black/30 backdrop-blur-sm transition-opacity duration-200" />
+          <div className="pointer-events-none fixed inset-x-4 top-20 z-40 mx-auto w-full max-w-[780px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)]/95 p-4 shadow-2xl">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
+              Upcoming Exam Countdown
+            </p>
+            <div className="mt-3 max-h-[68vh] space-y-2 overflow-auto pr-1">
+              {allUpcomingExams.map((exam) => {
+                const countdown = getCountdown(exam, new Date(timePulse));
+                return (
+                  <article
+                    key={`hover-${exam.id}`}
+                    className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-[var(--muted)]">
+                        {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
+                      </p>
+                      <p className="text-xs text-[var(--muted)]">{formatDateTime(exam.startsAt)}</p>
+                    </div>
+                    <div className="mt-2 h-1.5 rounded bg-black/35">
+                      <div
+                        className="h-full rounded transition-all duration-300"
+                        style={{
+                          width: `${Math.max(2, countdown.progressRatio * 100)}%`,
+                          backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
+                        }}
+                      />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : null}
 
       <FocusModal
         open={expandedCard !== null}
@@ -1336,22 +1401,32 @@ function TodoRail({
   const [adding, setAdding] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [title, setTitle] = useState("");
-  const [deadline, setDeadline] = useState("");
+  const [deadlineMonthDay, setDeadlineMonthDay] = useState("");
+  const [deadlineTime, setDeadlineTime] = useState("18:00");
+  const [todoError, setTodoError] = useState<string | null>(null);
   const [subjectId, setSubjectId] = useState<SubjectId>(SUBJECT_IDS[0]);
   const [ultraPriority, setUltraPriority] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!title.trim() || !deadline) {
+    if (!title.trim() || !deadlineMonthDay.trim()) {
+      setTodoError("Please enter task name and deadline (MM-DD).");
       return;
     }
+
+    const parsedDeadline = monthDayToIso(deadlineMonthDay, deadlineTime);
+    if (!parsedDeadline) {
+      setTodoError("Deadline format should be MM-DD. Example: 04-27");
+      return;
+    }
+    setTodoError(null);
 
     const todo: TodoItem = {
       id: crypto.randomUUID(),
       title: title.trim(),
       subjectId,
-      deadline: datetimeLocalToIso(deadline),
+      deadline: parsedDeadline,
       ultraPriority,
       completed: false,
       archived: false,
@@ -1361,13 +1436,14 @@ function TodoRail({
     await onAddTodo(todo);
 
     setTitle("");
-    setDeadline("");
+    setDeadlineMonthDay("");
+    setDeadlineTime("18:00");
     setUltraPriority(false);
     setAdding(false);
   };
 
   return (
-    <aside className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+    <aside className="h-full min-h-[660px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 xl:sticky xl:top-6 xl:min-h-[calc(100vh-170px)]">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
@@ -1393,9 +1469,16 @@ function TodoRail({
             className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
           />
           <input
-            type="datetime-local"
-            value={deadline}
-            onChange={(event) => setDeadline(event.target.value)}
+            type="text"
+            value={deadlineMonthDay}
+            onChange={(event) => setDeadlineMonthDay(event.target.value)}
+            placeholder="MM-DD"
+            className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+          />
+          <input
+            type="time"
+            value={deadlineTime}
+            onChange={(event) => setDeadlineTime(event.target.value)}
             className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
           />
           <select
@@ -1417,6 +1500,13 @@ function TodoRail({
             />
             Ultra priority
           </label>
+          {todoError ? (
+            <p className="text-xs text-[#ff9896]">{todoError}</p>
+          ) : (
+            <p className="text-xs text-[var(--muted)]">
+              Deadline uses month-day only. Year is inferred automatically.
+            </p>
+          )}
           <button
             type="submit"
             className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
@@ -1451,7 +1541,7 @@ function TodoRail({
         </button>
       </div>
 
-      <div className="max-h-[72vh] space-y-2 overflow-auto pr-1">
+      <div className="max-h-[420px] space-y-2 overflow-auto pr-1 xl:max-h-[calc(100vh-360px)]">
         {(showArchive ? archivedTodos : activeTodos).map((todo) => (
           <article
             key={todo.id}
@@ -1488,6 +1578,59 @@ function TodoRail({
         {(showArchive ? archivedTodos : activeTodos).length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No todos in this view.</p>
         ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function StudyLogRail({
+  sortedSessions,
+  onExpand,
+}: {
+  sortedSessions: StudySession[];
+  onExpand: () => void;
+}) {
+  return (
+    <aside className="h-full min-h-[660px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 xl:sticky xl:top-6 xl:min-h-[calc(100vh-170px)]">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Log</p>
+          <h2 className="text-sm font-semibold">Recent Sessions</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onExpand}
+          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+        >
+          Expand
+        </button>
+      </div>
+
+      <div className="max-h-[520px] space-y-2 overflow-auto pr-1 xl:max-h-[calc(100vh-280px)]">
+        {sortedSessions.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No study sessions logged yet.</p>
+        ) : (
+          sortedSessions.map((session) => (
+            <article
+              key={session.id}
+              className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2"
+            >
+              <div
+                className="mb-2 h-1 rounded"
+                style={{ backgroundColor: SUBJECT_BY_ID[session.subjectId].color }}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
+                <span className="font-semibold text-[var(--text)]">
+                  {SUBJECT_BY_ID[session.subjectId].name}
+                </span>
+                <span>{formatDuration(session.durationSec)}</span>
+              </div>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                {formatDateTime(session.startedAt)}
+              </p>
+            </article>
+          ))
+        )}
       </div>
     </aside>
   );
