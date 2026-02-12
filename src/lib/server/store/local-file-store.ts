@@ -7,6 +7,10 @@ import type { DashboardStore } from "./types";
 
 const DATA_DIRECTORY = path.join(process.cwd(), "runtime-data");
 const DATA_FILE_PATH = path.join(DATA_DIRECTORY, "yan-study-os.json");
+const EXAMS_BACKUP_FILE_PATH = path.join(
+  DATA_DIRECTORY,
+  "yan-study-os-exams-backup.json",
+);
 
 let writeQueue = Promise.resolve();
 
@@ -57,6 +61,21 @@ async function writeData(data: AppData): Promise<void> {
 
   writeQueue = writeQueue.then(() =>
     writeFile(DATA_FILE_PATH, JSON.stringify(normalized, null, 2), "utf-8"),
+  );
+
+  await writeQueue;
+}
+
+async function writeExamBackup(data: AppData): Promise<void> {
+  await ensureDataFile();
+  const normalized = normalizeData(data);
+  const payload = {
+    savedAt: new Date().toISOString(),
+    exams: normalized.exams,
+  };
+
+  writeQueue = writeQueue.then(() =>
+    writeFile(EXAMS_BACKUP_FILE_PATH, JSON.stringify(payload, null, 2), "utf-8"),
   );
 
   await writeQueue;
@@ -125,6 +144,7 @@ function createLocalFileStore(): DashboardStore {
         (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
       );
       await writeData(data);
+      await writeExamBackup(data);
     },
   };
 }

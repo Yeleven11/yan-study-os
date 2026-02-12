@@ -43,7 +43,13 @@ type ExpandedCard = "calendar" | "timer" | "totals" | "log" | null;
 
 const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
+const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
 const INITIAL_NOW_MS = Date.now();
+type ExamTimeSlot = "09:00" | "13:00";
+type ExamDraftRow = Exam & {
+  monthDay: string;
+  timeSlot: ExamTimeSlot;
+};
 
 function createOfflineAction(
   action: Omit<OfflineAction, "id" | "createdAt">,
@@ -148,16 +154,24 @@ function applyOfflineAction(data: AppData, action: OfflineAction): AppData {
   return data;
 }
 
-function getExamInputValue(isoDate: string): string {
+function getExamMonthDayValue(isoDate: string): string {
   const date = new Date(isoDate);
-  const timezoneOffset = date.getTimezoneOffset() * 60000;
-  const local = new Date(date.getTime() - timezoneOffset);
-  return local.toISOString().slice(0, 16);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${month}-${day}`;
 }
 
-function datetimeLocalToIso(input: string): string {
-  const date = new Date(input);
-  return date.toISOString();
+function getExamTimeSlotValue(isoDate: string): ExamTimeSlot {
+  const date = new Date(isoDate);
+  return date.getHours() >= 12 ? "13:00" : "09:00";
+}
+
+function toExamDraftRow(exam: Exam): ExamDraftRow {
+  return {
+    ...exam,
+    monthDay: getExamMonthDayValue(exam.startsAt),
+    timeSlot: getExamTimeSlotValue(exam.startsAt),
+  };
 }
 
 function monthDayToIso(monthDay: string, timeValue: string): string | null {
@@ -861,6 +875,16 @@ export default function StudyDashboard() {
         payload: { exams: sortedExams },
       }),
     );
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        EXAM_BACKUP_KEY,
+        JSON.stringify({
+          savedAt: new Date().toISOString(),
+          exams: sortedExams,
+        }),
+      );
+    }
 
     setStatusMessage("Exam schedule updated.");
   };
@@ -1669,11 +1693,12 @@ function ExamEditor({
   exams: Exam[];
   onSave: (exams: Exam[]) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<Exam[]>([...exams]);
+  const [draft, setDraft] = useState<ExamDraftRow[]>(() => exams.map(toExamDraftRow));
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDraft([...exams]);
+    setDraft(exams.map(toExamDraftRow));
   }, [exams]);
 
   const sortedDraft = useMemo(
@@ -1685,7 +1710,7 @@ function ExamEditor({
     [draft],
   );
 
-  const updateRow = (id: string, patch: Partial<Exam>) => {
+  const updateRow = (id: string, patch: Partial<ExamDraftRow>) => {
     setDraft((current) =>
       current.map((exam) => (exam.id === id ? { ...exam, ...patch } : exam)),
     );
@@ -1694,6 +1719,9 @@ function ExamEditor({
   const addExam = () => {
     const now = new Date();
     now.setHours(now.getHours() + 24);
+    const monthDay = `${`${now.getMonth() + 1}`.padStart(2, "0")}-${`${now.getDate()}`.padStart(2, "0")}`;
+    const timeSlot: ExamTimeSlot = "09:00";
+    const startsAt = monthDayToIso(monthDay, timeSlot) ?? now.toISOString();
 
     setDraft((current) => [
       ...current,
@@ -1702,7 +1730,9 @@ function ExamEditor({
         subjectId: SUBJECT_IDS[0],
         title: SUBJECT_BY_ID[SUBJECT_IDS[0]].name,
         paper: "Paper",
-        startsAt: now.toISOString(),
+        startsAt,
+        monthDay,
+        timeSlot,
       },
     ]);
   };
@@ -1712,9 +1742,28 @@ function ExamEditor({
   };
 
   const handleSave = async () => {
+    const preparedExams: Exam[] = [];
+
+    for (const exam of sortedDraft) {
+      const startsAt = monthDayToIso(exam.monthDay, exam.timeSlot);
+      if (!startsAt) {
+        setSaveError("Exam dates must use MM-DD format (example: 05-08).");
+        return;
+      }
+
+      preparedExams.push({
+        id: exam.id,
+        subjectId: exam.subjectId,
+        title: exam.title,
+        paper: exam.paper,
+        startsAt,
+      });
+    }
+
+    setSaveError(null);
     setSaving(true);
     try {
-      await onSave(sortedDraft);
+      await onSave(preparedExams);
     } finally {
       setSaving(false);
     }
@@ -1741,7 +1790,7 @@ function ExamEditor({
             key={exam.id}
             className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
           >
-            <div className="grid gap-2 md:grid-cols-[1.2fr,1fr,0.8fr,0.6fr,auto] md:items-center">
+            <div className="grid gap-2 md:grid-cols-[1.2fr,1fr,0.9fr,0.5fr,0.45fr,auto] md:items-center">
               <input
                 type="text"
                 value={exam.title}
@@ -1768,15 +1817,35 @@ function ExamEditor({
                 ))}
               </select>
               <input
-                type="datetime-local"
-                value={getExamInputValue(exam.startsAt)}
-                onChange={(event) =>
+                type="text"
+                value={exam.monthDay}
+                placeholder="MM-DD"
+                onChange={(event) => {
+                  const monthDay = event.target.value;
+                  const maybeStartsAt = monthDayToIso(monthDay, exam.timeSlot);
                   updateRow(exam.id, {
-                    startsAt: datetimeLocalToIso(event.target.value),
-                  })
-                }
+                    monthDay,
+                    startsAt: maybeStartsAt ?? exam.startsAt,
+                  });
+                }}
                 className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
               />
+              <select
+                value={exam.timeSlot}
+                onChange={(event) => {
+                  const timeSlot = event.target.value as ExamTimeSlot;
+                  const maybeStartsAt = monthDayToIso(exam.monthDay, timeSlot);
+                  updateRow(exam.id, {
+                    timeSlot,
+                    startsAt: maybeStartsAt ?? exam.startsAt,
+                  });
+                }}
+                className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+              >
+                <option value="09:00">09:00</option>
+                <option value="13:00">13:00</option>
+              </select>
+              <p className="text-xs text-[var(--muted)]">Local</p>
               <button
                 type="button"
                 onClick={() => removeExam(exam.id)}
@@ -1788,6 +1857,15 @@ function ExamEditor({
           </article>
         ))}
       </div>
+
+      {saveError ? (
+        <p className="text-xs text-[#ff9896]">{saveError}</p>
+      ) : (
+        <p className="text-xs text-[var(--muted)]">
+          Dates are month-day only. Year is inferred automatically. Time is limited to
+          09:00 or 13:00.
+        </p>
+      )}
 
       <button
         type="button"
