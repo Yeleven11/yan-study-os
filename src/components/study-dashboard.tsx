@@ -389,7 +389,6 @@ export default function StudyDashboard() {
   const [data, setData] = useState<AppData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<ExpandedCard>(null);
-  const [isExamHoverOpen, setIsExamHoverOpen] = useState(false);
 
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(() =>
     readStoredTimer(),
@@ -620,10 +619,6 @@ export default function StudyDashboard() {
 
   const nearestExams = useMemo(() => {
     return data ? getNearestExams(data.exams, 3, new Date(timePulse)) : [];
-  }, [data, timePulse]);
-
-  const allUpcomingExams = useMemo(() => {
-    return data ? getNearestExams(data.exams, 99, new Date(timePulse)) : [];
   }, [data, timePulse]);
 
   const calendarDays = useMemo(
@@ -936,11 +931,7 @@ export default function StudyDashboard() {
   return (
     <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <div className="h-full w-full p-3 md:p-4">
-        <div
-          className={`grid h-full min-h-0 gap-4 transition duration-200 lg:grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px] ${
-            isExamHoverOpen ? "blur-[2px]" : ""
-          }`}
-        >
+        <div className="grid h-full min-h-0 gap-4 grid-cols-[300px,minmax(0,1fr),300px] 2xl:grid-cols-[320px,minmax(0,1fr),320px]">
           <TodoRail
             activeTodos={activeTodos}
             archivedTodos={archivedTodos}
@@ -949,12 +940,8 @@ export default function StudyDashboard() {
             onRestore={handleRestoreTodo}
           />
 
-          <main className="grid h-full min-h-0 gap-4 lg:grid-rows-[minmax(170px,0.85fr)_minmax(270px,1.35fr)_minmax(220px,1fr)]">
-            <section
-              className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
-              onMouseEnter={() => setIsExamHoverOpen(true)}
-              onMouseLeave={() => setIsExamHoverOpen(false)}
-            >
+          <main className="grid h-full min-h-0 gap-4 grid-rows-[minmax(170px,0.85fr)_minmax(270px,1.35fr)_minmax(220px,1fr)]">
+            <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
@@ -1210,44 +1197,6 @@ export default function StudyDashboard() {
         <div className="pointer-events-none fixed bottom-3 left-3 z-40 max-w-[460px] rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
           {statusMessage}
         </div>
-      ) : null}
-
-      {isExamHoverOpen ? (
-        <>
-          <div className="pointer-events-none fixed inset-0 z-30 bg-black/30 backdrop-blur-sm transition-opacity duration-200" />
-          <div className="pointer-events-none fixed inset-x-4 top-20 z-40 mx-auto w-full max-w-[780px] rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)]/95 p-4 shadow-2xl">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">
-              Upcoming Exam Countdown
-            </p>
-            <div className="mt-3 max-h-[68vh] space-y-2 overflow-auto pr-1">
-              {allUpcomingExams.map((exam) => {
-                const countdown = getCountdown(exam, new Date(timePulse));
-                return (
-                  <article
-                    key={`hover-${exam.id}`}
-                    className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs text-[var(--muted)]">
-                        {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
-                      </p>
-                      <p className="text-xs text-[var(--muted)]">{formatDateTime(exam.startsAt)}</p>
-                    </div>
-                    <div className="mt-2 h-1.5 rounded bg-black/35">
-                      <div
-                        className="h-full rounded transition-all duration-300"
-                        style={{
-                          width: `${Math.max(2, countdown.progressRatio * 100)}%`,
-                          backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
-                        }}
-                      />
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        </>
       ) : null}
 
       <FocusModal
