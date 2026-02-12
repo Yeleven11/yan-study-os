@@ -99,7 +99,11 @@ export function getNearestExams(exams: Exam[], limit = 3, now = new Date()): Exa
     .slice(0, limit);
 }
 
-export function getCountdown(exam: Exam, now = new Date()): {
+export function getCountdown(
+  exam: Exam,
+  now = new Date(),
+  baselineSeconds?: number,
+): {
   totalSeconds: number;
   days: number;
   hours: number;
@@ -115,8 +119,11 @@ export function getCountdown(exam: Exam, now = new Date()): {
   const done = totalSeconds <= 0;
 
   const fullRangeSeconds = CALENDAR_DAYS_AHEAD * 86400;
-  const elapsed = Math.max(0, fullRangeSeconds - totalSeconds);
-  const progressRatio = Math.min(1, Math.max(0, elapsed / fullRangeSeconds));
+  const safeBaseline =
+    baselineSeconds && baselineSeconds > 0 ? baselineSeconds : fullRangeSeconds;
+  const progressRatio = done
+    ? 0
+    : Math.min(1, Math.max(0, totalSeconds / safeBaseline));
 
   return {
     totalSeconds,

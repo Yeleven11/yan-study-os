@@ -44,6 +44,7 @@ type ExpandedCard = "calendar" | "timer" | "totals" | "log" | null;
 const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
 const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
+const COUNTDOWN_BASELINES_KEY = "yan-study-os:countdown-baselines:v1";
 const INITIAL_NOW_MS = Date.now();
 type ExamTimeSlot = "09:00" | "13:00";
 type ExamDraftRow = Exam & {
@@ -262,6 +263,68 @@ function readStoredQueue(): OfflineAction[] {
   }
 }
 
+function readCountdownBaselines(): Record<string, number> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const raw = window.localStorage.getItem(COUNTDOWN_BASELINES_KEY);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([, seconds]) => typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0,
+      ),
+    );
+  } catch {
+    window.localStorage.removeItem(COUNTDOWN_BASELINES_KEY);
+    return {};
+  }
+}
+
+function mergeCountdownBaselines(
+  exams: Exam[],
+  currentBaselines: Record<string, number>,
+  nowMs = Date.now(),
+): Record<string, number> {
+  const nextBaselines = { ...currentBaselines };
+  const activeIds = new Set<string>();
+  let changed = false;
+
+  for (const exam of exams) {
+    const examMs = new Date(exam.startsAt).getTime();
+    if (examMs <= nowMs) {
+      continue;
+    }
+
+    activeIds.add(exam.id);
+    const secondsLeft = Math.max(1, Math.floor((examMs - nowMs) / 1000));
+    const currentValue = nextBaselines[exam.id];
+
+    if (!currentValue || currentValue <= 0 || secondsLeft > currentValue + 3600) {
+      nextBaselines[exam.id] = secondsLeft;
+      changed = true;
+    }
+  }
+
+  for (const examId of Object.keys(nextBaselines)) {
+    if (!activeIds.has(examId)) {
+      delete nextBaselines[examId];
+      changed = true;
+    }
+  }
+
+  return changed ? nextBaselines : currentBaselines;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: "include",
@@ -410,6 +473,9 @@ export default function StudyDashboard() {
   const [offlineQueue, setOfflineQueue] = useState<OfflineAction[]>(() =>
     readStoredQueue(),
   );
+  const [countdownBaselines, setCountdownBaselines] = useState<Record<string, number>>(
+    () => readCountdownBaselines(),
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -477,6 +543,17 @@ export default function StudyDashboard() {
 
     window.localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(offlineQueue));
   }, [offlineQueue]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      COUNTDOWN_BASELINES_KEY,
+      JSON.stringify(countdownBaselines),
+    );
+  }, [countdownBaselines]);
 
   const queueOfflineAction = useCallback((action: OfflineAction) => {
     setOfflineQueue((currentQueue) => [...currentQueue, action]);
@@ -551,6 +628,9 @@ export default function StudyDashboard() {
 
         if (isMounted) {
           setData(nextData);
+          setCountdownBaselines((currentBaselines) =>
+            mergeCountdownBaselines(nextData.exams, currentBaselines, Date.now()),
+          );
           setStatusMessage(null);
         }
       } catch {
@@ -558,7 +638,11 @@ export default function StudyDashboard() {
           return;
         }
 
-        setData(createDefaultAppData(timezone));
+        const fallbackData = createDefaultAppData(timezone);
+        setData(fallbackData);
+        setCountdownBaselines((currentBaselines) =>
+          mergeCountdownBaselines(fallbackData.exams, currentBaselines, Date.now()),
+        );
         setStatusMessage(
           "Dashboard fallback mode: seeded local data loaded because bootstrap failed.",
         );
@@ -631,6 +715,50 @@ export default function StudyDashboard() {
   const allUpcomingExams = useMemo(() => {
     return data ? getNearestExams(data.exams, 99, new Date(timePulse)) : [];
   }, [data, timePulse]);
+
+  const getExamBaselineSeconds = useCallback(
+    (exam: Exam): number => {
+      const persistedBaseline = countdownBaselines[exam.id];
+      if (persistedBaseline && persistedBaseline > 0) {
+        return persistedBaseline;
+      }
+
+      const initialBaseline = Math.max(
+        1,
+        Math.floor((new Date(exam.startsAt).getTime() - INITIAL_NOW_MS) / 1000),
+      );
+      return initialBaseline;
+    },
+    [countdownBaselines],
+  );
+
+  const upcomingExamWeekGroups = useMemo(() => {
+    if (allUpcomingExams.length === 0) {
+      return [] as Array<{ week: number; exams: Exam[] }>;
+    }
+
+    const anchorDate = new Date(allUpcomingExams[0].startsAt);
+    anchorDate.setHours(0, 0, 0, 0);
+    const weekBuckets = new Map<number, Exam[]>();
+
+    for (const exam of allUpcomingExams) {
+      const examDate = new Date(exam.startsAt);
+      examDate.setHours(0, 0, 0, 0);
+      const rawWeek =
+        Math.floor((examDate.getTime() - anchorDate.getTime()) / (7 * 86400 * 1000)) + 1;
+      const week = Math.max(1, Math.min(4, rawWeek));
+
+      if (!weekBuckets.has(week)) {
+        weekBuckets.set(week, []);
+      }
+
+      weekBuckets.get(week)!.push(exam);
+    }
+
+    return [1, 2, 3, 4]
+      .map((week) => ({ week, exams: weekBuckets.get(week) || [] }))
+      .filter((group) => group.exams.length > 0);
+  }, [allUpcomingExams]);
 
   const calendarDays = useMemo(
     () => buildForwardDates(new Date(INITIAL_NOW_MS), CALENDAR_DAYS_AHEAD),
@@ -886,6 +1014,10 @@ export default function StudyDashboard() {
       );
     }
 
+    setCountdownBaselines((currentBaselines) =>
+      mergeCountdownBaselines(sortedExams, currentBaselines, Date.now()),
+    );
+
     setStatusMessage("Exam schedule updated.");
   };
 
@@ -1021,7 +1153,11 @@ export default function StudyDashboard() {
                 style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
               >
                 {nearestExams.map((exam) => {
-                  const countdown = getCountdown(exam, new Date(timePulse));
+                  const countdown = getCountdown(
+                    exam,
+                    new Date(timePulse),
+                    getExamBaselineSeconds(exam),
+                  );
                   return (
                     <article
                       key={exam.id}
@@ -1057,35 +1193,47 @@ export default function StudyDashboard() {
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="max-h-[calc(100vh-420px)] space-y-2 overflow-auto pr-1">
-                  {allUpcomingExams.map((exam) => {
-                    const countdown = getCountdown(exam, new Date(timePulse));
-                    return (
-                      <article
-                        key={`expanded-${exam.id}`}
-                        className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-xs text-[var(--muted)]">
-                            {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
-                          </p>
-                          <p className="text-xs text-[var(--muted)]">
-                            {countdown.done
-                              ? "Started"
-                              : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
-                          </p>
-                        </div>
-                        <div className="mt-2 h-1.5 rounded bg-black/35">
-                          <div
-                            className="h-full rounded transition-all duration-300"
-                            style={{
-                              width: `${Math.max(2, countdown.progressRatio * 100)}%`,
-                              backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
-                            }}
-                          />
-                        </div>
-                      </article>
-                    );
-                  })}
+                  {upcomingExamWeekGroups.map((group) => (
+                    <div key={`week-${group.week}`} className="space-y-2">
+                      <p className="text-xs tracking-[0.08em] text-[var(--muted)]">
+                        -----------------Week {group.week}-----------------
+                      </p>
+                      {group.exams.map((exam) => {
+                        const countdown = getCountdown(
+                          exam,
+                          new Date(timePulse),
+                          getExamBaselineSeconds(exam),
+                        );
+
+                        return (
+                          <article
+                            key={`expanded-${exam.id}`}
+                            className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs text-[var(--muted)]">
+                                {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
+                              </p>
+                              <p className="text-xs text-[var(--muted)]">
+                                {countdown.done
+                                  ? "Started"
+                                  : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
+                              </p>
+                            </div>
+                            <div className="mt-2 h-1.5 rounded bg-black/35">
+                              <div
+                                className="h-full rounded transition-all duration-300"
+                                style={{
+                                  width: `${Math.max(2, countdown.progressRatio * 100)}%`,
+                                  backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
+                                }}
+                              />
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ))}
 
                   <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-3">
                     <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
