@@ -1,0 +1,105 @@
+{
+  "savedAt": "2026-02-12T19:49:52.646Z",
+  "source": "runtime-data/yan-study-os.json",
+  "examCount": 14,
+  "exams": [
+    {
+      "id": "e7b3c4b2-9929-4450-a195-4cc41de97549",
+      "subjectId": "german_lang_lit_sl",
+      "title": "German P1",
+      "paper": "Paper 1",
+      "startsAt": "2026-04-27T11:00:00.000Z"
+    },
+    {
+      "id": "b8072661-3c53-456c-a5d6-0180aa5c62a6",
+      "subjectId": "german_lang_lit_sl",
+      "title": "German P2",
+      "paper": "Paper 2",
+      "startsAt": "2026-04-28T07:00:00.000Z"
+    },
+    {
+      "id": "f9a93ea5-585a-459d-981b-ac5738e1b17a",
+      "subjectId": "physics_hl",
+      "title": "Physics P1 a+b",
+      "paper": "Paper 1 a+b",
+      "startsAt": "2026-04-28T11:00:00.000Z"
+    },
+    {
+      "id": "a50f0731-bfe3-4a68-83f8-4438339b2377",
+      "subjectId": "physics_hl",
+      "title": "Physics Paper 2",
+      "paper": "Paper 2",
+      "startsAt": "2026-04-29T07:00:00.000Z"
+    },
+    {
+      "id": "6b1cff1b-c757-43fa-8c9f-a2a642e8c27c",
+      "subjectId": "business_sl",
+      "title": "Business Paper 1",
+      "paper": "Paper 1",
+      "startsAt": "2026-04-29T07:00:00.000Z"
+    },
+    {
+      "id": "a5e69c33-9011-4481-9bc3-d98d3b52c558",
+      "subjectId": "business_sl",
+      "title": "Business paper 2",
+      "paper": "Paper 2",
+      "startsAt": "2026-04-30T07:00:00.000Z"
+    },
+    {
+      "id": "c79b2fca-ba90-4b84-b44b-b3e929f71358",
+      "subjectId": "computer_science_hl",
+      "title": "Comp Sci paper 1",
+      "paper": "Paper 1",
+      "startsAt": "2026-04-30T11:00:00.000Z"
+    },
+    {
+      "id": "b0921ce3-bb1b-4918-b410-af577dcc5131",
+      "subjectId": "computer_science_hl",
+      "title": "Comp sci Paper 3",
+      "paper": "Paper 3",
+      "startsAt": "2026-05-04T07:00:00.000Z"
+    },
+    {
+      "id": "86fef804-03f3-4d15-9647-df33e8badd6f",
+      "subjectId": "computer_science_hl",
+      "title": "Comp Sci paper 2",
+      "paper": "Paper 2",
+      "startsAt": "2026-05-04T07:00:00.000Z"
+    },
+    {
+      "id": "76c63d57-f4c7-4aa9-aa16-03e11dcee5b0",
+      "subjectId": "english_lang_lit_sl",
+      "title": "English paper 1",
+      "paper": "Paper 1",
+      "startsAt": "2026-05-07T11:00:00.000Z"
+    },
+    {
+      "id": "a354f3c1-25fc-4386-8389-bb3cb0986e34",
+      "subjectId": "english_lang_lit_sl",
+      "title": "English Paper 2",
+      "paper": "Paper 2",
+      "startsAt": "2026-05-08T07:00:00.000Z"
+    },
+    {
+      "id": "832f3c24-0f92-4a51-992e-8cdfd8af8236",
+      "subjectId": "math_aa_hl",
+      "title": "Math AA HL",
+      "paper": "Paper 1",
+      "startsAt": "2026-05-14T11:00:00.000Z"
+    },
+    {
+      "id": "10e56703-c30a-4edf-9440-748fd8ffe0c4",
+      "subjectId": "math_aa_hl",
+      "title": "Math AA HL",
+      "paper": "Paper 2",
+      "startsAt": "2026-05-15T07:00:00.000Z"
+    },
+    {
+      "id": "0576e00a-d333-450d-953a-181fea4320ca",
+      "subjectId": "math_aa_hl",
+      "title": "Math AA HL",
+      "paper": "Paper 3",
+      "startsAt": "2026-05-20T11:00:00.000Z"
+    }
+  ]
+}
