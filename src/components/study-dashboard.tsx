@@ -39,7 +39,7 @@ import type {
 } from "@/lib/types";
 
 type AuthStatus = "checking" | "signedOut" | "signedIn";
-type ExpandedCard = "exams" | "calendar" | "timer" | "totals" | "log" | null;
+type ExpandedCard = "calendar" | "timer" | "totals" | "log" | null;
 
 const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
@@ -381,6 +381,7 @@ export default function StudyDashboard() {
   const [data, setData] = useState<AppData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<ExpandedCard>(null);
+  const [isCountdownExpanded, setIsCountdownExpanded] = useState(false);
 
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(() =>
     readStoredTimer(),
@@ -611,6 +612,10 @@ export default function StudyDashboard() {
 
   const nearestExams = useMemo(() => {
     return data ? getNearestExams(data.exams, 3, new Date(timePulse)) : [];
+  }, [data, timePulse]);
+
+  const allUpcomingExams = useMemo(() => {
+    return data ? getNearestExams(data.exams, 99, new Date(timePulse)) : [];
   }, [data, timePulse]);
 
   const calendarDays = useMemo(
@@ -940,10 +945,20 @@ export default function StudyDashboard() {
           <main
             className="grid h-full min-h-0 gap-4 overflow-hidden"
             style={{
-              gridTemplateRows: "220px minmax(0, 1fr) 280px",
+              gridTemplateRows: isCountdownExpanded
+                ? "1fr 0fr 0fr"
+                : "220px minmax(0, 1fr) 280px",
+              transition: "grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1)",
             }}
           >
-            <section className="h-full min-h-0 overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <section
+              className="h-full min-h-0 overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
+              onClick={() => {
+                if (!isCountdownExpanded) {
+                  setIsCountdownExpanded(true);
+                }
+              }}
+            >
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
@@ -951,10 +966,13 @@ export default function StudyDashboard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setExpandedCard("exams")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setIsCountdownExpanded((current) => !current);
+                  }}
                   className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                 >
-                  Expand
+                  {isCountdownExpanded ? "Done" : "Edit"}
                 </button>
               </div>
 
@@ -1007,9 +1025,62 @@ export default function StudyDashboard() {
                   );
                 })}
               </div>
+
+              <div
+                className={`overflow-hidden transition-[max-height,margin-top,opacity] duration-300 ease-out ${
+                  isCountdownExpanded ? "mt-3 max-h-[1400px] opacity-100" : "max-h-0 opacity-0"
+                }`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="max-h-[calc(100vh-420px)] space-y-2 overflow-auto pr-1">
+                  {allUpcomingExams.map((exam) => {
+                    const countdown = getCountdown(exam, new Date(timePulse));
+                    return (
+                      <article
+                        key={`expanded-${exam.id}`}
+                        className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-[var(--muted)]">
+                            {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
+                          </p>
+                          <p className="text-xs text-[var(--muted)]">
+                            {countdown.done
+                              ? "Started"
+                              : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
+                          </p>
+                        </div>
+                        <div className="mt-2 h-1.5 rounded bg-black/35">
+                          <div
+                            className="h-full rounded transition-all duration-300"
+                            style={{
+                              width: `${Math.max(2, countdown.progressRatio * 100)}%`,
+                              backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
+                            }}
+                          />
+                        </div>
+                      </article>
+                    );
+                  })}
+
+                  <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-3">
+                    <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Edit Exam Schedule
+                    </p>
+                    <ExamEditor exams={data.exams} onSave={handleUpdateExams} />
+                  </div>
+                </div>
+              </div>
             </section>
 
-            <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+            <section
+              className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 transition-[opacity,filter] duration-300"
+              style={{
+                opacity: isCountdownExpanded ? 0 : 1,
+                filter: isCountdownExpanded ? "blur(2px)" : "blur(0px)",
+                pointerEvents: isCountdownExpanded ? "none" : "auto",
+              }}
+            >
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
@@ -1065,8 +1136,13 @@ export default function StudyDashboard() {
             </section>
 
             <div
-              className="grid h-full min-h-0 gap-4"
-              style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}
+              className="grid h-full min-h-0 gap-4 transition-[opacity,filter] duration-300"
+              style={{
+                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                opacity: isCountdownExpanded ? 0 : 1,
+                filter: isCountdownExpanded ? "blur(2px)" : "blur(0px)",
+                pointerEvents: isCountdownExpanded ? "none" : "auto",
+              }}
             >
               <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -1212,9 +1288,7 @@ export default function StudyDashboard() {
         open={expandedCard !== null}
         onClose={() => setExpandedCard(null)}
         title={
-          expandedCard === "exams"
-            ? "Exam Countdown"
-            : expandedCard === "calendar"
+          expandedCard === "calendar"
             ? "120-Day Study Calendar"
             : expandedCard === "timer"
             ? "Study Timer"
@@ -1223,10 +1297,6 @@ export default function StudyDashboard() {
             : "Study Log"
         }
       >
-        {expandedCard === "exams" ? (
-          <ExamEditor exams={data.exams} onSave={handleUpdateExams} />
-        ) : null}
-
         {expandedCard === "calendar" ? (
           <div className="space-y-4">
             <div className="grid grid-cols-[repeat(10,minmax(0,1fr))] gap-1 md:grid-cols-[repeat(15,minmax(0,1fr))] xl:grid-cols-[repeat(20,minmax(0,1fr))]">
