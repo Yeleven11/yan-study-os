@@ -6,21 +6,33 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "passcode:hash": "node scripts/generate-passcode-hash.mjs",
+    "ampx:sandbox": "npx ampx sandbox --region eu-central-1"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.988.0",
+    "@aws-sdk/lib-dynamodb": "^3.988.0",
+    "aws-amplify": "^6.16.2",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
+    "@aws-amplify/backend": "^1.21.0",
+    "@aws-amplify/backend-cli": "^1.8.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "aws-cdk-lib": "^2.234.1",
+    "constructs": "^10.4.5",
+    "esbuild": "^0.27.3",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }
