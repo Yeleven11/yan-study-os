@@ -241,7 +241,13 @@ export interface HealthRawFile {
   id: string;
   hash: string;
   filename: string;
-  fileType: "aggregate" | "workout_summary" | "workout_stream" | "ignored" | "unknown";
+  fileType:
+    | "aggregate"
+    | "workout_summary"
+    | "workout_stream"
+    | "mobile_sync"
+    | "ignored"
+    | "unknown";
   rowCount: number;
   importedAt: string;
   ignoredReason?: string;
@@ -254,6 +260,99 @@ export interface HealthRawRow {
   timestamp?: string;
   workoutKey?: string;
   values: Record<string, string>;
+}
+
+export interface MobileSyncSeriesPoint {
+  timestamp: string;
+  value: number;
+}
+
+export interface MobileSyncWorkoutStreams {
+  heartRateSeries?: MobileSyncSeriesPoint[];
+  distanceSeries?: MobileSyncSeriesPoint[];
+  stepSeries?: MobileSyncSeriesPoint[];
+  activeEnergySeries?: MobileSyncSeriesPoint[];
+  restingEnergySeries?: MobileSyncSeriesPoint[];
+}
+
+export interface MobileSyncWorkoutInput {
+  hkWorkoutUuid: string;
+  workoutType: string;
+  startedAt: string;
+  endedAt: string;
+  durationMin: number;
+  distanceKm?: number;
+  activeEnergyKj?: number;
+  restingEnergyKj?: number;
+  avgHeartRate?: number;
+  hrMin?: number;
+  hrMax?: number;
+  hrAvg?: number;
+  stepCount?: number;
+  streams?: MobileSyncWorkoutStreams;
+}
+
+export interface MobileSyncDailyHealthInput {
+  date: string;
+  sleepHours?: number;
+  sleepAsleepHours?: number;
+  sleepInBedHours?: number;
+  sleepCoreHours?: number;
+  sleepDeepHours?: number;
+  sleepRemHours?: number;
+  sleepAwakeHours?: number;
+  hrvMs?: number;
+  restingHrBpm?: number;
+  heartRateMinBpm?: number;
+  heartRateMaxBpm?: number;
+  heartRateAvgBpm?: number;
+  respiratoryRateBpm?: number;
+  steps?: number;
+  walkRunDistanceKm?: number;
+  activeEnergyKj?: number;
+  restingEnergyKj?: number;
+  exerciseTimeMin?: number;
+}
+
+export interface MobileSyncDeletion {
+  sampleType: string;
+  uuid: string;
+  deletedAt: string;
+}
+
+export interface MobileSyncRequest {
+  schemaVersion: 1;
+  batchId: string;
+  generatedAt: string;
+  device: {
+    deviceId: string;
+    appVersion: string;
+    osVersion: string;
+    timezone: string;
+  };
+  syncWindow?: {
+    from?: string;
+    to?: string;
+  };
+  settings?: {
+    syncIntervalMinutes?: number;
+  };
+  dailyHealth?: MobileSyncDailyHealthInput[];
+  workouts?: MobileSyncWorkoutInput[];
+  deletions?: MobileSyncDeletion[];
+}
+
+export interface MobileSyncResponse {
+  ok: true;
+  importedHealthDays: number;
+  importedWorkouts: number;
+  updatedWorkouts: number;
+  filesProcessed: number;
+  filesSkipped: number;
+  linkedStreams: number;
+  duplicateBatch: boolean;
+  serverTime: string;
+  nextSuggestedSyncSeconds: number;
 }
 
 export interface PerformanceGoals {
