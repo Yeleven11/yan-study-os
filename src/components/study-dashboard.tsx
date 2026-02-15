@@ -56,6 +56,7 @@ const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
 const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
 const COUNTDOWN_BASELINES_KEY = "yan-study-os:countdown-baselines:v1";
 const INITIAL_NOW_MS = Date.now();
+const CALENDAR_MIN_START_DATE = "2026-02-10";
 type ExamTimeSlot = "09:00" | "13:00";
 type ExamDraftRow = Exam & {
   monthDay: string;
@@ -815,9 +816,15 @@ export default function StudyDashboard() {
       .filter((group) => group.exams.length > 0);
   }, [allUpcomingExams]);
 
+  const calendarStartDate = useMemo(() => {
+    const date = new Date(`${CALENDAR_MIN_START_DATE}T00:00:00`);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }, []);
+
   const calendarDays = useMemo(
-    () => buildForwardDates(new Date(INITIAL_NOW_MS), CALENDAR_DAYS_AHEAD),
-    [],
+    () => buildForwardDates(calendarStartDate, CALENDAR_DAYS_AHEAD),
+    [calendarStartDate],
   );
 
   const examsByDate = useMemo(() => {
@@ -941,6 +948,48 @@ export default function StudyDashboard() {
       sleepScoreSeries7.length
     );
   }, [sleepScoreSeries7]);
+
+  const healthByDate = useMemo(() => {
+    return healthDaysSorted.reduce<Record<string, DailyHealthFact>>((accumulator, item) => {
+      accumulator[item.date] = item;
+      return accumulator;
+    }, {});
+  }, [healthDaysSorted]);
+
+  const sleepRollingByDate = useMemo(() => {
+    const sleepHourAverages: Record<string, number> = {};
+    const sleepScoreAverages: Record<string, number> = {};
+    const hourWindow: number[] = [];
+    const scoreWindow: number[] = [];
+
+    for (const item of healthDaysSorted) {
+      hourWindow.push(item.sleepHours);
+      if (hourWindow.length > 7) {
+        hourWindow.shift();
+      }
+
+      const sleepScore = readinessByDate[item.date]?.sleepScore;
+      if (typeof sleepScore === "number" && Number.isFinite(sleepScore)) {
+        scoreWindow.push(sleepScore);
+      }
+      if (scoreWindow.length > 7) {
+        scoreWindow.shift();
+      }
+
+      sleepHourAverages[item.date] =
+        hourWindow.reduce((sum, value) => sum + value, 0) / hourWindow.length;
+
+      sleepScoreAverages[item.date] =
+        scoreWindow.length > 0
+          ? scoreWindow.reduce((sum, value) => sum + value, 0) / scoreWindow.length
+          : 0;
+    }
+
+    return {
+      sleepHourAverages,
+      sleepScoreAverages,
+    };
+  }, [healthDaysSorted, readinessByDate]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1609,6 +1658,9 @@ export default function StudyDashboard() {
                   const exams = examsByDate[dateKey] || [];
                   const workouts = workoutsByDate[dateKey] || [];
                   const readiness = readinessByDate[dateKey];
+                  const healthDay = healthByDate[dateKey];
+                  const sleepHours7d = sleepRollingByDate.sleepHourAverages[dateKey];
+                  const sleepScore7d = sleepRollingByDate.sleepScoreAverages[dateKey];
                   const readinessColor =
                     readiness?.zone === "green"
                       ? "#4ade80"
@@ -1623,14 +1675,25 @@ export default function StudyDashboard() {
                   const dominantColor = aggregate?.dominantSubjectId
                     ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
                     : "rgba(255,255,255,0.04)";
+                  const dayOfMonth = dateKey.slice(8);
+
+                  const squareTitleParts = [
+                    dateKey,
+                    aggregate?.totalSec ? `Study ${formatDuration(aggregate.totalSec)}` : "No study",
+                    workouts.length > 0 ? `${workouts.length} workout${workouts.length === 1 ? "" : "s"}` : "No workout",
+                    typeof healthDay?.sleepHours === "number"
+                      ? `Sleep ${healthDay.sleepHours.toFixed(2)}h`
+                      : "No sleep data",
+                    typeof readiness?.sleepScore === "number"
+                      ? `Sleep score ${readiness.sleepScore.toFixed(1)}`
+                      : "No sleep score",
+                  ];
 
                   return (
                     <button
                       key={dateKey}
                       type="button"
-                      title={`${dateKey} • ${
-                        aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "No study"
-                      } • ${workouts.length} workout${workouts.length === 1 ? "" : "s"}`}
+                      title={squareTitleParts.join(" • ")}
                       className="group relative aspect-square rounded-[4px] border border-white/5 transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       style={{ backgroundColor: dominantColor }}
                       aria-label={dateKey}
@@ -1647,6 +1710,9 @@ export default function StudyDashboard() {
                           {workouts.length}
                         </span>
                       ) : null}
+                      <span className="pointer-events-none absolute bottom-0.5 left-0.5 text-[8px] text-white/65">
+                        {dayOfMonth}
+                      </span>
 
                       {exams.length > 0 ? (
                         <span
@@ -1657,6 +1723,36 @@ export default function StudyDashboard() {
                           }}
                         />
                       ) : null}
+
+                      <div className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-30 hidden w-56 -translate-x-1/2 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-left shadow-2xl group-hover:block">
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                          {dateKey}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          Study: {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "0m"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Workouts: {workouts.length}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep:{" "}
+                          {typeof healthDay?.sleepHours === "number"
+                            ? `${healthDay.sleepHours.toFixed(2)}h`
+                            : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep score:{" "}
+                          {typeof readiness?.sleepScore === "number"
+                            ? readiness.sleepScore.toFixed(1)
+                            : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep 7d avg: {typeof sleepHours7d === "number" ? `${sleepHours7d.toFixed(2)}h` : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Score 7d avg: {typeof sleepScore7d === "number" && sleepScore7d > 0 ? sleepScore7d.toFixed(1) : "--"}
+                        </p>
+                      </div>
                     </button>
                   );
                 })}
@@ -2011,6 +2107,9 @@ export default function StudyDashboard() {
                 const workouts = workoutsByDate[dateKey] || [];
                 const readiness = readinessByDate[dateKey];
                 const recommendation = recommendationsByDate[dateKey];
+                const healthDay = healthByDate[dateKey];
+                const sleepHours7d = sleepRollingByDate.sleepHourAverages[dateKey];
+                const sleepScore7d = sleepRollingByDate.sleepScoreAverages[dateKey];
                 const dominantColor = aggregate?.dominantSubjectId
                   ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
                   : "rgba(255,255,255,0.04)";
@@ -2028,9 +2127,20 @@ export default function StudyDashboard() {
                 return (
                   <div key={dateKey} className="space-y-1">
                     <div
-                      className="relative aspect-square rounded border border-white/10"
+                      className="group relative aspect-square rounded border border-white/10"
                       style={{ backgroundColor: dominantColor }}
-                      title={dateKey}
+                      title={[
+                        dateKey,
+                        aggregate?.totalSec ? `Study ${formatDuration(aggregate.totalSec)}` : "No study",
+                        typeof healthDay?.sleepHours === "number"
+                          ? `Sleep ${healthDay.sleepHours.toFixed(2)}h`
+                          : "No sleep data",
+                        readiness ? `Sleep score ${readiness.sleepScore.toFixed(1)}` : "No sleep score",
+                        typeof sleepHours7d === "number" ? `Sleep 7d avg ${sleepHours7d.toFixed(2)}h` : "Sleep 7d avg --",
+                        typeof sleepScore7d === "number" && sleepScore7d > 0
+                          ? `Score 7d avg ${sleepScore7d.toFixed(1)}`
+                          : "Score 7d avg --",
+                      ].join(" • ")}
                     >
                       {readinessColor ? (
                         <span
@@ -2052,6 +2162,38 @@ export default function StudyDashboard() {
                           }}
                         />
                       ) : null}
+                      <div className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-30 hidden w-60 -translate-x-1/2 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-left shadow-2xl group-hover:block">
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                          {dateKey}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          Study: {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "0m"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">Workouts: {workouts.length}</p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep:{" "}
+                          {typeof healthDay?.sleepHours === "number"
+                            ? `${healthDay.sleepHours.toFixed(2)}h`
+                            : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep score: {readiness ? readiness.sleepScore.toFixed(1) : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep 7d avg:{" "}
+                          {typeof sleepHours7d === "number" ? `${sleepHours7d.toFixed(2)}h` : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Score 7d avg:{" "}
+                          {typeof sleepScore7d === "number" && sleepScore7d > 0
+                            ? sleepScore7d.toFixed(1)
+                            : "--"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Suggested study:{" "}
+                          {recommendation ? `${recommendation.studyTargetHours.toFixed(1)}h` : "--"}
+                        </p>
+                      </div>
                     </div>
                     <p className="truncate text-[10px] text-[var(--muted)]">
                       {dateKey.slice(5)} {readiness ? `• ${Math.round(readiness.score)}` : ""}
@@ -2091,7 +2233,6 @@ export default function StudyDashboard() {
               Timer auto-resumes after refresh using local device state. Active timer color
               matches selected subject.
             </p>
-            <p>Only sessions of 5 minutes or more are committed to study history.</p>
           </div>
         ) : null}
 
@@ -2417,8 +2558,10 @@ function HealthRail({
         </p>
         <CompactBars
           values={sleepTrend14.map((item) => item.sleepHours)}
+          labels={sleepTrend14.map((item) => item.date)}
           max={Math.max(10, ...sleepTrend14.map((item) => item.sleepHours), 8)}
           color="#6bd4ff"
+          valueFormatter={(value) => `${value.toFixed(2)}h`}
         />
       </div>
 
@@ -2515,15 +2658,23 @@ function HealthExplorer({
           <div className="mt-2">
             <CompactBars
               values={sleepTrend30.map((item) => item.sleepHours)}
+              labels={sleepTrend30.map((item) => item.date)}
               max={Math.max(10, ...sleepTrend30.map((item) => item.sleepHours), 8)}
               color="#6bd4ff"
+              valueFormatter={(value) => `${value.toFixed(2)}h`}
             />
           </div>
           <div className="mt-3">
             <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
               Sleep Score (30d)
             </p>
-            <CompactBars values={sleepScores30} max={100} color="#8af58b" />
+            <CompactBars
+              values={sleepScores30}
+              labels={sleepTrend30.map((item) => item.date)}
+              max={100}
+              color="#8af58b"
+              valueFormatter={(value) => value.toFixed(1)}
+            />
           </div>
           <div className="mt-3 overflow-auto">
             <table className="w-full text-xs">
@@ -2707,6 +2858,8 @@ function SleepScoreScatter({
   points: Array<{ date: string; score: number }>;
   average: number;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
   if (points.length === 0) {
     return <p className="text-xs text-[var(--muted)]">No sleep-score data yet.</p>;
   }
@@ -2735,10 +2888,18 @@ function SleepScoreScatter({
     .map((point, index) => `${xForIndex(index)},${yForScore(point.score)}`)
     .join(" ");
   const avgY = yForScore(average);
+  const activeIndex = hoveredIndex ?? points.length - 1;
+  const activePoint = points[activeIndex];
+  const activeX = xForIndex(activeIndex);
+  const activeY = yForScore(activePoint.score);
 
   return (
     <div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-24 w-full"
+        onMouseLeave={() => setHoveredIndex(null)}
+      >
         <line
           x1={padLeft}
           x2={width - padRight}
@@ -2750,15 +2911,30 @@ function SleepScoreScatter({
           opacity="0.8"
         />
         <polyline fill="none" stroke="#8af58b" strokeWidth="2" points={polyline} />
+        <line
+          x1={activeX}
+          x2={activeX}
+          y1={padTop}
+          y2={height - padBottom}
+          stroke="#8af58b"
+          strokeOpacity="0.35"
+          strokeWidth="1"
+        />
         {points.map((point, index) => (
           <circle
             key={`sleep-score-point-${point.date}`}
             cx={xForIndex(index)}
             cy={yForScore(point.score)}
-            r={3.2}
-            fill="#8af58b"
-          />
+            r={activeIndex === index ? 4.4 : 3.2}
+            fill={activeIndex === index ? "#d9ffd9" : "#8af58b"}
+            tabIndex={0}
+            onMouseEnter={() => setHoveredIndex(index)}
+            onFocus={() => setHoveredIndex(index)}
+          >
+            <title>{`${point.date}: ${point.score.toFixed(1)}`}</title>
+          </circle>
         ))}
+        <circle cx={activeX} cy={activeY} r={4.6} fill="#d9ffd9" stroke="#8af58b" strokeWidth="1" />
         <text
           x={width - padRight}
           y={padTop}
@@ -2767,6 +2943,15 @@ function SleepScoreScatter({
           fill="var(--muted)"
         >
           7-day avg: {average.toFixed(1)}
+        </text>
+        <text
+          x={padLeft}
+          y={padTop}
+          textAnchor="start"
+          fontSize="10"
+          fill="var(--muted)"
+        >
+          {activePoint.date}: {activePoint.score.toFixed(1)}
         </text>
       </svg>
       <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
@@ -2788,38 +2973,66 @@ function MetricTile({ label, value }: { label: string; value: string }) {
 
 function CompactBars({
   values,
+  labels,
   max,
   color,
+  valueFormatter,
 }: {
   values: number[];
+  labels?: string[];
   max: number;
   color: string;
+  valueFormatter?: (value: number, index: number) => string;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
   if (values.length === 0) {
     return <p className="text-xs text-[var(--muted)]">No data yet.</p>;
   }
 
   const safeMax = max > 0 ? max : 1;
+  const activeIndex = hoveredIndex ?? values.length - 1;
+  const activeValue = values[activeIndex] || 0;
+  const activeLabel = labels?.[activeIndex] || `Point ${activeIndex + 1}`;
+  const activeDisplay = valueFormatter
+    ? valueFormatter(activeValue, activeIndex)
+    : activeValue.toFixed(2);
+
   return (
-    <div
-      className="grid gap-1"
-      style={{ gridTemplateColumns: `repeat(${Math.max(values.length, 1)}, minmax(0, 1fr))` }}
-    >
-      {values.map((value, index) => (
-        <div
-          key={`bar-${index}`}
-          className="h-16 rounded border border-[var(--panel-border)] bg-black/20 p-[2px]"
-        >
-          <div
-            className="h-full w-full rounded"
-            style={{
-              transform: `scaleY(${Math.max(0.05, (value || 0) / safeMax)})`,
-              transformOrigin: "bottom",
-              backgroundColor: color,
-            }}
-          />
-        </div>
-      ))}
+    <div>
+      <p className="mb-1 text-[10px] text-[var(--muted)]">
+        {activeLabel}: {activeDisplay}
+      </p>
+      <div
+        className="grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${Math.max(values.length, 1)}, minmax(0, 1fr))` }}
+        onMouseLeave={() => setHoveredIndex(null)}
+      >
+        {values.map((value, index) => {
+          const display = valueFormatter ? valueFormatter(value, index) : value.toFixed(2);
+          const label = labels?.[index] || `Point ${index + 1}`;
+
+          return (
+            <div
+              key={`bar-${index}`}
+              className="h-16 rounded border border-[var(--panel-border)] bg-black/20 p-[2px]"
+              title={`${label}: ${display}`}
+              onMouseEnter={() => setHoveredIndex(index)}
+              onFocus={() => setHoveredIndex(index)}
+            >
+              <div
+                className="h-full w-full rounded"
+                style={{
+                  transform: `scaleY(${Math.max(0.05, (value || 0) / safeMax)})`,
+                  transformOrigin: "bottom",
+                  backgroundColor: color,
+                  outline: activeIndex === index ? "1px solid rgba(255,255,255,0.6)" : "none",
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2837,11 +3050,21 @@ function SeriesPanel({
   color: string;
   unit: string;
 }) {
-  const values = rows
-    .map((row) => extractValue(row))
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const series = rows
+    .map((row) => ({
+      timestamp: row.timestamp,
+      value: extractValue(row),
+    }))
+    .filter(
+      (item): item is { timestamp: string; value: number } =>
+        typeof item.value === "number" && Number.isFinite(item.value),
+    );
+  const values = series.map((item) => item.value);
   const average =
     values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const tail = series.slice(-20);
+  const tailValues = tail.map((item) => item.value);
+  const tailLabels = tail.map((item) => formatDateTime(item.timestamp));
 
   return (
     <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
@@ -2850,7 +3073,13 @@ function SeriesPanel({
         {values.length} points • avg {average.toFixed(2)} {unit}
       </p>
       <div className="mt-2">
-        <CompactBars values={values.slice(-20)} max={Math.max(...values, 1)} color={color} />
+        <CompactBars
+          values={tailValues}
+          labels={tailLabels}
+          max={Math.max(...values, 1)}
+          color={color}
+          valueFormatter={(value) => `${value.toFixed(2)} ${unit}`}
+        />
       </div>
     </div>
   );
