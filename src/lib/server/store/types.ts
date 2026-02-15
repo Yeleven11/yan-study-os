@@ -1,4 +1,12 @@
-import type { AppData, Exam, StudySession, TodoItem } from "@/lib/types";
+import type {
+  AppData,
+  Exam,
+  HealthRawFile,
+  HealthRawRow,
+  StudySession,
+  TodoItem,
+  WorkoutDetail,
+} from "@/lib/types";
 
 export interface DashboardStore {
   getData: () => Promise<AppData>;
@@ -9,4 +17,7 @@ export interface DashboardStore {
   archiveTodo: (id: string) => Promise<void>;
   restoreTodo: (id: string) => Promise<void>;
   updateExams: (exams: Exam[]) => Promise<void>;
+  appendHealthRawFiles: (files: HealthRawFile[]) => Promise<void>;
+  appendHealthRawRows: (rows: HealthRawRow[]) => Promise<void>;
+  upsertWorkoutDetails: (details: WorkoutDetail[]) => Promise<void>;
 }

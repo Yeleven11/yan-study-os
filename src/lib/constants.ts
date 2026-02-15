@@ -1,9 +1,19 @@
-import type { AppData, Exam, SubjectDefinition, SubjectId, SubjectTotals } from "./types";
+import type {
+  AppData,
+  Exam,
+  PerformanceGoals,
+  SubjectDefinition,
+  SubjectId,
+  SubjectTotals,
+} from "./types";
 
 export const USER_NAME = "Yan";
 export const EXAM_HIGHLIGHT_COLOR = "#00F0FF";
 export const CALENDAR_DAYS_AHEAD = 120;
 export const MIN_SESSION_SECONDS = 300;
+export const DEFAULT_SLEEP_HOURS_TARGET = 9;
+export const DEFAULT_BASELINE_STUDY_HOURS = 3.5;
+export const DEFAULT_WEEKLY_WORKOUT_TARGET = 4;
 
 export const SUBJECTS: SubjectDefinition[] = [
   {
@@ -218,11 +228,28 @@ export function createEmptySubjectTotals(): SubjectTotals {
   }, {} as SubjectTotals);
 }
 
+export function createDefaultPerformanceGoals(): PerformanceGoals {
+  return {
+    sleepHoursTarget: DEFAULT_SLEEP_HOURS_TARGET,
+    baselineStudyHours: DEFAULT_BASELINE_STUDY_HOURS,
+    weeklyWorkoutTarget: DEFAULT_WEEKLY_WORKOUT_TARGET,
+    weekdayWakeTime: "06:30",
+    weekendWakeTime: "08:30",
+    ageYears: 18,
+  };
+}
+
 export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
   return {
     exams: STARTER_EXAMS,
     studySessions: [],
     todos: [],
+    dailyHealth: [],
+    workouts: [],
+    workoutDetails: [],
+    healthRawFiles: [],
+    healthRawRows: [],
+    goals: createDefaultPerformanceGoals(),
     settings: {
       timezone,
       examHighlightColor: EXAM_HIGHLIGHT_COLOR,

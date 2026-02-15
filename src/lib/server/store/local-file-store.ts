@@ -1,8 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createDefaultAppData } from "@/lib/constants";
+import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
-import type { AppData } from "@/lib/types";
+import type {
+  AppData,
+  DailyHealthFact,
+  HealthRawFile,
+  HealthRawRow,
+  PerformanceGoals,
+  WorkoutDetail,
+  WorkoutEntry,
+} from "@/lib/types";
 import type { DashboardStore } from "./types";
 
 const DATA_DIRECTORY = path.join(process.cwd(), "runtime-data");
@@ -14,6 +22,180 @@ const EXAMS_BACKUP_FILE_PATH = path.join(
 
 let writeQueue = Promise.resolve();
 
+function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
+  const defaults = createDefaultPerformanceGoals();
+  return {
+    sleepHoursTarget:
+      typeof goals?.sleepHoursTarget === "number" && Number.isFinite(goals.sleepHoursTarget)
+        ? goals.sleepHoursTarget
+        : defaults.sleepHoursTarget,
+    baselineStudyHours:
+      typeof goals?.baselineStudyHours === "number" && Number.isFinite(goals.baselineStudyHours)
+        ? goals.baselineStudyHours
+        : defaults.baselineStudyHours,
+    weeklyWorkoutTarget:
+      typeof goals?.weeklyWorkoutTarget === "number" &&
+      Number.isFinite(goals.weeklyWorkoutTarget)
+        ? goals.weeklyWorkoutTarget
+        : defaults.weeklyWorkoutTarget,
+    weekdayWakeTime:
+      typeof goals?.weekdayWakeTime === "string" && goals.weekdayWakeTime.trim().length > 0
+        ? goals.weekdayWakeTime
+        : defaults.weekdayWakeTime,
+    weekendWakeTime:
+      typeof goals?.weekendWakeTime === "string" && goals.weekendWakeTime.trim().length > 0
+        ? goals.weekendWakeTime
+        : defaults.weekendWakeTime,
+    ageYears:
+      typeof goals?.ageYears === "number" && Number.isFinite(goals.ageYears)
+        ? goals.ageYears
+        : defaults.ageYears,
+  };
+}
+
+function normalizeDailyHealth(items: DailyHealthFact[] | undefined): DailyHealthFact[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.date === "string" &&
+        typeof item.sleepHours === "number" &&
+        Number.isFinite(item.sleepHours),
+    )
+    .map((item) => ({
+      ...item,
+      source: item.source || "manual",
+      createdAt: item.createdAt || new Date().toISOString(),
+    }))
+    .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+}
+
+function normalizeWorkouts(items: WorkoutEntry[] | undefined): WorkoutEntry[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.type === "string" &&
+        typeof item.startedAt === "string" &&
+        typeof item.endedAt === "string" &&
+        typeof item.durationMin === "number" &&
+        Number.isFinite(item.durationMin),
+    )
+    .map((item) => ({
+      ...item,
+      source: item.source || "manual",
+      createdAt: item.createdAt || item.startedAt,
+    }))
+    .sort(
+      (left, right) =>
+        new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
+    );
+}
+
+function normalizeWorkoutDetails(items: WorkoutDetail[] | undefined): WorkoutDetail[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.workoutId === "string" &&
+        typeof item.workoutKey === "string" &&
+        typeof item.workoutType === "string" &&
+        typeof item.startedAt === "string" &&
+        typeof item.endedAt === "string" &&
+        typeof item.durationMin === "number" &&
+        typeof item.mergeConfidence === "number" &&
+        typeof item.streamCount === "number" &&
+        Array.isArray(item.sourceFiles) &&
+        Array.isArray(item.streams),
+    )
+    .map((item) => ({
+      ...item,
+      sourceFiles: item.sourceFiles.filter((value) => typeof value === "string"),
+      streams: item.streams
+        .filter(
+          (stream) =>
+            stream &&
+            typeof stream.id === "string" &&
+            typeof stream.workoutKey === "string" &&
+            typeof stream.streamType === "string" &&
+            typeof stream.sourceFile === "string" &&
+            Array.isArray(stream.rows),
+        )
+        .map((stream) => ({
+          ...stream,
+          rows: stream.rows.filter(
+            (row) =>
+              row &&
+              typeof row.timestamp === "string" &&
+              (typeof row.value === "number" ||
+                typeof row.avg === "number" ||
+                typeof row.min === "number" ||
+                typeof row.max === "number"),
+          ),
+        })),
+    }));
+}
+
+function normalizeRawFiles(items: HealthRawFile[] | undefined): HealthRawFile[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.hash === "string" &&
+        typeof item.filename === "string" &&
+        typeof item.fileType === "string" &&
+        typeof item.rowCount === "number" &&
+        typeof item.importedAt === "string",
+    )
+    .sort(
+      (left, right) =>
+        new Date(left.importedAt).getTime() - new Date(right.importedAt).getTime(),
+    );
+}
+
+function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.fileId === "string" &&
+        typeof item.rowIndex === "number" &&
+        item.values &&
+        typeof item.values === "object",
+    )
+    .map((item) => ({
+      ...item,
+      values: Object.fromEntries(
+        Object.entries(item.values).filter(
+          ([key, value]) => typeof key === "string" && typeof value === "string",
+        ),
+      ),
+    }));
+}
+
 function normalizeData(data: AppData): AppData {
   return {
     exams: [...data.exams].sort(
@@ -23,6 +205,12 @@ function normalizeData(data: AppData): AppData {
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
+    dailyHealth: normalizeDailyHealth(data.dailyHealth),
+    workouts: normalizeWorkouts(data.workouts),
+    workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
+    healthRawFiles: normalizeRawFiles(data.healthRawFiles),
+    healthRawRows: normalizeRawRows(data.healthRawRows),
+    goals: normalizeGoals(data.goals),
     settings: {
       timezone: data.settings?.timezone || "Europe/Berlin",
       examHighlightColor: data.settings?.examHighlightColor || "#00F0FF",
@@ -145,6 +333,45 @@ function createLocalFileStore(): DashboardStore {
       );
       await writeData(data);
       await writeExamBackup(data);
+    },
+    async appendHealthRawFiles(files) {
+      if (files.length === 0) {
+        return;
+      }
+
+      const data = await readData();
+      const byId = new Map(data.healthRawFiles.map((file) => [file.id, file]));
+      for (const file of files) {
+        byId.set(file.id, file);
+      }
+      data.healthRawFiles = [...byId.values()];
+      await writeData(data);
+    },
+    async appendHealthRawRows(rows) {
+      if (rows.length === 0) {
+        return;
+      }
+
+      const data = await readData();
+      const byId = new Map(data.healthRawRows.map((row) => [row.id, row]));
+      for (const row of rows) {
+        byId.set(row.id, row);
+      }
+      data.healthRawRows = [...byId.values()];
+      await writeData(data);
+    },
+    async upsertWorkoutDetails(details) {
+      if (details.length === 0) {
+        return;
+      }
+
+      const data = await readData();
+      const byId = new Map(data.workoutDetails.map((detail) => [detail.workoutId, detail]));
+      for (const detail of details) {
+        byId.set(detail.workoutId, detail);
+      }
+      data.workoutDetails = [...byId.values()];
+      await writeData(data);
     },
   };
 }

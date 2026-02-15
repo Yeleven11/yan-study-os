@@ -15,6 +15,16 @@ Personal IBDP Year 2 study command center for the final exam sprint.
 - Timer auto-resume after refresh/reopen
 - Subject cumulative study trackers (6 subjects)
 - Study log (reverse chronological, subject color strips)
+- Whoop-style condition/readiness widget (sleep + HRV + RHR + load + cognitive strain)
+- Workout tracker with manual logging + calendar workout markers
+- Health Analytics V2:
+  - multi-file Apple Health CSV ingestion (batch import)
+  - merged workout assembly across split stream files
+  - workout confidence + stream count + raw file provenance
+  - Workout Explorer rail cards + full drill-down modal with raw series visuals
+  - sleep raw bars (hours + score) and 7-day/30-day trend views
+- Goal-driven coaching (study target, bedtime recommendation, workout recommendation)
+- CSV health import endpoint (comma-separated) with sample-mode fallback when no health data exists
 - Left-side todo rail with:
   - add todo (`title`, `deadline`, `ultraPriority`, `subject`)
   - chronological sorting + ultra-priority pinning
@@ -136,14 +146,68 @@ This creates:
 - `GET /api/auth/session`
 - `GET /api/dashboard/bootstrap`
 - `GET|POST /api/study-sessions`
+- `GET|POST /api/workouts`
 - `GET|POST|PATCH /api/todos`
 - `POST /api/todos/:id/archive`
 - `POST /api/todos/:id/restore`
 - `GET|PUT /api/settings/exams`
+- `GET|PUT /api/settings/goals`
+- `POST /api/integrations/health/csv` (Bearer auth via `HEALTH_EXPORT_BEARER_TOKEN` or session fallback)
+- `POST /api/integrations/health/import-batch`
+- `GET /api/workouts/:id` (merged workout detail drill-down)
+- `GET /api/health/raw/files` (raw import file transparency)
+
+## Health Import V2
+
+### Supported CSV Patterns
+
+- Daily aggregates: `HealthAutoExport-*.csv`
+- Workout summary anchor: `Workouts-*.csv`
+- Workout detail streams (split files):
+  - `*-Heart Rate-YYYYMMDD_HHmmss.csv`
+  - `*-Heart Rate Recovery-YYYYMMDD_HHmmss.csv`
+  - `*-Walking + Running Distance-YYYYMMDD_HHmmss.csv`
+  - `*-Step Count-YYYYMMDD_HHmmss.csv`
+  - `*-Active Energy-YYYYMMDD_HHmmss.csv`
+  - `*-Resting Energy-YYYYMMDD_HHmmss.csv`
+  - `*-Flights Climbed-YYYYMMDD_HHmmss.csv`
+- Explicitly ignored:
+  - route/GPS files (`*-Route-*.csv`, `*.gpx`)
+
+### Merge Behavior
+
+- `workoutKey` is derived from workout stem + timestamp token (`YYYYMMDD_HHmmss`).
+- Canonical source priority:
+  - `Workouts-*.csv` summary row is canonical when present.
+  - Stream files are attached by exact `workoutKey` first.
+  - Fallback match: nearest start time window (`±3 minutes`) + inferred workout type.
+- If no canonical summary exists, a workout is inferred from stream timestamps/metrics.
+- Metric precedence:
+  - Summary metrics win when positive/non-zero.
+  - Missing metrics are filled from stream aggregates.
+  - HR average is weighted by interval duration from stream rows.
+- Imports are idempotent by content hash; duplicate files are ignored.
+
+### Import Workflows
+
+- In dashboard UI:
+  - `Performance -> Health CSV Import -> Batch import folder files (.csv)` for multi-file upload.
+  - paste-single CSV is still supported.
+- Scripted batch import:
+
+```bash
+node scripts/import-health-folder.mjs "/absolute/path/to/export/folder" "http://localhost:3000"
+```
+
+Optional:
+
+- `HEALTH_EXPORT_BEARER_TOKEN` for bearer-auth import mode.
+- `HEALTH_IMPORT_BASE_URL` to set default API base.
 
 ## Quality Checks
 
 ```bash
 npm run lint
+npm run test:health
 npm run build
 ```

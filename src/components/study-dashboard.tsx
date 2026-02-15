@@ -28,18 +28,28 @@ import {
   toDateKey,
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
+import { buildPerformanceInsights } from "@/lib/health-engine";
 import type {
   ActiveTimerState,
   AppData,
+  DailyHealthFact,
+  DailyRecommendation,
+  DailyReadiness,
+  DashboardBootstrap,
   Exam,
   OfflineAction,
+  PerformanceGoals,
   StudySession,
   SubjectId,
   TodoItem,
+  WorkoutDetail,
+  WorkoutEntry,
+  WorkoutStreamPoint,
+  WorkoutType,
 } from "@/lib/types";
 
 type AuthStatus = "checking" | "signedOut" | "signedIn";
-type ExpandedCard = "calendar" | "timer" | "totals" | "log" | null;
+type ExpandedCard = "calendar" | "timer" | "totals" | "health" | null;
 
 const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
@@ -345,6 +355,24 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
+  return {
+    exams: bootstrap.exams,
+    studySessions: bootstrap.studySessions,
+    todos: bootstrap.todos,
+    dailyHealth: Array.isArray(bootstrap.dailyHealth) ? bootstrap.dailyHealth : [],
+    workouts: Array.isArray(bootstrap.workouts) ? bootstrap.workouts : [],
+    workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
+    healthRawFiles: Array.isArray(bootstrap.healthRawFiles) ? bootstrap.healthRawFiles : [],
+    healthRawRows: Array.isArray(bootstrap.healthRawRows) ? bootstrap.healthRawRows : [],
+    goals: bootstrap.goals || createDefaultAppData(timezone).goals,
+    settings: {
+      timezone: bootstrap.settings?.timezone || timezone,
+      examHighlightColor: bootstrap.settings?.examHighlightColor || "#00F0FF",
+    },
+  };
+}
+
 function FocusModal({
   open,
   onClose,
@@ -476,6 +504,23 @@ export default function StudyDashboard() {
   const [countdownBaselines, setCountdownBaselines] = useState<Record<string, number>>(
     () => readCountdownBaselines(),
   );
+  const [goalsDraft, setGoalsDraft] = useState<PerformanceGoals | null>(null);
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [csvInput, setCsvInput] = useState("");
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [batchImportSummary, setBatchImportSummary] = useState<{
+    importedHealthDays: number;
+    importedWorkouts: number;
+    filesProcessed: number;
+    filesSkipped: number;
+    linkedStreams?: number;
+  } | null>(null);
+  const [workoutTypeDraft, setWorkoutTypeDraft] = useState<WorkoutType>("cardio");
+  const [workoutDurationDraft, setWorkoutDurationDraft] = useState("35");
+  const [workoutKcalDraft, setWorkoutKcalDraft] = useState("");
+  const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
+  const [selectedWorkoutDetail, setSelectedWorkoutDetail] = useState<WorkoutDetail | null>(null);
+  const [loadingWorkoutDetail, setLoadingWorkoutDetail] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -612,15 +657,7 @@ export default function StudyDashboard() {
       try {
         const bootstrap = await repository.getBootstrap();
 
-        let nextData: AppData = {
-          exams: bootstrap.exams,
-          studySessions: bootstrap.studySessions,
-          todos: bootstrap.todos,
-          settings: {
-            timezone: bootstrap.settings?.timezone || timezone,
-            examHighlightColor: bootstrap.settings?.examHighlightColor || "#00F0FF",
-          },
-        };
+        let nextData = toAppData(bootstrap, timezone);
 
         if (offlineQueue.length > 0) {
           nextData = offlineQueue.reduce(applyOfflineAction, nextData);
@@ -675,6 +712,24 @@ export default function StudyDashboard() {
       window.removeEventListener("online", onOnline);
     };
   }, [flushOfflineQueue, repository.mode]);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    setGoalsDraft(data.goals);
+  }, [data]);
+
+  useEffect(() => {
+    if (!data || !selectedWorkoutId) {
+      return;
+    }
+
+    const detail =
+      data.workoutDetails.find((item) => item.workoutId === selectedWorkoutId) || null;
+    setSelectedWorkoutDetail(detail);
+  }, [data, selectedWorkoutId]);
 
   const greeting = useMemo(() => {
     const now = new Date(timePulse);
@@ -778,17 +833,6 @@ export default function StudyDashboard() {
     }, {});
   }, [data]);
 
-  const sortedSessions = useMemo(() => {
-    if (!data) {
-      return [];
-    }
-
-    return [...data.studySessions].sort(
-      (left, right) =>
-        new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime(),
-    );
-  }, [data]);
-
   const activeTodos = useMemo(() => {
     if (!data) {
       return [];
@@ -804,6 +848,85 @@ export default function StudyDashboard() {
 
     return sortTodos(data.todos.filter((todo) => todo.archived));
   }, [data]);
+
+  const performanceInsights = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    return buildPerformanceInsights(data, new Date(timePulse));
+  }, [data, timePulse]);
+
+  const readinessByDate = useMemo(
+    () => performanceInsights?.readinessByDate || {},
+    [performanceInsights],
+  );
+  const recommendationsByDate = useMemo(
+    () => performanceInsights?.recommendationsByDate || {},
+    [performanceInsights],
+  );
+  const todayReadiness = performanceInsights?.todayReadiness || null;
+  const todayRecommendation = performanceInsights?.todayRecommendation || null;
+
+  const workoutsByDate = useMemo(() => {
+    if (!performanceInsights) {
+      return {} as Record<string, WorkoutEntry[]>;
+    }
+
+    return performanceInsights.workouts.reduce<Record<string, WorkoutEntry[]>>(
+      (accumulator, workout) => {
+        const key = toDateKey(workout.startedAt);
+        accumulator[key] = accumulator[key] || [];
+        accumulator[key].push(workout);
+        return accumulator;
+      },
+      {},
+    );
+  }, [performanceInsights]);
+
+  const sortedWorkouts = useMemo(() => {
+    if (!performanceInsights) {
+      return [];
+    }
+
+    return [...performanceInsights.workouts].sort(
+      (left, right) =>
+        new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime(),
+    );
+  }, [performanceInsights]);
+
+  const healthDaysSorted = useMemo(() => {
+    if (!performanceInsights) {
+      return [] as DailyHealthFact[];
+    }
+
+    return [...performanceInsights.healthDays].sort(
+      (left, right) => new Date(left.date).getTime() - new Date(right.date).getTime(),
+    );
+  }, [performanceInsights]);
+
+  const sleepTrend14 = useMemo(
+    () => healthDaysSorted.slice(-14),
+    [healthDaysSorted],
+  );
+
+  const sleepTrend30 = useMemo(
+    () => healthDaysSorted.slice(-30),
+    [healthDaysSorted],
+  );
+
+  const sleepAverage7 = useMemo(() => {
+    const tail = healthDaysSorted.slice(-7).map((day) => day.sleepHours);
+    if (tail.length === 0) {
+      return 0;
+    }
+
+    return tail.reduce((sum, value) => sum + value, 0) / tail.length;
+  }, [healthDaysSorted]);
+
+  const readinessTrend14 = useMemo(() => {
+    return sleepTrend14.map((day) => readinessByDate[day.date]?.sleepScore || 0);
+  }, [readinessByDate, sleepTrend14]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1020,6 +1143,163 @@ export default function StudyDashboard() {
 
     setStatusMessage("Exam schedule updated.");
   };
+
+  const handleSaveGoals = async () => {
+    if (!goalsDraft || !data) {
+      return;
+    }
+
+    setGoalsSaving(true);
+
+    try {
+      await applyMutation(
+        (previous) => ({
+          ...previous,
+          goals: goalsDraft,
+        }),
+        () => repository.updateGoals(goalsDraft),
+      );
+      setStatusMessage("Performance goals updated.");
+    } finally {
+      setGoalsSaving(false);
+    }
+  };
+
+  const handleImportCsv = async () => {
+    if (!csvInput.trim()) {
+      setStatusMessage("Paste CSV data first.");
+      return;
+    }
+
+    setCsvImporting(true);
+    try {
+      const result = await repository.importHealthCsv(csvInput);
+      const timezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || data?.settings.timezone || "Europe/Berlin";
+      const bootstrap = await repository.getBootstrap();
+      setData(toAppData(bootstrap, timezone));
+      setBatchImportSummary(null);
+      setStatusMessage(
+        `Imported ${result.importedHealthDays} health days and ${result.importedWorkouts} workouts.`,
+      );
+      setCsvInput("");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "CSV import failed.");
+    } finally {
+      setCsvImporting(false);
+    }
+  };
+
+  const handleImportBatchFiles = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const inputFiles = Array.from(event.target.files || []);
+    if (inputFiles.length === 0) {
+      return;
+    }
+
+    setCsvImporting(true);
+    setBatchImportSummary(null);
+
+    try {
+      const files = await Promise.all(
+        inputFiles.map(async (file) => ({
+          filename: file.name,
+          csv: await file.text(),
+        })),
+      );
+
+      const result = await repository.importHealthBatch(files);
+      const timezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || data?.settings.timezone || "Europe/Berlin";
+      const bootstrap = await repository.getBootstrap();
+      setData(toAppData(bootstrap, timezone));
+      setBatchImportSummary(result);
+      setStatusMessage(
+        `Batch import finished: ${result.filesProcessed} files parsed, ${result.importedWorkouts} workouts merged.`,
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Batch CSV import failed.");
+    } finally {
+      setCsvImporting(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleAddWorkout = async () => {
+    if (!data) {
+      return;
+    }
+
+    const durationMin = Number(workoutDurationDraft);
+    if (!Number.isFinite(durationMin) || durationMin < 10) {
+      setStatusMessage("Workout duration must be at least 10 minutes.");
+      return;
+    }
+
+    const activeKcal = Number(workoutKcalDraft);
+    const endedAt = new Date().toISOString();
+    const startedAt = new Date(Date.now() - durationMin * 60_000).toISOString();
+    const workout: WorkoutEntry = {
+      id: crypto.randomUUID(),
+      type: workoutTypeDraft,
+      startedAt,
+      endedAt,
+      durationMin,
+      activeKcal: Number.isFinite(activeKcal) && activeKcal > 0 ? activeKcal : undefined,
+      source: "manual",
+      createdAt: endedAt,
+    };
+
+    await applyMutation(
+      (previous) => ({
+        ...previous,
+        workouts: [...previous.workouts, workout].sort(
+          (left, right) =>
+            new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
+        ),
+      }),
+      () => repository.createWorkout(workout),
+    );
+
+    setWorkoutDurationDraft("35");
+    setWorkoutKcalDraft("");
+    setStatusMessage(`${workout.type} workout logged (${durationMin} min).`);
+  };
+
+  const handleSelectWorkout = useCallback(
+    async (workoutId: string) => {
+      if (!data) {
+        return;
+      }
+
+      setSelectedWorkoutId(workoutId);
+      setExpandedCard("health");
+
+      const cachedDetail =
+        data.workoutDetails.find((detail) => detail.workoutId === workoutId) || null;
+      setSelectedWorkoutDetail(cachedDetail);
+      setLoadingWorkoutDetail(true);
+
+      try {
+        const detail = await repository.getWorkoutDetail(workoutId);
+        setSelectedWorkoutDetail(detail || cachedDetail);
+      } catch {
+        setSelectedWorkoutDetail(cachedDetail);
+      } finally {
+        setLoadingWorkoutDetail(false);
+      }
+    },
+    [data, repository],
+  );
+
+  useEffect(() => {
+    if (expandedCard !== "health" || selectedWorkoutId || sortedWorkouts.length === 0) {
+      return;
+    }
+
+    void handleSelectWorkout(sortedWorkouts[0].id);
+  }, [expandedCard, handleSelectWorkout, selectedWorkoutId, sortedWorkouts]);
 
   if (authStatus === "checking") {
     return (
@@ -1268,10 +1548,63 @@ export default function StudyDashboard() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto pr-1">
+                {todayReadiness && todayRecommendation ? (
+                  <div className="mb-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                          Condition
+                        </p>
+                        <p className="text-sm font-semibold">
+                          Readiness {Math.round(todayReadiness.score)} / 100
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">
+                          Zone: {todayReadiness.zone.toUpperCase()} • Confidence{" "}
+                          {Math.round(todayReadiness.confidence * 100)}%
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+                          Study target: {todayRecommendation.studyTargetHours.toFixed(1)}h
+                        </span>
+                        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+                          Bedtime: {todayRecommendation.bedtimeLabel}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <p className="text-xs text-[var(--muted)]">
+                        {todayRecommendation.workoutSuggestion}
+                      </p>
+                      <p className="text-xs text-[var(--muted)]">
+                        7-day trend: {performanceInsights?.trendDelta7d && performanceInsights.trendDelta7d > 0 ? "+" : ""}
+                        {performanceInsights?.trendDelta7d || 0}
+                      </p>
+                    </div>
+                    {performanceInsights?.usingSampleData ? (
+                      <p className="mt-2 text-xs text-[#8fb9ff]">
+                        Running in sample mode until real health CSV data is imported.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(15,minmax(0,1fr))] md:grid-cols-[repeat(20,minmax(0,1fr))] xl:grid-cols-[repeat(24,minmax(0,1fr))]">
                 {calendarDays.map((dateKey) => {
                   const aggregate = dayAggregates[dateKey];
                   const exams = examsByDate[dateKey] || [];
+                  const workouts = workoutsByDate[dateKey] || [];
+                  const readiness = readinessByDate[dateKey];
+                  const readinessColor =
+                    readiness?.zone === "green"
+                      ? "#4ade80"
+                      : readiness?.zone === "yellow"
+                      ? "#facc15"
+                      : readiness?.zone === "orange"
+                      ? "#fb923c"
+                      : readiness?.zone === "red"
+                      ? "#f87171"
+                      : null;
 
                   const dominantColor = aggregate?.dominantSubjectId
                     ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
@@ -1283,11 +1616,24 @@ export default function StudyDashboard() {
                       type="button"
                       title={`${dateKey} • ${
                         aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "No study"
-                      }`}
+                      } • ${workouts.length} workout${workouts.length === 1 ? "" : "s"}`}
                       className="group relative aspect-square rounded-[4px] border border-white/5 transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       style={{ backgroundColor: dominantColor }}
                       aria-label={dateKey}
                     >
+                      {readinessColor ? (
+                        <span
+                          className="pointer-events-none absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: readinessColor }}
+                        />
+                      ) : null}
+
+                      {workouts.length > 0 ? (
+                        <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
+                          {workouts.length}
+                        </span>
+                      ) : null}
+
                       {exams.length > 0 ? (
                         <span
                           className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
@@ -1303,7 +1649,8 @@ export default function StudyDashboard() {
                 </div>
               </div>
               <p className="mt-3 text-xs text-[var(--muted)]">
-                120-day forward study calendar. Color = most studied subject for the day.
+                120-day calendar. Fill color = most studied subject. Top-left dot = readiness zone.
+                Blue badge = workout count.
               </p>
             </section>
 
@@ -1398,11 +1745,11 @@ export default function StudyDashboard() {
                 </p>
               </section>
 
-              <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+              <section className="h-full min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Cumulative Time</p>
-                    <h2 className="text-sm font-semibold">Per Subject Totals</h2>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Performance</p>
+                    <h2 className="text-sm font-semibold">Condition + Totals</h2>
                   </div>
                   <button
                     type="button"
@@ -1438,14 +1785,188 @@ export default function StudyDashboard() {
                     );
                   })}
                 </div>
+
+                {todayReadiness ? (
+                  <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Readiness Components
+                    </p>
+                    <MetricBar label="Sleep" value={todayReadiness.sleepComponent} />
+                    <MetricBar label="Autonomic" value={todayReadiness.autonomicComponent} />
+                    <MetricBar label="Load" value={todayReadiness.loadComponent} />
+                    <MetricBar label="Cognitive" value={todayReadiness.cognitiveComponent} />
+                  </div>
+                ) : null}
+
+                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Workout Tracker
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">
+                    This week: {performanceInsights?.weeklyWorkoutCount || 0}/
+                    {performanceInsights?.weeklyWorkoutTarget || 0} • Last workout{" "}
+                    {performanceInsights?.daysSinceWorkout ?? 0}d ago
+                  </p>
+                  <div className="grid grid-cols-[1fr_86px_86px_auto] gap-2">
+                    <select
+                      value={workoutTypeDraft}
+                      onChange={(event) => setWorkoutTypeDraft(event.target.value as WorkoutType)}
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    >
+                      <option value="cardio">Cardio</option>
+                      <option value="strength">Strength</option>
+                      <option value="mobility">Mobility</option>
+                      <option value="recovery">Recovery</option>
+                    </select>
+                    <input
+                      value={workoutDurationDraft}
+                      onChange={(event) => setWorkoutDurationDraft(event.target.value)}
+                      placeholder="min"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={workoutKcalDraft}
+                      onChange={(event) => setWorkoutKcalDraft(event.target.value)}
+                      placeholder="kcal"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddWorkout}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    >
+                      Log
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Goals
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      value={goalsDraft?.sleepHoursTarget ?? ""}
+                      onChange={(event) =>
+                        setGoalsDraft((current) =>
+                          current
+                            ? { ...current, sleepHoursTarget: Number(event.target.value) || 0 }
+                            : current,
+                        )
+                      }
+                      placeholder="Sleep h"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={goalsDraft?.baselineStudyHours ?? ""}
+                      onChange={(event) =>
+                        setGoalsDraft((current) =>
+                          current
+                            ? { ...current, baselineStudyHours: Number(event.target.value) || 0 }
+                            : current,
+                        )
+                      }
+                      placeholder="Study h"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={goalsDraft?.weeklyWorkoutTarget ?? ""}
+                      onChange={(event) =>
+                        setGoalsDraft((current) =>
+                          current
+                            ? { ...current, weeklyWorkoutTarget: Number(event.target.value) || 0 }
+                            : current,
+                        )
+                      }
+                      placeholder="Weekly WO"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={goalsDraft?.weekdayWakeTime ?? ""}
+                      onChange={(event) =>
+                        setGoalsDraft((current) =>
+                          current ? { ...current, weekdayWakeTime: event.target.value } : current,
+                        )
+                      }
+                      placeholder="Weekday wake"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={goalsDraft?.weekendWakeTime ?? ""}
+                      onChange={(event) =>
+                        setGoalsDraft((current) =>
+                          current ? { ...current, weekendWakeTime: event.target.value } : current,
+                        )
+                      }
+                      placeholder="Weekend wake"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveGoals}
+                    disabled={!goalsDraft || goalsSaving}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    {goalsSaving ? "Saving..." : "Save Goals"}
+                  </button>
+                </div>
+
+                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Health CSV Import
+                  </p>
+                  <label className="block rounded border border-dashed border-[var(--panel-border)] px-2 py-2 text-xs text-[var(--muted)]">
+                    Batch import folder files (.csv)
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      multiple
+                      onChange={handleImportBatchFiles}
+                      className="mt-2 block w-full text-xs"
+                    />
+                  </label>
+                  <textarea
+                    value={csvInput}
+                    onChange={(event) => setCsvInput(event.target.value)}
+                    placeholder="Paste comma-separated CSV rows here (for future Apple export)."
+                    className="h-20 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleImportCsv}
+                    disabled={csvImporting}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    {csvImporting ? "Importing..." : "Import CSV"}
+                  </button>
+                  {batchImportSummary ? (
+                    <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-[11px] text-[var(--muted)]">
+                      Parsed {batchImportSummary.filesProcessed} files, skipped{" "}
+                      {batchImportSummary.filesSkipped}, imported{" "}
+                      {batchImportSummary.importedHealthDays} health days, merged{" "}
+                      {batchImportSummary.importedWorkouts} workouts, linked{" "}
+                      {batchImportSummary.linkedStreams || 0} streams.
+                    </div>
+                  ) : null}
+                </div>
               </section>
             </div>
 
           </main>
 
-          <StudyLogRail
-            sortedSessions={sortedSessions}
-            onExpand={() => setExpandedCard("log")}
+          <HealthRail
+            sleepTrend14={sleepTrend14}
+            readinessTrend14={readinessTrend14}
+            sortedWorkouts={sortedWorkouts}
+            todayReadiness={todayReadiness}
+            sevenDaySleepAverage={sleepAverage7}
+            nowMs={timePulse}
+            onExpand={() => setExpandedCard("health")}
+            onSelectWorkout={(workoutId) => void handleSelectWorkout(workoutId)}
+            usingSampleData={Boolean(performanceInsights?.usingSampleData)}
           />
         </div>
       </div>
@@ -1466,7 +1987,7 @@ export default function StudyDashboard() {
             ? "Study Timer"
             : expandedCard === "totals"
             ? "Cumulative Totals"
-            : "Study Log"
+            : "Health Explorer"
         }
       >
         {expandedCard === "calendar" ? (
@@ -1475,9 +1996,22 @@ export default function StudyDashboard() {
               {calendarDays.map((dateKey) => {
                 const aggregate = dayAggregates[dateKey];
                 const examList = examsByDate[dateKey] || [];
+                const workouts = workoutsByDate[dateKey] || [];
+                const readiness = readinessByDate[dateKey];
+                const recommendation = recommendationsByDate[dateKey];
                 const dominantColor = aggregate?.dominantSubjectId
                   ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
                   : "rgba(255,255,255,0.04)";
+                const readinessColor =
+                  readiness?.zone === "green"
+                    ? "#4ade80"
+                    : readiness?.zone === "yellow"
+                    ? "#facc15"
+                    : readiness?.zone === "orange"
+                    ? "#fb923c"
+                    : readiness?.zone === "red"
+                    ? "#f87171"
+                    : null;
 
                 return (
                   <div key={dateKey} className="space-y-1">
@@ -1486,6 +2020,17 @@ export default function StudyDashboard() {
                       style={{ backgroundColor: dominantColor }}
                       title={dateKey}
                     >
+                      {readinessColor ? (
+                        <span
+                          className="absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: readinessColor }}
+                        />
+                      ) : null}
+                      {workouts.length > 0 ? (
+                        <span className="absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
+                          {workouts.length}
+                        </span>
+                      ) : null}
                       {examList.length > 0 ? (
                         <span
                           className="pointer-events-none absolute inset-[-2px] rounded border"
@@ -1496,7 +2041,10 @@ export default function StudyDashboard() {
                         />
                       ) : null}
                     </div>
-                    <p className="truncate text-[10px] text-[var(--muted)]">{dateKey.slice(5)}</p>
+                    <p className="truncate text-[10px] text-[var(--muted)]">
+                      {dateKey.slice(5)} {readiness ? `• ${Math.round(readiness.score)}` : ""}
+                      {recommendation ? ` • ${recommendation.studyTargetHours.toFixed(1)}h` : ""}
+                    </p>
                   </div>
                 );
               })}
@@ -1555,30 +2103,42 @@ export default function StudyDashboard() {
           </div>
         ) : null}
 
-        {expandedCard === "log" ? (
-          <div className="space-y-2">
-            {sortedSessions.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">No study sessions yet.</p>
-            ) : (
-              sortedSessions.map((session) => (
-                <article
-                  key={session.id}
-                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2"
-                >
-                  <div className="mb-2 h-1 rounded" style={{ backgroundColor: SUBJECT_BY_ID[session.subjectId].color }} />
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold">{SUBJECT_BY_ID[session.subjectId].name}</p>
-                    <p className="text-sm">{formatDuration(session.durationSec)}</p>
-                  </div>
-                  <p className="text-xs text-[var(--muted)]">
-                    {formatDateTime(session.startedAt)} to {formatDateTime(session.endedAt)}
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
+        {expandedCard === "health" ? (
+          <HealthExplorer
+            todayReadiness={todayReadiness}
+            todayRecommendation={todayRecommendation}
+            sleepTrend30={sleepTrend30}
+            readinessByDate={readinessByDate}
+            workouts={sortedWorkouts}
+            selectedWorkoutId={selectedWorkoutId}
+            selectedWorkoutDetail={selectedWorkoutDetail}
+            loadingWorkoutDetail={loadingWorkoutDetail}
+            onSelectWorkout={(workoutId) => void handleSelectWorkout(workoutId)}
+            rawFiles={data.healthRawFiles}
+          />
         ) : null}
       </FocusModal>
+    </div>
+  );
+}
+
+function MetricBar({ label, value }: { label: string; value: number }) {
+  const safe = Math.max(0, Math.min(100, value));
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
+        <span>{label}</span>
+        <span>{Math.round(safe)}</span>
+      </div>
+      <div className="h-1.5 rounded bg-black/35">
+        <div
+          className="h-full rounded transition-all duration-300"
+          style={{
+            width: `${safe}%`,
+            backgroundColor: safe >= 75 ? "#4ade80" : safe >= 55 ? "#facc15" : "#fb923c",
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -1781,19 +2341,39 @@ function TodoRail({
   );
 }
 
-function StudyLogRail({
-  sortedSessions,
+function HealthRail({
+  sleepTrend14,
+  readinessTrend14,
+  sortedWorkouts,
+  todayReadiness,
+  sevenDaySleepAverage,
+  nowMs,
   onExpand,
+  onSelectWorkout,
+  usingSampleData,
 }: {
-  sortedSessions: StudySession[];
+  sleepTrend14: DailyHealthFact[];
+  readinessTrend14: number[];
+  sortedWorkouts: WorkoutEntry[];
+  todayReadiness: DailyReadiness | null;
+  sevenDaySleepAverage: number;
+  nowMs: number;
   onExpand: () => void;
+  onSelectWorkout: (workoutId: string) => void;
+  usingSampleData: boolean;
 }) {
+  const latestSleep = sleepTrend14[sleepTrend14.length - 1];
+  const workouts14 = sortedWorkouts.slice(0, 14);
+  const workouts7d = sortedWorkouts.filter(
+    (workout) => nowMs - new Date(workout.startedAt).getTime() <= 7 * 86_400_000,
+  ).length;
+
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Log</p>
-          <h2 className="text-sm font-semibold">Recent Sessions</h2>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Health Rail</p>
+          <h2 className="text-sm font-semibold">Sleep + Workout Explorer</h2>
         </div>
         <button
           type="button"
@@ -1804,34 +2384,395 @@ function StudyLogRail({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
-        {sortedSessions.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No study sessions logged yet.</p>
+      <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
+        <MetricTile label="Sleep (last)" value={`${latestSleep?.sleepHours?.toFixed(2) || "0.00"}h`} />
+        <MetricTile label="Sleep 7d avg" value={`${sevenDaySleepAverage.toFixed(2)}h`} />
+        <MetricTile label="Sleep score" value={`${Math.round(todayReadiness?.sleepScore || 0)}`} />
+        <MetricTile label="Workouts 7d" value={`${workouts7d}`} />
+      </div>
+
+      <div className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+        <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+          Sleep Hours (14d)
+        </p>
+        <CompactBars
+          values={sleepTrend14.map((item) => item.sleepHours)}
+          max={Math.max(10, ...sleepTrend14.map((item) => item.sleepHours), 8)}
+          color="#6bd4ff"
+        />
+      </div>
+
+      <div className="mt-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+        <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+          Sleep Score (14d)
+        </p>
+        <CompactBars values={readinessTrend14} max={100} color="#8af58b" />
+      </div>
+
+      {usingSampleData ? (
+        <p className="mt-2 text-xs text-[#8fb9ff]">
+          Sample mode active until real health exports are imported.
+        </p>
+      ) : null}
+
+      <div className="mt-3 min-h-0 flex-1 overflow-auto pr-1">
+        <p className="pb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+          Workout Explorer (last 14)
+        </p>
+        {workouts14.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No workouts yet.</p>
         ) : (
-          sortedSessions.map((session) => (
-            <article
-              key={session.id}
-              className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2"
+          workouts14.map((workout) => (
+            <button
+              type="button"
+              key={`rail-workout-${workout.id}`}
+              onClick={() => onSelectWorkout(workout.id)}
+              className="mb-2 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-left transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
             >
-              <div
-                className="mb-2 h-1 rounded"
-                style={{ backgroundColor: SUBJECT_BY_ID[session.subjectId].color }}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
-                <span className="font-semibold text-[var(--text)]">
-                  {SUBJECT_BY_ID[session.subjectId].name}
-                </span>
-                <span>{formatDuration(session.durationSec)}</span>
+              <div className="mb-2 h-1 rounded bg-[#5BC0EB]" />
+              <div className="flex items-center justify-between gap-2 text-xs text-[var(--muted)]">
+                <span className="font-semibold capitalize text-[var(--text)]">{workout.type}</span>
+                <span>{workout.durationMin.toFixed(0)}m</span>
               </div>
+              <p className="mt-1 text-xs text-[var(--muted)]">{formatDateTime(workout.startedAt)}</p>
               <p className="mt-1 text-xs text-[var(--muted)]">
-                {formatDateTime(session.startedAt)}
+                {formatOptionalNumber(workout.distanceKm, "km", 2)} •{" "}
+                {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "bpm", 0)} •{" "}
+                Confidence {Math.round((workout.mergeConfidence || 0) * 100)}%
               </p>
-            </article>
+            </button>
           ))
         )}
       </div>
     </aside>
   );
+}
+
+function HealthExplorer({
+  todayReadiness,
+  todayRecommendation,
+  sleepTrend30,
+  readinessByDate,
+  workouts,
+  selectedWorkoutId,
+  selectedWorkoutDetail,
+  loadingWorkoutDetail,
+  onSelectWorkout,
+  rawFiles,
+}: {
+  todayReadiness: DailyReadiness | null;
+  todayRecommendation: DailyRecommendation | null;
+  sleepTrend30: DailyHealthFact[];
+  readinessByDate: Record<string, DailyReadiness>;
+  workouts: WorkoutEntry[];
+  selectedWorkoutId: string | null;
+  selectedWorkoutDetail: WorkoutDetail | null;
+  loadingWorkoutDetail: boolean;
+  onSelectWorkout: (workoutId: string) => void;
+  rawFiles: AppData["healthRawFiles"];
+}) {
+  const sleepScores30 = sleepTrend30.map((item) => readinessByDate[item.date]?.sleepScore || 0);
+  const workouts30 = workouts.slice(0, 30);
+  const selectedWorkout =
+    workouts.find((workout) => workout.id === selectedWorkoutId) || workouts[0] || null;
+
+  return (
+    <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
+      <div className="space-y-4 overflow-auto pr-1">
+        <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricTile label="Readiness" value={`${Math.round(todayReadiness?.score || 0)} / 100`} />
+          <MetricTile label="Sleep Score" value={`${Math.round(todayReadiness?.sleepScore || 0)}`} />
+          <MetricTile label="Sleep Debt" value={`${(todayReadiness?.sleepDebtHours || 0).toFixed(2)}h`} />
+          <MetricTile label="Tonight Bedtime" value={todayRecommendation?.bedtimeLabel || "--:--"} />
+        </section>
+
+        <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+            Sleep Raw (30d)
+          </p>
+          <div className="mt-2">
+            <CompactBars
+              values={sleepTrend30.map((item) => item.sleepHours)}
+              max={Math.max(10, ...sleepTrend30.map((item) => item.sleepHours), 8)}
+              color="#6bd4ff"
+            />
+          </div>
+          <div className="mt-3">
+            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+              Sleep Score (30d)
+            </p>
+            <CompactBars values={sleepScores30} max={100} color="#8af58b" />
+          </div>
+          <div className="mt-3 overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[var(--muted)]">
+                <tr>
+                  <th className="px-1 py-1 text-left">Date</th>
+                  <th className="px-1 py-1 text-right">Sleep h</th>
+                  <th className="px-1 py-1 text-right">Core</th>
+                  <th className="px-1 py-1 text-right">Deep</th>
+                  <th className="px-1 py-1 text-right">REM</th>
+                  <th className="px-1 py-1 text-right">Awake</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sleepTrend30.slice().reverse().slice(0, 14).map((item) => (
+                  <tr key={`sleep-row-${item.date}`} className="border-t border-[var(--panel-border)]">
+                    <td className="px-1 py-1">{item.date}</td>
+                    <td className="px-1 py-1 text-right">{item.sleepHours.toFixed(2)}</td>
+                    <td className="px-1 py-1 text-right">{(item.sleepCoreHours || 0).toFixed(2)}</td>
+                    <td className="px-1 py-1 text-right">{(item.sleepDeepHours || 0).toFixed(2)}</td>
+                    <td className="px-1 py-1 text-right">{(item.sleepRemHours || 0).toFixed(2)}</td>
+                    <td className="px-1 py-1 text-right">{(item.sleepAwakeHours || 0).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+              Workout Timeline
+            </p>
+            <p className="text-xs text-[var(--muted)]">
+              Study target {todayRecommendation?.studyTargetHours?.toFixed(1) || "0.0"}h
+            </p>
+          </div>
+          <div className="overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[var(--muted)]">
+                <tr>
+                  <th className="px-1 py-1 text-left">Date</th>
+                  <th className="px-1 py-1 text-left">Type</th>
+                  <th className="px-1 py-1 text-right">Duration</th>
+                  <th className="px-1 py-1 text-right">Distance</th>
+                  <th className="px-1 py-1 text-right">Avg HR</th>
+                  <th className="px-1 py-1 text-right">Energy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workouts30.map((workout) => (
+                  <tr
+                    key={`timeline-${workout.id}`}
+                    className={`cursor-pointer border-t border-[var(--panel-border)] transition hover:bg-black/20 ${
+                      selectedWorkout?.id === workout.id ? "bg-black/20" : ""
+                    }`}
+                    onClick={() => onSelectWorkout(workout.id)}
+                  >
+                    <td className="px-1 py-1">{formatDateTime(workout.startedAt)}</td>
+                    <td className="px-1 py-1 capitalize">{workout.type}</td>
+                    <td className="px-1 py-1 text-right">{workout.durationMin.toFixed(0)}m</td>
+                    <td className="px-1 py-1 text-right">{formatOptionalNumber(workout.distanceKm, "km", 2)}</td>
+                    <td className="px-1 py-1 text-right">
+                      {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "", 0)}
+                    </td>
+                    <td className="px-1 py-1 text-right">{formatOptionalNumber(workout.activeEnergyKj, "kJ", 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <aside className="min-h-0 overflow-auto rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+        <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+          Workout Drill-Down
+        </p>
+        {loadingWorkoutDetail ? (
+          <p className="mt-2 text-sm text-[var(--muted)]">Loading workout details...</p>
+        ) : selectedWorkoutDetail ? (
+          <div className="mt-2 space-y-3">
+            <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-xs">
+              <p className="font-semibold capitalize text-[var(--text)]">
+                {selectedWorkoutDetail.workoutType} workout
+              </p>
+              <p className="mt-1 text-[var(--muted)]">
+                {formatDateTime(selectedWorkoutDetail.startedAt)} to{" "}
+                {formatDateTime(selectedWorkoutDetail.endedAt)}
+              </p>
+              <p className="mt-1 text-[var(--muted)]">
+                {selectedWorkoutDetail.durationMin.toFixed(0)}m • Stream count{" "}
+                {selectedWorkoutDetail.streamCount} • Confidence{" "}
+                {Math.round(selectedWorkoutDetail.mergeConfidence * 100)}%
+              </p>
+              <p className="mt-1 text-[var(--muted)]">
+                {formatOptionalNumber(selectedWorkoutDetail.distanceKm, "km", 2)} •{" "}
+                {formatOptionalNumber(selectedWorkoutDetail.hrAvg, "bpm", 0)} •{" "}
+                {formatOptionalNumber(selectedWorkoutDetail.activeEnergyKj, "kJ", 0)}
+              </p>
+            </div>
+
+            <SeriesPanel
+              title="Heart Rate Series"
+              rows={selectedWorkoutDetail.heartRateSeries || []}
+              extractValue={(row) => row.avg ?? row.max ?? row.min}
+              color="#ff8f8f"
+              unit="bpm"
+            />
+            <SeriesPanel
+              title="Distance Series"
+              rows={selectedWorkoutDetail.distanceSeries || []}
+              extractValue={(row) => row.value}
+              color="#6bd4ff"
+              unit="km"
+            />
+            <SeriesPanel
+              title="Step Series"
+              rows={selectedWorkoutDetail.stepSeries || []}
+              extractValue={(row) => row.value}
+              color="#ffe27a"
+              unit="steps"
+            />
+            <SeriesPanel
+              title="Active Energy Series"
+              rows={selectedWorkoutDetail.activeEnergySeries || []}
+              extractValue={(row) => row.value}
+              color="#8af58b"
+              unit="kJ"
+            />
+
+            <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                Stream Provenance
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Key: {selectedWorkoutDetail.workoutKey}
+              </p>
+              <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                {selectedWorkoutDetail.sourceFiles.map((file) => (
+                  <li key={`source-${file}`} className="truncate">
+                    {file}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Pick a workout from the timeline to inspect full merged details and raw streams.
+          </p>
+        )}
+
+        <div className="mt-4 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+            Import Transparency
+          </p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Parsed raw files: {rawFiles.length}
+          </p>
+          <div className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-[var(--muted)]">
+            {rawFiles.slice().reverse().slice(0, 16).map((file) => (
+              <p key={`raw-file-${file.id}`} className="truncate">
+                {file.filename} • {file.fileType} • {file.rowCount} rows
+              </p>
+            ))}
+          </div>
+        </div>
+
+        {todayRecommendation ? (
+          <p className="mt-3 text-xs text-[var(--muted)]">{todayRecommendation.workoutSuggestion}</p>
+        ) : null}
+      </aside>
+    </div>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-1.5">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</p>
+    </div>
+  );
+}
+
+function CompactBars({
+  values,
+  max,
+  color,
+}: {
+  values: number[];
+  max: number;
+  color: string;
+}) {
+  if (values.length === 0) {
+    return <p className="text-xs text-[var(--muted)]">No data yet.</p>;
+  }
+
+  const safeMax = max > 0 ? max : 1;
+  return (
+    <div
+      className="grid gap-1"
+      style={{ gridTemplateColumns: `repeat(${Math.max(values.length, 1)}, minmax(0, 1fr))` }}
+    >
+      {values.map((value, index) => (
+        <div
+          key={`bar-${index}`}
+          className="h-16 rounded border border-[var(--panel-border)] bg-black/20 p-[2px]"
+        >
+          <div
+            className="h-full w-full rounded"
+            style={{
+              transform: `scaleY(${Math.max(0.05, (value || 0) / safeMax)})`,
+              transformOrigin: "bottom",
+              backgroundColor: color,
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SeriesPanel({
+  title,
+  rows,
+  extractValue,
+  color,
+  unit,
+}: {
+  title: string;
+  rows: WorkoutStreamPoint[];
+  extractValue: (row: WorkoutStreamPoint) => number | undefined;
+  color: string;
+  unit: string;
+}) {
+  const values = rows
+    .map((row) => extractValue(row))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const average =
+    values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+
+  return (
+    <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
+      <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{title}</p>
+      <p className="mt-1 text-xs text-[var(--muted)]">
+        {values.length} points • avg {average.toFixed(2)} {unit}
+      </p>
+      <div className="mt-2">
+        <CompactBars values={values.slice(-20)} max={Math.max(...values, 1)} color={color} />
+      </div>
+    </div>
+  );
+}
+
+function formatOptionalNumber(
+  value: number | undefined,
+  suffix: string,
+  digits: number,
+): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  if (suffix) {
+    return `${value.toFixed(digits)}${suffix}`;
+  }
+
+  return value.toFixed(digits);
 }
 
 function ExamEditor({
