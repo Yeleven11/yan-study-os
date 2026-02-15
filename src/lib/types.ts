@@ -252,6 +252,148 @@ export interface DailyRecommendation {
   bedtimeLabel: string;
 }
 
+export type PlannerApplyMode = "recommend_only" | "write_targets";
+export type PlannerBlockMode = "targets_only" | "time_blocks";
+export type PlannerRunSource = "manual" | "auto";
+export type PlannerBlockIntensity = "light" | "moderate" | "deep";
+
+export interface PlannerTimeWindow {
+  start: string;
+  end: string;
+  label?: string;
+}
+
+export interface PlannerDayTemplate {
+  dayOfWeek: number;
+  studyWindows: PlannerTimeWindow[];
+  blockedWindows: PlannerTimeWindow[];
+  minStudyHours: number;
+  maxStudyHours: number;
+  defaultSessionMin: number;
+}
+
+export interface PlannerDateOverride {
+  date: string;
+  unavailable?: boolean;
+  minStudyHours?: number;
+  maxStudyHours?: number;
+  studyWindows?: PlannerTimeWindow[];
+  blockedWindows?: PlannerTimeWindow[];
+  note?: string;
+}
+
+export interface PlannerWeights {
+  examUrgency: number;
+  todoUrgency: number;
+  readiness: number;
+  consistency: number;
+  lifeBalance: number;
+}
+
+export interface PlannerProfile {
+  version: number;
+  timezone: string;
+  horizonDays: number;
+  applyMode: PlannerApplyMode;
+  blockMode: PlannerBlockMode;
+  includeWorkoutPlanning: boolean;
+  includeBedtimeGuidance: boolean;
+  defaultSessionMin: number;
+  minSessionMin: number;
+  maxSessionMin: number;
+  breakMin: number;
+  maxConsecutiveStudyDays: number;
+  recoveryProtectionThreshold: number;
+  allowWeekendStudy: boolean;
+  weeklyTemplate: PlannerDayTemplate[];
+  dateOverrides: PlannerDateOverride[];
+  weights: PlannerWeights;
+  updatedAt: string;
+}
+
+export interface PlannerSubjectAllocation {
+  subjectId: SubjectId;
+  hours: number;
+  reason: string;
+}
+
+export interface PlannerStudyBlock {
+  startIso: string;
+  endIso: string;
+  durationMin: number;
+  subjectId: SubjectId;
+  intensity: PlannerBlockIntensity;
+  reason: string;
+}
+
+export interface PlannerDayPlan {
+  date: string;
+  readinessScore: number;
+  sleepScore: number;
+  recommendedStudyHours: number;
+  plannedStudyHours: number;
+  availableStudyHours: number;
+  minStudyHours: number;
+  maxStudyHours: number;
+  constrained: boolean;
+  notes: string[];
+  bedtimeLabel?: string;
+  workoutSuggestion?: string;
+  subjectAllocations: PlannerSubjectAllocation[];
+  blocks: PlannerStudyBlock[];
+}
+
+export interface PlannerRunSummary {
+  totalPlannedHours: number;
+  avgPlannedHours: number;
+  constrainedDays: number;
+  lowReadinessDays: number;
+  highReadinessDays: number;
+}
+
+export interface PlannerRun {
+  id: string;
+  createdAt: string;
+  source: PlannerRunSource;
+  horizonDays: number;
+  startDate: string;
+  profile: PlannerProfile;
+  summary: PlannerRunSummary;
+  days: PlannerDayPlan[];
+  applied: boolean;
+  appliedAt?: string;
+}
+
+export interface PlannedDayTarget {
+  date: string;
+  studyTargetHours: number;
+  workoutType: WorkoutType;
+  workoutDurationMin: number;
+  bedtimeLabel: string;
+  sourceRunId: string;
+  createdAt: string;
+}
+
+export interface HealthIngestReconcileReport {
+  id: string;
+  createdAt: string;
+  filesProcessed: number;
+  filesSkipped: number;
+  filesIgnored: number;
+  importedHealthDays: number;
+  importedWorkouts: number;
+  linkedStreams: number;
+  canonicalWorkoutCount: number;
+  streamBucketCount: number;
+  inferredWorkoutCount: number;
+  unresolvedStreamBucketCount: number;
+  duplicateFilesIgnored: number;
+  unknownFilesIgnored: number;
+  routeFilesIgnored: number;
+  emptyFilesSkipped: number;
+  warnings: string[];
+}
+
 export interface AppData {
   exams: Exam[];
   studySessions: StudySession[];
@@ -261,6 +403,10 @@ export interface AppData {
   workoutDetails: WorkoutDetail[];
   healthRawFiles: HealthRawFile[];
   healthRawRows: HealthRawRow[];
+  plannerProfile: PlannerProfile;
+  plannerRuns: PlannerRun[];
+  plannedTargets: PlannedDayTarget[];
+  healthIngestReports: HealthIngestReconcileReport[];
   goals: PerformanceGoals;
   settings: AppSettings;
 }

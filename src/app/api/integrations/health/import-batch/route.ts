@@ -205,6 +205,7 @@ export async function POST(request: NextRequest) {
       filesProcessed: imported.summary.filesProcessed,
       filesSkipped: imported.summary.filesSkipped + imported.summary.filesIgnored,
       linkedStreams: imported.summary.linkedStreams,
+      reconcile: imported.summary.reconcile,
     });
   } catch (error) {
     const err = error as {

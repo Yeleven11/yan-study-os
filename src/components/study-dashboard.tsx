@@ -42,8 +42,11 @@ import type {
   DailyReadiness,
   DashboardBootstrap,
   Exam,
+  HealthIngestReconcileReport,
   OfflineAction,
   PerformanceGoals,
+  PlannerProfile,
+  PlannerRun,
   StudySession,
   SubjectId,
   TodoItem,
@@ -371,6 +374,13 @@ function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
     workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
     healthRawFiles: Array.isArray(bootstrap.healthRawFiles) ? bootstrap.healthRawFiles : [],
     healthRawRows: Array.isArray(bootstrap.healthRawRows) ? bootstrap.healthRawRows : [],
+    plannerProfile:
+      bootstrap.plannerProfile || createDefaultAppData(timezone).plannerProfile,
+    plannerRuns: Array.isArray(bootstrap.plannerRuns) ? bootstrap.plannerRuns : [],
+    plannedTargets: Array.isArray(bootstrap.plannedTargets) ? bootstrap.plannedTargets : [],
+    healthIngestReports: Array.isArray(bootstrap.healthIngestReports)
+      ? bootstrap.healthIngestReports
+      : [],
     goals: bootstrap.goals || createDefaultAppData(timezone).goals,
     settings: {
       timezone: bootstrap.settings?.timezone || timezone,
@@ -526,6 +536,10 @@ export default function StudyDashboard() {
   );
   const [goalsDraft, setGoalsDraft] = useState<PerformanceGoals | null>(null);
   const [goalsSaving, setGoalsSaving] = useState(false);
+  const [plannerDraft, setPlannerDraft] = useState<PlannerProfile | null>(null);
+  const [plannerSaving, setPlannerSaving] = useState(false);
+  const [plannerGenerating, setPlannerGenerating] = useState(false);
+  const [plannerApplying, setPlannerApplying] = useState(false);
   const [csvInput, setCsvInput] = useState("");
   const [csvImporting, setCsvImporting] = useState(false);
   const [batchImportSummary, setBatchImportSummary] = useState<{
@@ -534,6 +548,7 @@ export default function StudyDashboard() {
     filesProcessed: number;
     filesSkipped: number;
     linkedStreams?: number;
+    reconcile?: HealthIngestReconcileReport;
   } | null>(null);
   const [workoutTypeDraft, setWorkoutTypeDraft] = useState<WorkoutType>("cardio");
   const [workoutDurationDraft, setWorkoutDurationDraft] = useState("35");
@@ -739,6 +754,7 @@ export default function StudyDashboard() {
     }
 
     setGoalsDraft(data.goals);
+    setPlannerDraft(data.plannerProfile);
   }, [data]);
 
   useEffect(() => {
@@ -902,6 +918,33 @@ export default function StudyDashboard() {
   );
   const todayReadiness = performanceInsights?.todayReadiness || null;
   const todayRecommendation = performanceInsights?.todayRecommendation || null;
+  const plannerRunsSorted = useMemo(() => {
+    if (!data) {
+      return [] as PlannerRun[];
+    }
+
+    return [...data.plannerRuns].sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+  }, [data]);
+  const latestPlannerRun = plannerRunsSorted[0] || null;
+  const latestIngestReport = useMemo(() => {
+    if (!data || data.healthIngestReports.length === 0) {
+      return null;
+    }
+
+    return [...data.healthIngestReports].sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    )[0];
+  }, [data]);
+  const plannerWeekdayTemplate = useMemo(
+    () => plannerDraft?.weeklyTemplate.find((template) => template.dayOfWeek === 1) || null,
+    [plannerDraft],
+  );
+  const plannerWeekendTemplate = useMemo(
+    () => plannerDraft?.weeklyTemplate.find((template) => template.dayOfWeek === 0) || null,
+    [plannerDraft],
+  );
 
   const workoutsByDate = useMemo(() => {
     if (!performanceInsights) {
@@ -1395,6 +1438,104 @@ export default function StudyDashboard() {
     }
   };
 
+  const reloadBootstrapData = useCallback(async () => {
+    const timezone =
+      Intl.DateTimeFormat().resolvedOptions().timeZone || data?.settings.timezone || "Europe/Berlin";
+    const bootstrap = await repository.getBootstrap();
+    setData(toAppData(bootstrap, timezone));
+  }, [data?.settings.timezone, repository]);
+
+  const handleSavePlannerProfile = async () => {
+    if (!plannerDraft) {
+      return;
+    }
+
+    setPlannerSaving(true);
+    try {
+      const saved = await repository.updatePlannerProfile(plannerDraft);
+      setData((previous) =>
+        previous
+          ? {
+              ...previous,
+              plannerProfile: saved,
+            }
+          : previous,
+      );
+      setPlannerDraft(saved);
+      setStatusMessage("Planner profile saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Failed to save planner profile.");
+    } finally {
+      setPlannerSaving(false);
+    }
+  };
+
+  const handleGeneratePlanner = async (apply = false) => {
+    if (!plannerDraft) {
+      return;
+    }
+
+    setPlannerGenerating(true);
+    try {
+      const result = await repository.generatePlanner({
+        profile: plannerDraft,
+        persistProfile: true,
+        apply,
+      });
+      await reloadBootstrapData();
+      setStatusMessage(
+        `Planner generated ${result.run.horizonDays}d plan (${result.run.summary.totalPlannedHours.toFixed(1)}h total).`,
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Planner generation failed.");
+    } finally {
+      setPlannerGenerating(false);
+    }
+  };
+
+  const handleApplyPlannerRun = async (runId: string) => {
+    if (!runId) {
+      return;
+    }
+
+    setPlannerApplying(true);
+    try {
+      const result = await repository.applyPlannerRun(runId);
+      await reloadBootstrapData();
+      setStatusMessage(
+        `Planner run applied. ${result.plannedTargets} day targets are now active.`,
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Failed to apply planner run.");
+    } finally {
+      setPlannerApplying(false);
+    }
+  };
+
+  const updatePlannerTemplateRange = useCallback(
+    (days: number[], patch: Partial<{ minStudyHours: number; maxStudyHours: number }>) => {
+      setPlannerDraft((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          weeklyTemplate: current.weeklyTemplate.map((template) =>
+            days.includes(template.dayOfWeek)
+              ? {
+                  ...template,
+                  ...patch,
+                }
+              : template,
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    },
+    [],
+  );
+
   const handleImportCsv = async () => {
     if (!csvInput.trim()) {
       setStatusMessage("Paste CSV data first.");
@@ -1404,11 +1545,15 @@ export default function StudyDashboard() {
     setCsvImporting(true);
     try {
       const result = await repository.importHealthCsv(csvInput);
-      const timezone =
-        Intl.DateTimeFormat().resolvedOptions().timeZone || data?.settings.timezone || "Europe/Berlin";
-      const bootstrap = await repository.getBootstrap();
-      setData(toAppData(bootstrap, timezone));
-      setBatchImportSummary(null);
+      await reloadBootstrapData();
+      setBatchImportSummary({
+        importedHealthDays: result.importedHealthDays,
+        importedWorkouts: result.importedWorkouts,
+        filesProcessed: result.filesProcessed || 1,
+        filesSkipped: result.filesSkipped || 0,
+        linkedStreams: result.linkedStreams,
+        reconcile: result.reconcile,
+      });
       setStatusMessage(
         `Imported ${result.importedHealthDays} health days and ${result.importedWorkouts} workouts.`,
       );
@@ -1440,10 +1585,7 @@ export default function StudyDashboard() {
       );
 
       const result = await repository.importHealthBatch(files);
-      const timezone =
-        Intl.DateTimeFormat().resolvedOptions().timeZone || data?.settings.timezone || "Europe/Berlin";
-      const bootstrap = await repository.getBootstrap();
-      setData(toAppData(bootstrap, timezone));
+      await reloadBootstrapData();
       setBatchImportSummary(result);
       setStatusMessage(
         `Batch import finished: ${result.filesProcessed} files parsed, ${result.importedWorkouts} workouts merged.`,
@@ -2327,6 +2469,199 @@ export default function StudyDashboard() {
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Adaptive Planner
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      value={plannerDraft?.horizonDays ?? ""}
+                      onChange={(event) =>
+                        setPlannerDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                horizonDays: Number(event.target.value) || 7,
+                                updatedAt: new Date().toISOString(),
+                              }
+                            : current,
+                        )
+                      }
+                      placeholder="Horizon d"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={plannerDraft?.defaultSessionMin ?? ""}
+                      onChange={(event) =>
+                        setPlannerDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                defaultSessionMin: Number(event.target.value) || 75,
+                                updatedAt: new Date().toISOString(),
+                              }
+                            : current,
+                        )
+                      }
+                      placeholder="Session min"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={plannerDraft?.recoveryProtectionThreshold ?? ""}
+                      onChange={(event) =>
+                        setPlannerDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                recoveryProtectionThreshold: Number(event.target.value) || 52,
+                                updatedAt: new Date().toISOString(),
+                              }
+                            : current,
+                        )
+                      }
+                      placeholder="Recovery cap"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={plannerWeekdayTemplate?.maxStudyHours ?? ""}
+                      onChange={(event) =>
+                        updatePlannerTemplateRange([1, 2, 3, 4, 5], {
+                          maxStudyHours: Number(event.target.value) || 0,
+                        })
+                      }
+                      placeholder="Weekday max h"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={plannerWeekendTemplate?.maxStudyHours ?? ""}
+                      onChange={(event) =>
+                        updatePlannerTemplateRange([0, 6], {
+                          maxStudyHours: Number(event.target.value) || 0,
+                        })
+                      }
+                      placeholder="Weekend max h"
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                    <select
+                      value={plannerDraft?.applyMode || "recommend_only"}
+                      onChange={(event) =>
+                        setPlannerDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                applyMode:
+                                  event.target.value === "write_targets"
+                                    ? "write_targets"
+                                    : "recommend_only",
+                                updatedAt: new Date().toISOString(),
+                              }
+                            : current,
+                        )
+                      }
+                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    >
+                      <option value="recommend_only">Recommend only</option>
+                      <option value="write_targets">Auto-apply targets</option>
+                    </select>
+                    <label className="inline-flex items-center gap-1 text-xs text-[var(--muted)]">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(plannerDraft?.allowWeekendStudy)}
+                        onChange={(event) =>
+                          setPlannerDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  allowWeekendStudy: event.target.checked,
+                                  updatedAt: new Date().toISOString(),
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                      Weekend
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleSavePlannerProfile()}
+                      disabled={!plannerDraft || plannerSaving}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      {plannerSaving ? "Saving..." : "Save Profile"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleGeneratePlanner(false)}
+                      disabled={!plannerDraft || plannerGenerating}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      {plannerGenerating ? "Generating..." : "Generate 7d Plan"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleGeneratePlanner(true)}
+                      disabled={!plannerDraft || plannerGenerating}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      Generate + Apply
+                    </button>
+                  </div>
+
+                  {latestPlannerRun ? (
+                    <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-[11px] text-[var(--muted)]">
+                      <p>
+                        Latest run: {latestPlannerRun.horizonDays}d •{" "}
+                        {latestPlannerRun.summary.totalPlannedHours.toFixed(1)}h total • avg{" "}
+                        {latestPlannerRun.summary.avgPlannedHours.toFixed(1)}h/day
+                      </p>
+                      <p>
+                        constrained {latestPlannerRun.summary.constrainedDays}d • readiness low{" "}
+                        {latestPlannerRun.summary.lowReadinessDays}d
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void handleApplyPlannerRun(latestPlannerRun.id)}
+                        disabled={plannerApplying || latestPlannerRun.applied}
+                        className="mt-1 rounded border border-[var(--panel-border)] px-2 py-0.5 text-[11px] transition hover:border-[var(--text)] disabled:opacity-60"
+                      >
+                        {plannerApplying
+                          ? "Applying..."
+                          : latestPlannerRun.applied
+                          ? "Already applied"
+                          : "Apply this run"}
+                      </button>
+                      <div className="mt-1 max-h-28 overflow-auto pr-1">
+                        {latestPlannerRun.days.map((day) => (
+                          <p key={day.date} className="rounded px-1 py-0.5">
+                            {day.date}: {day.plannedStudyHours.toFixed(1)}h (ready{" "}
+                            {Math.round(day.readinessScore)})
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[var(--muted)]">
+                      No planner run yet. Generate one to get a constrained 7-day schedule.
+                    </p>
+                  )}
+
+                  {latestIngestReport ? (
+                    <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-[11px] text-[var(--muted)]">
+                      Ingest reconcile: canonical {latestIngestReport.canonicalWorkoutCount}, stream buckets{" "}
+                      {latestIngestReport.streamBucketCount}, inferred {latestIngestReport.inferredWorkoutCount}.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
                     Health CSV Import
                   </p>
                   <label className="block rounded border border-dashed border-[var(--panel-border)] px-2 py-2 text-xs text-[var(--muted)]">
@@ -2360,6 +2695,16 @@ export default function StudyDashboard() {
                       {batchImportSummary.importedHealthDays} health days, merged{" "}
                       {batchImportSummary.importedWorkouts} workouts, linked{" "}
                       {batchImportSummary.linkedStreams || 0} streams.
+                      {batchImportSummary.reconcile ? (
+                        <span>
+                          {" "}
+                          Inferred {batchImportSummary.reconcile.inferredWorkoutCount} workout
+                          {batchImportSummary.reconcile.inferredWorkoutCount === 1 ? "" : "s"}
+                          {batchImportSummary.reconcile.warnings.length > 0
+                            ? ` (${batchImportSummary.reconcile.warnings[0]})`
+                            : "."}
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

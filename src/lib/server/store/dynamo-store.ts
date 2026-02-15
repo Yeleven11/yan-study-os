@@ -6,15 +6,27 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
+import {
+  createDefaultAppData,
+  createDefaultPerformanceGoals,
+  createDefaultPlannerProfile,
+} from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
 import type {
   AppData,
   DailyHealthFact,
   HealthRawFile,
   HealthRawRow,
+  HealthIngestReconcileReport,
   Exam,
+  PlannedDayTarget,
   PerformanceGoals,
+  PlannerDateOverride,
+  PlannerDayTemplate,
+  PlannerProfile,
+  PlannerRun,
+  PlannerTimeWindow,
+  PlannerWeights,
   StudySession,
   TodoItem,
   WorkoutDetail,
@@ -29,6 +41,9 @@ const MAX_WORKOUT_DETAILS = 240;
 const MAX_HEALTH_RAW_FILES = 1000;
 const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 480;
 const MAX_SERIES_POINTS = 480;
+const MAX_PLANNER_RUNS = 80;
+const MAX_PLANNED_TARGETS = 180;
+const MAX_HEALTH_INGEST_REPORTS = 90;
 
 function takeTail<T>(items: T[], max: number): T[] {
   if (items.length <= max) {
@@ -219,6 +234,296 @@ function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
   return [];
 }
 
+function normalizePlannerTimeWindows(
+  windows: PlannerTimeWindow[] | undefined,
+): PlannerTimeWindow[] {
+  if (!Array.isArray(windows)) {
+    return [];
+  }
+
+  return windows
+    .filter(
+      (window) =>
+        window &&
+        typeof window.start === "string" &&
+        typeof window.end === "string" &&
+        /^\d{2}:\d{2}$/.test(window.start) &&
+        /^\d{2}:\d{2}$/.test(window.end),
+    )
+    .map((window) => ({
+      start: window.start,
+      end: window.end,
+      label: typeof window.label === "string" ? window.label : undefined,
+    }));
+}
+
+function normalizePlannerDayTemplates(
+  templates: PlannerDayTemplate[] | undefined,
+  defaults: PlannerDayTemplate[],
+): PlannerDayTemplate[] {
+  const templateByDay = new Map<number, PlannerDayTemplate>();
+
+  for (const template of Array.isArray(templates) ? templates : []) {
+    if (!template || typeof template.dayOfWeek !== "number") {
+      continue;
+    }
+
+    const dayOfWeek = Math.max(0, Math.min(6, Math.floor(template.dayOfWeek)));
+    templateByDay.set(dayOfWeek, {
+      dayOfWeek,
+      studyWindows: normalizePlannerTimeWindows(template.studyWindows),
+      blockedWindows: normalizePlannerTimeWindows(template.blockedWindows),
+      minStudyHours:
+        typeof template.minStudyHours === "number" && Number.isFinite(template.minStudyHours)
+          ? template.minStudyHours
+          : 0,
+      maxStudyHours:
+        typeof template.maxStudyHours === "number" && Number.isFinite(template.maxStudyHours)
+          ? template.maxStudyHours
+          : 8,
+      defaultSessionMin:
+        typeof template.defaultSessionMin === "number" &&
+        Number.isFinite(template.defaultSessionMin)
+          ? template.defaultSessionMin
+          : 75,
+    });
+  }
+
+  return defaults.map((defaultTemplate) => ({
+    ...defaultTemplate,
+    ...(templateByDay.get(defaultTemplate.dayOfWeek) || {}),
+    studyWindows:
+      templateByDay.get(defaultTemplate.dayOfWeek)?.studyWindows || defaultTemplate.studyWindows,
+    blockedWindows:
+      templateByDay.get(defaultTemplate.dayOfWeek)?.blockedWindows || defaultTemplate.blockedWindows,
+  }));
+}
+
+function normalizePlannerOverrides(
+  overrides: PlannerDateOverride[] | undefined,
+): PlannerDateOverride[] {
+  if (!Array.isArray(overrides)) {
+    return [];
+  }
+
+  return overrides
+    .filter((override) => override && typeof override.date === "string")
+    .map((override) => ({
+      date: override.date,
+      unavailable: Boolean(override.unavailable),
+      minStudyHours:
+        typeof override.minStudyHours === "number" && Number.isFinite(override.minStudyHours)
+          ? override.minStudyHours
+          : undefined,
+      maxStudyHours:
+        typeof override.maxStudyHours === "number" && Number.isFinite(override.maxStudyHours)
+          ? override.maxStudyHours
+          : undefined,
+      studyWindows: normalizePlannerTimeWindows(override.studyWindows),
+      blockedWindows: normalizePlannerTimeWindows(override.blockedWindows),
+      note: typeof override.note === "string" ? override.note : undefined,
+    }))
+    .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+}
+
+function normalizePlannerWeights(
+  weights: PlannerWeights | undefined,
+  defaults: PlannerWeights,
+): PlannerWeights {
+  if (!weights) {
+    return defaults;
+  }
+
+  const next = {
+    examUrgency:
+      typeof weights.examUrgency === "number" && Number.isFinite(weights.examUrgency)
+        ? weights.examUrgency
+        : defaults.examUrgency,
+    todoUrgency:
+      typeof weights.todoUrgency === "number" && Number.isFinite(weights.todoUrgency)
+        ? weights.todoUrgency
+        : defaults.todoUrgency,
+    readiness:
+      typeof weights.readiness === "number" && Number.isFinite(weights.readiness)
+        ? weights.readiness
+        : defaults.readiness,
+    consistency:
+      typeof weights.consistency === "number" && Number.isFinite(weights.consistency)
+        ? weights.consistency
+        : defaults.consistency,
+    lifeBalance:
+      typeof weights.lifeBalance === "number" && Number.isFinite(weights.lifeBalance)
+        ? weights.lifeBalance
+        : defaults.lifeBalance,
+  };
+
+  const sum =
+    next.examUrgency +
+    next.todoUrgency +
+    next.readiness +
+    next.consistency +
+    next.lifeBalance;
+
+  if (sum <= 0) {
+    return defaults;
+  }
+
+  return {
+    examUrgency: next.examUrgency / sum,
+    todoUrgency: next.todoUrgency / sum,
+    readiness: next.readiness / sum,
+    consistency: next.consistency / sum,
+    lifeBalance: next.lifeBalance / sum,
+  };
+}
+
+function normalizePlannerProfile(
+  profile: PlannerProfile | undefined,
+  timezone: string,
+): PlannerProfile {
+  const defaults = createDefaultPlannerProfile(timezone);
+  const next = profile || defaults;
+
+  return {
+    version: 1,
+    timezone:
+      typeof next.timezone === "string" && next.timezone.trim().length > 0
+        ? next.timezone
+        : defaults.timezone,
+    horizonDays:
+      typeof next.horizonDays === "number" && Number.isFinite(next.horizonDays)
+        ? Math.max(3, Math.min(14, Math.round(next.horizonDays)))
+        : defaults.horizonDays,
+    applyMode: next.applyMode === "write_targets" ? "write_targets" : "recommend_only",
+    blockMode: next.blockMode === "targets_only" ? "targets_only" : "time_blocks",
+    includeWorkoutPlanning:
+      typeof next.includeWorkoutPlanning === "boolean"
+        ? next.includeWorkoutPlanning
+        : defaults.includeWorkoutPlanning,
+    includeBedtimeGuidance:
+      typeof next.includeBedtimeGuidance === "boolean"
+        ? next.includeBedtimeGuidance
+        : defaults.includeBedtimeGuidance,
+    defaultSessionMin:
+      typeof next.defaultSessionMin === "number" && Number.isFinite(next.defaultSessionMin)
+        ? Math.max(20, Math.min(180, Math.round(next.defaultSessionMin)))
+        : defaults.defaultSessionMin,
+    minSessionMin:
+      typeof next.minSessionMin === "number" && Number.isFinite(next.minSessionMin)
+        ? Math.max(15, Math.min(120, Math.round(next.minSessionMin)))
+        : defaults.minSessionMin,
+    maxSessionMin:
+      typeof next.maxSessionMin === "number" && Number.isFinite(next.maxSessionMin)
+        ? Math.max(30, Math.min(240, Math.round(next.maxSessionMin)))
+        : defaults.maxSessionMin,
+    breakMin:
+      typeof next.breakMin === "number" && Number.isFinite(next.breakMin)
+        ? Math.max(0, Math.min(60, Math.round(next.breakMin)))
+        : defaults.breakMin,
+    maxConsecutiveStudyDays:
+      typeof next.maxConsecutiveStudyDays === "number" &&
+      Number.isFinite(next.maxConsecutiveStudyDays)
+        ? Math.max(2, Math.min(14, Math.round(next.maxConsecutiveStudyDays)))
+        : defaults.maxConsecutiveStudyDays,
+    recoveryProtectionThreshold:
+      typeof next.recoveryProtectionThreshold === "number" &&
+      Number.isFinite(next.recoveryProtectionThreshold)
+        ? Math.max(30, Math.min(80, Math.round(next.recoveryProtectionThreshold)))
+        : defaults.recoveryProtectionThreshold,
+    allowWeekendStudy:
+      typeof next.allowWeekendStudy === "boolean"
+        ? next.allowWeekendStudy
+        : defaults.allowWeekendStudy,
+    weeklyTemplate: normalizePlannerDayTemplates(next.weeklyTemplate, defaults.weeklyTemplate),
+    dateOverrides: normalizePlannerOverrides(next.dateOverrides),
+    weights: normalizePlannerWeights(next.weights, defaults.weights),
+    updatedAt:
+      typeof next.updatedAt === "string" && next.updatedAt
+        ? next.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+function normalizePlannerRuns(items: PlannerRun[] | undefined): PlannerRun[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const normalized = items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.createdAt === "string" &&
+      typeof item.startDate === "string" &&
+      typeof item.horizonDays === "number" &&
+      item.summary &&
+      Array.isArray(item.days),
+  );
+
+  normalized.sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+  );
+
+  return takeTail(normalized, MAX_PLANNER_RUNS);
+}
+
+function normalizePlannedTargets(items: PlannedDayTarget[] | undefined): PlannedDayTarget[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const normalized = items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.date === "string" &&
+        typeof item.studyTargetHours === "number" &&
+        Number.isFinite(item.studyTargetHours) &&
+        typeof item.workoutType === "string" &&
+        typeof item.workoutDurationMin === "number" &&
+        Number.isFinite(item.workoutDurationMin) &&
+        typeof item.bedtimeLabel === "string" &&
+        typeof item.sourceRunId === "string" &&
+        typeof item.createdAt === "string",
+    )
+    .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+
+  return takeTail(normalized, MAX_PLANNED_TARGETS);
+}
+
+function normalizeHealthIngestReports(
+  items: HealthIngestReconcileReport[] | undefined,
+): HealthIngestReconcileReport[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const normalized = items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.createdAt === "string" &&
+        typeof item.filesProcessed === "number" &&
+        typeof item.filesSkipped === "number" &&
+        typeof item.filesIgnored === "number" &&
+        typeof item.importedHealthDays === "number" &&
+        typeof item.importedWorkouts === "number" &&
+        typeof item.linkedStreams === "number",
+    )
+    .map((item) => ({
+      ...item,
+      warnings: Array.isArray(item.warnings)
+        ? item.warnings.filter((warning) => typeof warning === "string")
+        : [],
+    }))
+    .sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    );
+
+  return takeTail(normalized, MAX_HEALTH_INGEST_REPORTS);
+}
+
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -248,6 +553,7 @@ function createDocumentClient(): DynamoDBDocumentClient {
 function normalizeData(data: AppData): AppData {
   const dailyHealth = normalizeDailyHealth(data.dailyHealth);
   const workouts = normalizeWorkouts(data.workouts);
+  const timezone = data.settings?.timezone || "Europe/Berlin";
 
   return {
     exams: [...data.exams].sort(
@@ -262,10 +568,14 @@ function normalizeData(data: AppData): AppData {
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
     healthRawFiles: normalizeRawFiles(data.healthRawFiles),
     healthRawRows: normalizeRawRows(data.healthRawRows),
+    plannerProfile: normalizePlannerProfile(data.plannerProfile, timezone),
+    plannerRuns: normalizePlannerRuns(data.plannerRuns),
+    plannedTargets: normalizePlannedTargets(data.plannedTargets),
+    healthIngestReports: normalizeHealthIngestReports(data.healthIngestReports),
     goals: normalizeGoals(data.goals),
     settings: {
-      timezone: data.settings.timezone || "Europe/Berlin",
-      examHighlightColor: data.settings.examHighlightColor || "#00F0FF",
+      timezone,
+      examHighlightColor: data.settings?.examHighlightColor || "#00F0FF",
     },
   };
 }
@@ -310,6 +620,17 @@ function createDynamoStore(): DashboardStore {
     );
     const healthRawFiles = normalizeRawFiles(settingsResult.Item?.healthRawFiles as HealthRawFile[]);
     const healthRawRows = normalizeRawRows(settingsResult.Item?.healthRawRows as HealthRawRow[]);
+    const plannerProfile = normalizePlannerProfile(
+      settingsResult.Item?.plannerProfile as PlannerProfile,
+      settings.timezone || defaults.settings.timezone,
+    );
+    const plannerRuns = normalizePlannerRuns(settingsResult.Item?.plannerRuns as PlannerRun[]);
+    const plannedTargets = normalizePlannedTargets(
+      settingsResult.Item?.plannedTargets as PlannedDayTarget[],
+    );
+    const healthIngestReports = normalizeHealthIngestReports(
+      settingsResult.Item?.healthIngestReports as HealthIngestReconcileReport[],
+    );
 
     return normalizeData({
       exams,
@@ -320,6 +641,10 @@ function createDynamoStore(): DashboardStore {
       workoutDetails,
       healthRawFiles,
       healthRawRows,
+      plannerProfile,
+      plannerRuns,
+      plannedTargets,
+      healthIngestReports,
       goals,
       settings,
     });
@@ -339,6 +664,10 @@ function createDynamoStore(): DashboardStore {
           workoutDetails: data.workoutDetails,
           healthRawFiles: data.healthRawFiles,
           healthRawRows: data.healthRawRows,
+          plannerProfile: data.plannerProfile,
+          plannerRuns: data.plannerRuns,
+          plannedTargets: data.plannedTargets,
+          healthIngestReports: data.healthIngestReports,
           goals: data.goals,
           updatedAt: new Date().toISOString(),
         },

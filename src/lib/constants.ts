@@ -1,6 +1,8 @@
 import type {
   AppData,
   Exam,
+  PlannerDayTemplate,
+  PlannerProfile,
   PerformanceGoals,
   SubjectDefinition,
   SubjectId,
@@ -239,6 +241,68 @@ export function createDefaultPerformanceGoals(): PerformanceGoals {
   };
 }
 
+function createDefaultPlannerTemplate(): PlannerDayTemplate[] {
+  const weekdayTemplate: PlannerDayTemplate = {
+    dayOfWeek: 1,
+    studyWindows: [
+      { start: "06:45", end: "07:45", label: "Morning review" },
+      { start: "16:00", end: "22:30", label: "After school" },
+    ],
+    blockedWindows: [{ start: "08:00", end: "15:30", label: "School" }],
+    minStudyHours: 2,
+    maxStudyHours: 5.5,
+    defaultSessionMin: 75,
+  };
+
+  const weekendTemplate: PlannerDayTemplate = {
+    dayOfWeek: 0,
+    studyWindows: [{ start: "09:30", end: "22:00", label: "Open focus window" }],
+    blockedWindows: [],
+    minStudyHours: 1.5,
+    maxStudyHours: 6,
+    defaultSessionMin: 90,
+  };
+
+  return [
+    weekendTemplate,
+    { ...weekdayTemplate, dayOfWeek: 1 },
+    { ...weekdayTemplate, dayOfWeek: 2 },
+    { ...weekdayTemplate, dayOfWeek: 3 },
+    { ...weekdayTemplate, dayOfWeek: 4 },
+    { ...weekdayTemplate, dayOfWeek: 5 },
+    { ...weekendTemplate, dayOfWeek: 6 },
+  ];
+}
+
+export function createDefaultPlannerProfile(timezone = "Europe/Berlin"): PlannerProfile {
+  return {
+    version: 1,
+    timezone,
+    horizonDays: 7,
+    applyMode: "recommend_only",
+    blockMode: "time_blocks",
+    includeWorkoutPlanning: true,
+    includeBedtimeGuidance: true,
+    defaultSessionMin: 75,
+    minSessionMin: 35,
+    maxSessionMin: 120,
+    breakMin: 10,
+    maxConsecutiveStudyDays: 6,
+    recoveryProtectionThreshold: 52,
+    allowWeekendStudy: true,
+    weeklyTemplate: createDefaultPlannerTemplate(),
+    dateOverrides: [],
+    weights: {
+      examUrgency: 0.35,
+      todoUrgency: 0.2,
+      readiness: 0.25,
+      consistency: 0.1,
+      lifeBalance: 0.1,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
   return {
     exams: STARTER_EXAMS,
@@ -249,6 +313,10 @@ export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
     workoutDetails: [],
     healthRawFiles: [],
     healthRawRows: [],
+    plannerProfile: createDefaultPlannerProfile(timezone),
+    plannerRuns: [],
+    plannedTargets: [],
+    healthIngestReports: [],
     goals: createDefaultPerformanceGoals(),
     settings: {
       timezone,
