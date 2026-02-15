@@ -1,61 +1,142 @@
-//
-//  ContentView.swift
-//  StudyHealthSync
-//
-//  Created by Yan Borovyk on 15.02.2026.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    @State private var showTokenPlainText = false
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
+        NavigationStack {
+            Form {
+                Section("Permissions") {
+                    HStack {
+                        Text("HealthKit Access")
+                        Spacer()
+                        Text(permissionLabel)
+                            .foregroundStyle(permissionColor)
+                            .fontWeight(.semibold)
+                    }
+
+                    Button("Grant or Refresh Permissions") {
+                        coordinator.requestPermissions()
+                    }
+                }
+
+                Section("Sync Configuration") {
+                    TextField("Server Base URL", text: $coordinator.settings.baseURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .keyboardType(.URL)
+                        .onSubmit {
+                            coordinator.applySettingsAndReschedule()
+                        }
+
+                    HStack {
+                        Group {
+                            if showTokenPlainText {
+                                TextField("Bearer Token", text: $coordinator.settings.token)
+                            } else {
+                                SecureField("Bearer Token", text: $coordinator.settings.token)
+                            }
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+
+                        Button(showTokenPlainText ? "Hide" : "Show") {
+                            showTokenPlainText.toggle()
+                        }
+                        .font(.caption)
+                    }
+
+                    Toggle("Auto Sync", isOn: $coordinator.settings.autoSyncEnabled)
+                        .onChange(of: coordinator.settings.autoSyncEnabled) { _, _ in
+                            coordinator.applySettingsAndReschedule()
+                        }
+
+                    Stepper(
+                        "Update interval: \(coordinator.settings.syncIntervalMinutes) min",
+                        value: $coordinator.settings.syncIntervalMinutes,
+                        in: coordinator.settings.minIntervalMinutes...coordinator.settings.maxIntervalMinutes,
+                        step: 5
+                    )
+                    .onChange(of: coordinator.settings.syncIntervalMinutes) { _, _ in
+                        coordinator.applySettingsAndReschedule()
+                    }
+
+                    Button {
+                        coordinator.triggerManualSync()
                     } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+                        if coordinator.isSyncing {
+                            HStack {
+                                ProgressView()
+                                Text("Syncing...")
+                            }
+                        } else {
+                            Text("Sync Now")
+                        }
+                    }
+                    .disabled(coordinator.isSyncing)
+                }
+
+                Section("Status") {
+                    LabeledContent("Last Successful Sync", value: DateFormatting.absolute(coordinator.lastSyncAt))
+                    LabeledContent("Last Attempt", value: DateFormatting.absolute(coordinator.lastAttemptAt))
+                    LabeledContent("Next Planned Attempt", value: DateFormatting.absolute(coordinator.nextScheduledAt))
+                    LabeledContent("Queue", value: "\(coordinator.pendingQueueCount) pending")
+
+                    if let error = coordinator.lastErrorMessage, !error.isEmpty {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+
+                Section("Recent Sync Logs") {
+                    if coordinator.recentLogs.isEmpty {
+                        Text("No sync logs yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(coordinator.recentLogs) { log in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(log.message)
+                                    .font(.footnote)
+                                Text(log.timestamp)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 2)
+                        }
                     }
                 }
             }
-        } detail: {
-            Text("Select an item")
+            .navigationTitle("StudyHealthSync")
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
+    private var permissionLabel: String {
+        switch coordinator.authorizationState {
+        case .authorized:
+            return "Authorized"
+        case .denied:
+            return "Denied"
+        case .unknown:
+            return "Unknown"
         }
     }
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
+    private var permissionColor: Color {
+        switch coordinator.authorizationState {
+        case .authorized:
+            return .green
+        case .denied:
+            return .red
+        case .unknown:
+            return .orange
         }
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .environmentObject(SyncCoordinator())
 }
