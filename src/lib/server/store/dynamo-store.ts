@@ -23,6 +23,20 @@ import type {
 import type { DashboardStore } from "./types";
 
 const SETTINGS_PK = "settings";
+const MAX_DAILY_HEALTH_DAYS = 730;
+const MAX_WORKOUTS = 1000;
+const MAX_WORKOUT_DETAILS = 240;
+const MAX_HEALTH_RAW_FILES = 1000;
+const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 480;
+const MAX_SERIES_POINTS = 480;
+
+function takeTail<T>(items: T[], max: number): T[] {
+  if (items.length <= max) {
+    return items;
+  }
+
+  return items.slice(items.length - max);
+}
 
 function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
   const defaults = createDefaultPerformanceGoals();
@@ -108,7 +122,7 @@ function normalizeWorkoutDetails(items: WorkoutDetail[] | undefined): WorkoutDet
     return [];
   }
 
-  return items
+  const normalized = items
     .filter(
       (item) =>
         item &&
@@ -138,17 +152,40 @@ function normalizeWorkoutDetails(items: WorkoutDetail[] | undefined): WorkoutDet
         )
         .map((stream) => ({
           ...stream,
-          rows: stream.rows.filter(
-            (row) =>
-              row &&
-              typeof row.timestamp === "string" &&
-              (typeof row.value === "number" ||
-                typeof row.avg === "number" ||
-                typeof row.min === "number" ||
-                typeof row.max === "number"),
+          rows: takeTail(
+            stream.rows.filter(
+              (row) =>
+                row &&
+                typeof row.timestamp === "string" &&
+                (typeof row.value === "number" ||
+                  typeof row.avg === "number" ||
+                  typeof row.min === "number" ||
+                  typeof row.max === "number"),
+            ),
+            MAX_STREAM_ROWS_PER_WORKOUT_STREAM,
           ),
         })),
-    }));
+      heartRateSeries: Array.isArray(item.heartRateSeries)
+        ? takeTail(item.heartRateSeries, MAX_SERIES_POINTS)
+        : item.heartRateSeries,
+      distanceSeries: Array.isArray(item.distanceSeries)
+        ? takeTail(item.distanceSeries, MAX_SERIES_POINTS)
+        : item.distanceSeries,
+      stepSeries: Array.isArray(item.stepSeries)
+        ? takeTail(item.stepSeries, MAX_SERIES_POINTS)
+        : item.stepSeries,
+      activeEnergySeries: Array.isArray(item.activeEnergySeries)
+        ? takeTail(item.activeEnergySeries, MAX_SERIES_POINTS)
+        : item.activeEnergySeries,
+      restingEnergySeries: Array.isArray(item.restingEnergySeries)
+        ? takeTail(item.restingEnergySeries, MAX_SERIES_POINTS)
+        : item.restingEnergySeries,
+    }))
+    .sort(
+      (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
+    );
+
+  return takeTail(normalized, MAX_WORKOUT_DETAILS);
 }
 
 function normalizeRawFiles(items: HealthRawFile[] | undefined): HealthRawFile[] {
@@ -156,7 +193,7 @@ function normalizeRawFiles(items: HealthRawFile[] | undefined): HealthRawFile[] 
     return [];
   }
 
-  return items
+  const normalized = items
     .filter(
       (item) =>
         item &&
@@ -171,31 +208,15 @@ function normalizeRawFiles(items: HealthRawFile[] | undefined): HealthRawFile[] 
       (left, right) =>
         new Date(left.importedAt).getTime() - new Date(right.importedAt).getTime(),
     );
+
+  return takeTail(normalized, MAX_HEALTH_RAW_FILES);
 }
 
 function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items
-    .filter(
-      (item) =>
-        item &&
-        typeof item.id === "string" &&
-        typeof item.fileId === "string" &&
-        typeof item.rowIndex === "number" &&
-        item.values &&
-        typeof item.values === "object",
-    )
-    .map((item) => ({
-      ...item,
-      values: Object.fromEntries(
-        Object.entries(item.values).filter(
-          ([key, value]) => typeof key === "string" && typeof value === "string",
-        ),
-      ),
-    }));
+  // DynamoDB settings-item storage cannot safely hold unbounded per-row raw payloads.
+  // Keep file-level transparency while omitting row-level raw data in this backend.
+  void items;
+  return [];
 }
 
 function getRequiredEnv(name: string): string {
@@ -225,6 +246,9 @@ function createDocumentClient(): DynamoDBDocumentClient {
 }
 
 function normalizeData(data: AppData): AppData {
+  const dailyHealth = normalizeDailyHealth(data.dailyHealth);
+  const workouts = normalizeWorkouts(data.workouts);
+
   return {
     exams: [...data.exams].sort(
       (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
@@ -233,8 +257,8 @@ function normalizeData(data: AppData): AppData {
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
-    dailyHealth: normalizeDailyHealth(data.dailyHealth),
-    workouts: normalizeWorkouts(data.workouts),
+    dailyHealth: takeTail(dailyHealth, MAX_DAILY_HEALTH_DAYS),
+    workouts: takeTail(workouts, MAX_WORKOUTS),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
     healthRawFiles: normalizeRawFiles(data.healthRawFiles),
     healthRawRows: normalizeRawRows(data.healthRawRows),
