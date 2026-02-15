@@ -47,18 +47,76 @@ function getBearerTokenFromHeader(authorizationHeader: string): string {
   return normalizeToken(match[1]);
 }
 
+function unauthorizedResponse(
+  status: 401,
+  reason:
+    | "no_token_or_session"
+    | "missing_request_token"
+    | "token_mismatch",
+  details: {
+    hasAuthorizationHeader: boolean;
+    hasAltHeader: boolean;
+    hasQueryToken: boolean;
+    configuredTokenLength: number;
+  },
+): NextResponse {
+  return NextResponse.json(
+    {
+      error: "Unauthorized",
+      reason,
+      diagnostics: details,
+    },
+    { status },
+  );
+}
+
 function requireIngestAuth(request: NextRequest): NextResponse | null {
   const token = getConfiguredToken();
+  const authorization = request.headers.get("authorization") || "";
+  const bearerToken = getBearerTokenFromHeader(authorization);
+  const altHeaderToken = normalizeToken(
+    request.headers.get("x-health-export-token") || request.headers.get("x-health-token") || undefined,
+  );
+  const queryToken = normalizeToken(
+    request.nextUrl.searchParams.get("ingest_token") ||
+      request.nextUrl.searchParams.get("token") ||
+      undefined,
+  );
+  const candidates = [bearerToken, altHeaderToken, queryToken].filter(
+    (value): value is string => Boolean(value),
+  );
 
   if (!token) {
-    return requireSession(request);
+    const sessionUnauthorized = requireSession(request);
+    if (sessionUnauthorized) {
+      return unauthorizedResponse(401, "no_token_or_session", {
+        hasAuthorizationHeader: Boolean(authorization),
+        hasAltHeader: Boolean(altHeaderToken),
+        hasQueryToken: Boolean(queryToken),
+        configuredTokenLength: 0,
+      });
+    }
+
+    return null;
   }
 
-  const authorization = request.headers.get("authorization") || "";
-  const rawValue = getBearerTokenFromHeader(authorization);
+  if (candidates.length === 0) {
+    return unauthorizedResponse(401, "missing_request_token", {
+      hasAuthorizationHeader: Boolean(authorization),
+      hasAltHeader: Boolean(altHeaderToken),
+      hasQueryToken: Boolean(queryToken),
+      configuredTokenLength: token.length,
+    });
+  }
 
-  if (!rawValue || !tokensMatch(token, rawValue)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const matched = candidates.some((candidate) => tokensMatch(token, candidate));
+  if (!matched) {
+    return unauthorizedResponse(401, "token_mismatch", {
+      hasAuthorizationHeader: Boolean(authorization),
+      hasAltHeader: Boolean(altHeaderToken),
+      hasQueryToken: Boolean(queryToken),
+      configuredTokenLength: token.length,
+    });
   }
 
   return null;
