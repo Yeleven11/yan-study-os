@@ -6,8 +6,36 @@ frontend:
         - npm ci
     build:
       commands:
-        - rm -f .env.production
-        - env | grep -E '^(HEALTH_EXPORT_BEARER_TOKEN|HEALTH_EXPORT_BEARER_TOKE|DATA_BACKEND|YAN_STUDY_PASSCODE_HASH|SESSION_SECRET|YAN_STUDY_SESSIONS_TABLE|YAN_STUDY_TODOS_TABLE|YAN_STUDY_SETTINGS_TABLE|AWS_REGION|NEXT_PUBLIC_)' >> .env.production
+        - |
+          rm -f .env.production
+
+          write_env_var () {
+            key="$1"
+            eval "value=\${$key-}"
+            if [ -z "${value+x}" ]; then
+              return
+            fi
+
+            escaped=$(printf "%s" "$value" | sed "s/'/'\\\\''/g")
+            printf "%s='%s'\n" "$key" "$escaped" >> .env.production
+          }
+
+          write_env_var HEALTH_EXPORT_BEARER_TOKEN
+          write_env_var HEALTH_EXPORT_BEARER_TOKE
+          write_env_var DATA_BACKEND
+          write_env_var YAN_STUDY_PASSCODE_HASH
+          write_env_var SESSION_SECRET
+          write_env_var YAN_STUDY_SESSIONS_TABLE
+          write_env_var YAN_STUDY_TODOS_TABLE
+          write_env_var YAN_STUDY_SETTINGS_TABLE
+          write_env_var AWS_REGION
+          write_env_var DYNAMO_REGION
+          write_env_var NEXT_PUBLIC_DATA_MODE
+
+          env | grep -E '^NEXT_PUBLIC_' | while IFS='=' read -r key value; do
+            escaped=$(printf "%s" "$value" | sed "s/'/'\\\\''/g")
+            printf "%s='%s'\n" "$key" "$escaped" >> .env.production
+          done
         - npm run build
   artifacts:
     baseDirectory: .next

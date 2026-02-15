@@ -107,7 +107,7 @@ function parseScryptHash(value: string): {
 }
 
 export function verifyPasscode(passcode: string): boolean {
-  const storedHash = process.env.YAN_STUDY_PASSCODE_HASH;
+  const storedHash = process.env.YAN_STUDY_PASSCODE_HASH?.replace(/\\\$/g, "$");
 
   if (storedHash) {
     const parsed = parseScryptHash(storedHash);
