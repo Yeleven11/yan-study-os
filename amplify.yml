@@ -1,0 +1,19 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        - rm -f .env.production
+        - env | grep -E '^(HEALTH_EXPORT_BEARER_TOKEN|HEALTH_EXPORT_BEARER_TOKE|DATA_BACKEND|YAN_STUDY_PASSCODE_HASH|SESSION_SECRET|YAN_STUDY_SESSIONS_TABLE|YAN_STUDY_TODOS_TABLE|YAN_STUDY_SETTINGS_TABLE|AWS_REGION|NEXT_PUBLIC_)' >> .env.production
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*

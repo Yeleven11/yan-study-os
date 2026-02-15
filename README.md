@@ -139,6 +139,11 @@ This creates:
 
 4. Deploy.
 
+Note for Next.js SSR routes on Amplify:
+
+- This repo includes `amplify.yml` that writes required server env vars into `.env.production` during build.
+- Keep auth/storage env vars configured in Amplify Console so API routes can read them at runtime.
+
 ## API Routes
 
 - `POST /api/auth/login`
