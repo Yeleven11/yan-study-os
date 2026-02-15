@@ -8,6 +8,7 @@ struct StudyHealthSyncApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(coordinator)
+                .environmentObject(coordinator.settings)
                 .task {
                     coordinator.start()
                 }

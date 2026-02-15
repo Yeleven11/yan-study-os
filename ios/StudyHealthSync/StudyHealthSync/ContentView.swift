@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
+    @EnvironmentObject private var settings: AppSettingsStore
 
     @State private var showTokenPlainText = false
 
@@ -23,7 +24,7 @@ struct ContentView: View {
                 }
 
                 Section("Sync Configuration") {
-                    TextField("Server Base URL", text: $coordinator.settings.baseURL)
+                    TextField("Server Base URL", text: $settings.baseURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .keyboardType(.URL)
@@ -34,9 +35,9 @@ struct ContentView: View {
                     HStack {
                         Group {
                             if showTokenPlainText {
-                                TextField("Bearer Token", text: $coordinator.settings.token)
+                                TextField("Bearer Token", text: $settings.token)
                             } else {
-                                SecureField("Bearer Token", text: $coordinator.settings.token)
+                                SecureField("Bearer Token", text: $settings.token)
                             }
                         }
                         .textInputAutocapitalization(.never)
@@ -48,18 +49,18 @@ struct ContentView: View {
                         .font(.caption)
                     }
 
-                    Toggle("Auto Sync", isOn: $coordinator.settings.autoSyncEnabled)
-                        .onChange(of: coordinator.settings.autoSyncEnabled) { _, _ in
+                    Toggle("Auto Sync", isOn: $settings.autoSyncEnabled)
+                        .onChange(of: settings.autoSyncEnabled) { _, _ in
                             coordinator.applySettingsAndReschedule()
                         }
 
                     Stepper(
-                        "Update interval: \(coordinator.settings.syncIntervalMinutes) min",
-                        value: $coordinator.settings.syncIntervalMinutes,
-                        in: coordinator.settings.minIntervalMinutes...coordinator.settings.maxIntervalMinutes,
+                        "Update interval: \(settings.syncIntervalMinutes) min",
+                        value: $settings.syncIntervalMinutes,
+                        in: settings.minIntervalMinutes...settings.maxIntervalMinutes,
                         step: 5
                     )
-                    .onChange(of: coordinator.settings.syncIntervalMinutes) { _, _ in
+                    .onChange(of: settings.syncIntervalMinutes) { _, _ in
                         coordinator.applySettingsAndReschedule()
                     }
 
@@ -137,6 +138,8 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
-        .environmentObject(SyncCoordinator())
+    let coordinator = SyncCoordinator()
+    return ContentView()
+        .environmentObject(coordinator)
+        .environmentObject(coordinator.settings)
 }

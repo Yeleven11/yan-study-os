@@ -42,7 +42,9 @@ final class SyncCoordinator: ObservableObject {
         }
         hasStarted = true
 
-        updateAuthorizationState()
+        Task {
+            await updateAuthorizationState()
+        }
 
         BackgroundSyncScheduler.shared.register { [weak self] trigger in
             guard let self else {
@@ -65,7 +67,7 @@ final class SyncCoordinator: ObservableObject {
         Task {
             do {
                 try await healthService.requestAuthorization()
-                updateAuthorizationState()
+                await updateAuthorizationState()
                 if authorizationState == .authorized {
                     startObserversIfNeeded()
                 }
@@ -90,7 +92,7 @@ final class SyncCoordinator: ObservableObject {
         }
 
         if authorizationState != .authorized {
-            updateAuthorizationState()
+            await updateAuthorizationState()
             if authorizationState != .authorized {
                 lastErrorMessage = "Health permissions are required before syncing."
                 await queueStore.appendLog("Sync skipped (\(trigger.rawValue)): authorization not granted")
@@ -194,8 +196,8 @@ final class SyncCoordinator: ObservableObject {
         return response
     }
 
-    private func updateAuthorizationState() {
-        authorizationState = healthService.authorizationState()
+    private func updateAuthorizationState() async {
+        authorizationState = await healthService.authorizationState()
     }
 
     private func startObserversIfNeeded() {

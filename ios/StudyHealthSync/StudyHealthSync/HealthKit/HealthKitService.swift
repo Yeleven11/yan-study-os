@@ -8,6 +8,10 @@ struct HealthDeltaBatch {
 }
 
 final class HealthKitService {
+    private enum Keys {
+        static let requestedAuthorization = "sync.healthkit.requestedAuthorization"
+    }
+
     private let healthStore = HKHealthStore()
     private let anchorStore: AnchorStore
     private var observerQueries: [HKObserverQuery] = []
@@ -16,30 +20,23 @@ final class HealthKitService {
         self.anchorStore = anchorStore
     }
 
-    func authorizationState() -> AuthorizationState {
+    func authorizationState() async -> AuthorizationState {
         guard HKHealthStore.isHealthDataAvailable() else {
             return .denied
         }
 
-        let criticalTypes: [HKObjectType] = [
-            HKObjectType.workoutType(),
-            HKObjectType.quantityType(forIdentifier: .heartRate),
-            HKObjectType.categoryType(forIdentifier: .sleepAnalysis),
-        ].compactMap { $0 }
-
-        let denied = criticalTypes.contains {
-            healthStore.authorizationStatus(for: $0) == .sharingDenied
+        let hasRequested = UserDefaults.standard.bool(forKey: Keys.requestedAuthorization)
+        if !hasRequested {
+            return .unknown
         }
 
-        if denied {
-            return .denied
+        do {
+            let canRead = try await probeReadAuthorization()
+            return canRead ? .authorized : .denied
+        } catch {
+            print("Authorization probe failed: \(error.localizedDescription)")
+            return .unknown
         }
-
-        let authorized = criticalTypes.allSatisfy {
-            healthStore.authorizationStatus(for: $0) == .sharingAuthorized
-        }
-
-        return authorized ? .authorized : .unknown
     }
 
     func requestAuthorization() async throws {
@@ -52,6 +49,7 @@ final class HealthKitService {
         }
 
         try await healthStore.requestAuthorization(toShare: [], read: readTypes())
+        UserDefaults.standard.set(true, forKey: Keys.requestedAuthorization)
     }
 
     func startBackgroundObservers(onUpdate: @escaping @Sendable () -> Void) {
@@ -580,6 +578,35 @@ final class HealthKitService {
             if !success, let error {
                 print("Background delivery setup failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func probeReadAuthorization() async throws -> Bool {
+        try await withCheckedThrowingContinuation { continuation in
+            let end = Date()
+            let start = Calendar.current.date(byAdding: .day, value: -1, to: end) ?? end
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, _, error in
+                if let hkError = error as? HKError, hkError.code == .errorAuthorizationDenied {
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                continuation.resume(returning: true)
+            }
+
+            healthStore.execute(query)
         }
     }
 }
