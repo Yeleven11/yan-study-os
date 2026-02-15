@@ -4502,7 +4502,7 @@ function ExamSubjectRings({
       {subjectIds.map((subjectId, index) => (
         <span
           key={`exam-ring-${subjectId}-${index}`}
-          className={`absolute border ${roundedClassName}`}
+          className={`absolute border-2 ${roundedClassName}`}
           style={{
             inset: `${1 + index * 2}px`,
             borderColor: SUBJECT_BY_ID[subjectId].color,
