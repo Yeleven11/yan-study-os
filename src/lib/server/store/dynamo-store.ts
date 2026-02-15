@@ -207,8 +207,14 @@ function getRequiredEnv(name: string): string {
 }
 
 function createDocumentClient(): DynamoDBDocumentClient {
+  const region =
+    process.env.DYNAMO_REGION ||
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    "eu-central-1";
+
   const client = new DynamoDBClient({
-    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "eu-central-1",
+    region,
   });
 
   return DynamoDBDocumentClient.from(client, {
