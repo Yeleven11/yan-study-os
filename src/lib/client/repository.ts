@@ -2,18 +2,13 @@
 
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
-import { applyPlannerRun, generatePlannerRun } from "@/lib/planner-engine";
 import type {
   AppData,
   DashboardBootstrap,
   DailyHealthFact,
   Exam,
   HealthRawFile,
-  HealthIngestReconcileReport,
-  PlannedDayTarget,
   PerformanceGoals,
-  PlannerProfile,
-  PlannerRun,
   StudySession,
   TodoItem,
   WorkoutDetail,
@@ -39,7 +34,6 @@ export interface DashboardRepository {
     filesProcessed?: number;
     filesSkipped?: number;
     linkedStreams?: number;
-    reconcile?: HealthIngestReconcileReport;
   }>;
   importHealthBatch: (
     files: Array<{ filename: string; csv: string }>,
@@ -49,30 +43,9 @@ export interface DashboardRepository {
     filesProcessed: number;
     filesSkipped: number;
     linkedStreams?: number;
-    reconcile?: HealthIngestReconcileReport;
   }>;
   getWorkoutDetail: (id: string) => Promise<WorkoutDetail | null>;
   getHealthRawFiles: () => Promise<HealthRawFile[]>;
-  getPlannerProfile: () => Promise<PlannerProfile>;
-  updatePlannerProfile: (profile: PlannerProfile) => Promise<PlannerProfile>;
-  generatePlanner: (options?: {
-    profile?: PlannerProfile;
-    persistProfile?: boolean;
-    apply?: boolean;
-  }) => Promise<{
-    run: PlannerRun;
-    applied: boolean;
-    plannedTargets: number;
-  }>;
-  applyPlannerRun: (runId: string) => Promise<{
-    run: PlannerRun;
-    plannedTargets: number;
-  }>;
-  getPlannerRuns: (limit?: number) => Promise<PlannerRun[]>;
-  getHealthReconcileReport: (limit?: number) => Promise<{
-    latest: HealthIngestReconcileReport | null;
-    reports: HealthIngestReconcileReport[];
-  }>;
 }
 
 function parseDailyHealth(items: DailyHealthFact[] | undefined): DailyHealthFact[] {
@@ -174,71 +147,6 @@ function parseGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGo
   };
 }
 
-function parsePlannerProfile(profile: PlannerProfile | undefined): PlannerProfile {
-  const defaults = createDefaultAppData(getTimezone()).plannerProfile;
-  return {
-    ...defaults,
-    ...(profile || {}),
-    weeklyTemplate: Array.isArray(profile?.weeklyTemplate)
-      ? profile.weeklyTemplate
-      : defaults.weeklyTemplate,
-    dateOverrides: Array.isArray(profile?.dateOverrides) ? profile.dateOverrides : [],
-    weights: {
-      ...defaults.weights,
-      ...(profile?.weights || {}),
-    },
-    updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : defaults.updatedAt,
-  };
-}
-
-function parsePlannerRuns(runs: PlannerRun[] | undefined): PlannerRun[] {
-  if (!Array.isArray(runs)) {
-    return [];
-  }
-  return runs.filter(
-    (run) =>
-      run &&
-      typeof run.id === "string" &&
-      typeof run.createdAt === "string" &&
-      typeof run.startDate === "string" &&
-      typeof run.horizonDays === "number" &&
-      Array.isArray(run.days),
-  );
-}
-
-function parsePlannedTargets(targets: PlannedDayTarget[] | undefined): PlannedDayTarget[] {
-  if (!Array.isArray(targets)) {
-    return [];
-  }
-  return targets.filter(
-    (target) =>
-      target &&
-      typeof target.date === "string" &&
-      typeof target.studyTargetHours === "number" &&
-      typeof target.workoutType === "string" &&
-      typeof target.workoutDurationMin === "number" &&
-      typeof target.bedtimeLabel === "string" &&
-      typeof target.sourceRunId === "string" &&
-      typeof target.createdAt === "string",
-  );
-}
-
-function parseIngestReports(
-  reports: HealthIngestReconcileReport[] | undefined,
-): HealthIngestReconcileReport[] {
-  if (!Array.isArray(reports)) {
-    return [];
-  }
-  return reports.filter(
-    (report) =>
-      report &&
-      typeof report.id === "string" &&
-      typeof report.createdAt === "string" &&
-      typeof report.filesProcessed === "number" &&
-      typeof report.importedWorkouts === "number",
-  );
-}
-
 function parseStoredData(raw: string | null): AppData {
   if (!raw) {
     return createDefaultAppData(getTimezone());
@@ -256,10 +164,6 @@ function parseStoredData(raw: string | null): AppData {
       workoutDetails: parseWorkoutDetails(parsed.workoutDetails),
       healthRawFiles: parseRawFiles(parsed.healthRawFiles),
       healthRawRows: Array.isArray(parsed.healthRawRows) ? parsed.healthRawRows : [],
-      plannerProfile: parsePlannerProfile(parsed.plannerProfile),
-      plannerRuns: parsePlannerRuns(parsed.plannerRuns),
-      plannedTargets: parsePlannedTargets(parsed.plannedTargets),
-      healthIngestReports: parseIngestReports(parsed.healthIngestReports),
       goals: parseGoals(parsed.goals),
       settings: {
         timezone: parsed.settings?.timezone ?? getTimezone(),
@@ -458,78 +362,6 @@ function createLocalRepository(): DashboardRepository {
       const data = readLocalData();
       return data.healthRawFiles;
     },
-    async getPlannerProfile() {
-      const data = readLocalData();
-      return data.plannerProfile;
-    },
-    async updatePlannerProfile(profile) {
-      const data = readLocalData();
-      data.plannerProfile = parsePlannerProfile(profile);
-      writeLocalData(data);
-      return data.plannerProfile;
-    },
-    async generatePlanner(options) {
-      const data = readLocalData();
-      const profile = parsePlannerProfile(options?.profile || data.plannerProfile);
-      const run = generatePlannerRun(
-        {
-          ...data,
-          plannerProfile: profile,
-        },
-        { profile, now: new Date(), source: "manual" },
-      );
-
-      data.plannerRuns = [...data.plannerRuns, run].slice(-80);
-      if (options?.persistProfile) {
-        data.plannerProfile = profile;
-      }
-
-      let applied = false;
-      if (options?.apply || profile.applyMode === "write_targets") {
-        const updated = applyPlannerRun(data, run);
-        data.plannerRuns = updated.plannerRuns;
-        data.plannedTargets = updated.plannedTargets;
-        applied = true;
-      }
-
-      writeLocalData(data);
-      return {
-        run,
-        applied,
-        plannedTargets: data.plannedTargets.length,
-      };
-    },
-    async applyPlannerRun(runId) {
-      const data = readLocalData();
-      const run = data.plannerRuns.find((item) => item.id === runId);
-      if (!run) {
-        throw new Error("Planner run not found");
-      }
-
-      const updated = run.applied ? data : applyPlannerRun(data, run);
-      writeLocalData(updated);
-      const appliedRun = updated.plannerRuns.find((item) => item.id === runId) || run;
-      return {
-        run: appliedRun,
-        plannedTargets: updated.plannedTargets.length,
-      };
-    },
-    async getPlannerRuns(limit = 20) {
-      const data = readLocalData();
-      return [...data.plannerRuns]
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-        .slice(0, limit);
-    },
-    async getHealthReconcileReport(limit = 15) {
-      const data = readLocalData();
-      const reports = [...data.healthIngestReports]
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-        .slice(0, limit);
-      return {
-        latest: reports[0] || null,
-        reports,
-      };
-    },
   };
 }
 
@@ -618,7 +450,6 @@ function createApiRepository(): DashboardRepository {
         filesProcessed?: number;
         filesSkipped?: number;
         linkedStreams?: number;
-        reconcile?: HealthIngestReconcileReport;
       }>(
         "/api/integrations/health/csv",
         {
@@ -634,7 +465,6 @@ function createApiRepository(): DashboardRepository {
         filesProcessed: number;
         filesSkipped: number;
         linkedStreams?: number;
-        reconcile?: HealthIngestReconcileReport;
       }>("/api/integrations/health/import-batch", {
         method: "POST",
         body: JSON.stringify({ files }),
@@ -646,64 +476,6 @@ function createApiRepository(): DashboardRepository {
     },
     async getHealthRawFiles() {
       const payload = await apiRequest<{ data: HealthRawFile[] }>("/api/health/raw/files");
-      return payload.data;
-    },
-    async getPlannerProfile() {
-      const payload = await apiRequest<{ data: PlannerProfile }>("/api/settings/planner");
-      return payload.data;
-    },
-    async updatePlannerProfile(profile) {
-      const payload = await apiRequest<{ ok: true; data: PlannerProfile }>(
-        "/api/settings/planner",
-        {
-          method: "PUT",
-          body: JSON.stringify({ profile }),
-        },
-      );
-      return payload.data;
-    },
-    async generatePlanner(options) {
-      const payload = await apiRequest<{
-        data: PlannerRun;
-        applied: boolean;
-        plannedTargets: number;
-      }>("/api/planner/generate", {
-        method: "POST",
-        body: JSON.stringify(options || {}),
-      });
-      return {
-        run: payload.data,
-        applied: payload.applied,
-        plannedTargets: payload.plannedTargets,
-      };
-    },
-    async applyPlannerRun(runId) {
-      const payload = await apiRequest<{
-        ok: true;
-        data: PlannerRun;
-        plannedTargets: number;
-      }>("/api/planner/apply", {
-        method: "POST",
-        body: JSON.stringify({ runId }),
-      });
-      return {
-        run: payload.data,
-        plannedTargets: payload.plannedTargets,
-      };
-    },
-    async getPlannerRuns(limit = 20) {
-      const payload = await apiRequest<{ data: PlannerRun[] }>(
-        `/api/planner/runs?limit=${limit}`,
-      );
-      return payload.data;
-    },
-    async getHealthReconcileReport(limit = 15) {
-      const payload = await apiRequest<{
-        data: {
-          latest: HealthIngestReconcileReport | null;
-          reports: HealthIngestReconcileReport[];
-        };
-      }>(`/api/health/reconcile/report?limit=${limit}`);
       return payload.data;
     },
   };

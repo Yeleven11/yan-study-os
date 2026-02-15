@@ -83,11 +83,6 @@ test("merges one workout split across multiple csv streams", () => {
     item.filename.includes("-Route-"),
   );
   assert.equal(ignoredRoute?.fileType, "ignored");
-  assert.equal(imported.summary.reconcile.canonicalWorkoutCount, 1);
-  assert.equal(imported.summary.reconcile.streamBucketCount, 1);
-  assert.equal(imported.summary.reconcile.inferredWorkoutCount, 0);
-  assert.equal(imported.summary.reconcile.routeFilesIgnored, 1);
-  assert.ok(imported.summary.reconcile.linkedStreams >= 3);
 });
 
 test("creates inferred workout when no summary file exists", () => {
@@ -103,8 +98,6 @@ test("creates inferred workout when no summary file exists", () => {
   assert.equal(imported.nextData.workouts[0].workoutNameRaw, "Outdoor Walk");
   assert.equal(imported.nextData.workouts[0].workoutDisplayLabel, "0.2 km Outdoor Walk");
   assert.ok((imported.nextData.workouts[0].mergeConfidence || 0) >= 0.6);
-  assert.equal(imported.summary.reconcile.inferredWorkoutCount, 1);
-  assert.equal(imported.summary.reconcile.canonicalWorkoutCount, 0);
 });
 
 test("duplicate import remains idempotent", () => {
@@ -122,7 +115,6 @@ test("duplicate import remains idempotent", () => {
 
   assert.equal(second.nextData.healthRawFiles.length, 1);
   assert.equal(second.nextData.workouts.length, first.nextData.workouts.length);
-  assert.equal(second.summary.reconcile.duplicateFilesIgnored, 1);
 });
 
 test("parses workouts-uuid manual export format as workout summary", () => {

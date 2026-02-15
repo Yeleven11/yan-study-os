@@ -21,14 +21,8 @@ Personal IBDP Year 2 study command center for the final exam sprint.
   - multi-file Apple Health CSV ingestion (batch import)
   - merged workout assembly across split stream files
   - workout confidence + stream count + raw file provenance
-  - ingest reconciliation report (canonical vs inferred workouts, linked streams, ignored/duplicate files)
   - Workout Explorer rail cards + full drill-down modal with raw series visuals
   - sleep raw bars (hours + score) and 7-day/30-day trend views
-- Adaptive Planner V1:
-  - customizable 7-day (3-14) constrained plan generator
-  - weekly availability templates + per-day caps
-  - readiness-aware study-hour adjustment with recovery guardrails
-  - optional apply mode that writes daily targets from the generated run
 - Goal-driven coaching (study target, bedtime recommendation, workout recommendation)
 - CSV health import endpoint (comma-separated) with sample-mode fallback when no health data exists
 - Left-side todo rail with:
@@ -163,15 +157,10 @@ Note for Next.js SSR routes on Amplify:
 - `POST /api/todos/:id/restore`
 - `GET|PUT /api/settings/exams`
 - `GET|PUT /api/settings/goals`
-- `GET|PUT /api/settings/planner`
 - `POST /api/integrations/health/csv` (Bearer auth via `HEALTH_EXPORT_BEARER_TOKEN` or session fallback)
 - `POST /api/integrations/health/import-batch`
 - `GET /api/workouts/:id` (merged workout detail drill-down)
 - `GET /api/health/raw/files` (raw import file transparency)
-- `GET /api/health/reconcile/report` (latest ingest reconciliation diagnostics)
-- `POST /api/planner/generate`
-- `POST /api/planner/apply`
-- `GET /api/planner/runs`
 
 ## Health Import V2
 
@@ -203,12 +192,6 @@ Note for Next.js SSR routes on Amplify:
   - Missing metrics are filled from stream aggregates.
   - HR average is weighted by interval duration from stream rows.
 - Imports are idempotent by content hash; duplicate files are ignored.
-- Each import writes a reconciliation report (`healthIngestReports`) with:
-  - canonical workouts found
-  - stream buckets found + linked stream count
-  - inferred workouts created from stream-only data
-  - duplicate/route/unknown/empty file counters
-  - first warning message for quick diagnostics in the dashboard
 
 ### Import Workflows
 

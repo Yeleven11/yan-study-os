@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:health": "node --import tsx --test src/lib/server/health-csv.test.ts src/lib/health-engine.test.ts src/lib/calendar-tooltip.test.ts src/lib/planner-engine.test.ts",
+    "test:health": "node --import tsx --test src/lib/server/health-csv.test.ts src/lib/health-engine.test.ts src/lib/calendar-tooltip.test.ts",
     "passcode:hash": "node scripts/generate-passcode-hash.mjs",
     "ampx:sandbox": "npx ampx sandbox --region eu-central-1"
   },

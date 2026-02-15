@@ -3,7 +3,6 @@ import { toDateKey } from "@/lib/dashboard-utils";
 import type {
   AppData,
   DailyHealthFact,
-  HealthIngestReconcileReport,
   HealthRawFile,
   HealthRawRow,
   WorkoutDetail,
@@ -26,7 +25,6 @@ export type HealthImportSummary = {
   filesSkipped: number;
   filesIgnored: number;
   linkedStreams: number;
-  reconcile: HealthIngestReconcileReport;
 };
 
 type FileRole = "aggregate" | "workout_summary" | "workout_stream" | "ignored" | "unknown";
@@ -1314,19 +1312,10 @@ function mergeWorkouts(
   canonicalWorkouts: WorkoutEntry[],
   streams: WorkoutStream[],
   importedAt: string,
-): {
-  workouts: WorkoutEntry[];
-  details: WorkoutDetail[];
-  linkedStreams: number;
-  canonicalWorkoutCount: number;
-  streamBucketCount: number;
-  inferredWorkoutCount: number;
-  unresolvedStreamBucketCount: number;
-} {
+): { workouts: WorkoutEntry[]; details: WorkoutDetail[]; linkedStreams: number } {
   const detailsById = new Map<string, WorkoutDetail>();
   const canonical = canonicalWorkouts.map((workout) => ({ ...workout }));
   let linkedStreams = 0;
-  let inferredWorkoutCount = 0;
 
   const streamByKey = new Map<string, WorkoutStream[]>();
   for (const stream of streams) {
@@ -1337,7 +1326,6 @@ function mergeWorkouts(
   }
 
   const unresolvedStreams = new Map<string, WorkoutStream[]>(streamByKey);
-  const unresolvedStreamBucketCount = unresolvedStreams.size;
 
   for (const workout of canonical) {
     const startMs = new Date(workout.startedAt).getTime();
@@ -1466,17 +1454,12 @@ function mergeWorkouts(
     canonical.push(inferred);
     detailsById.set(id, buildWorkoutDetail(inferred, streamList));
     linkedStreams += streamList.length;
-    inferredWorkoutCount += 1;
   }
 
   return {
     workouts: canonical.sort((left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime()),
     details: [...detailsById.values()],
     linkedStreams,
-    canonicalWorkoutCount: canonicalWorkouts.length,
-    streamBucketCount: streamByKey.size,
-    inferredWorkoutCount,
-    unresolvedStreamBucketCount,
   };
 }
 
@@ -1561,46 +1544,6 @@ export function importHealthFiles(
 
   const filesProcessed = parsedFiles.filter((entry) => entry.file.fileType !== "ignored").length;
   const filesIgnored = parsedFiles.filter((entry) => entry.file.fileType === "ignored").length;
-  const duplicateFilesIgnored = parsedFiles.filter(
-    (entry) => entry.file.ignoredReason === "duplicate file hash",
-  ).length;
-  const routeFilesIgnored = parsedFiles.filter((entry) =>
-    /route\/gps file ignored/i.test(entry.file.ignoredReason || ""),
-  ).length;
-  const unknownFilesIgnored = parsedFiles.filter((entry) => entry.file.fileType === "unknown").length;
-  const emptyFilesSkipped = files.length - parsedFiles.length;
-  const warnings: string[] = [];
-  if (merged.streamBucketCount > 0 && merged.linkedStreams === 0) {
-    warnings.push("Stream files were parsed but no stream rows could be linked to workouts.");
-  }
-  if (merged.inferredWorkoutCount > 0) {
-    warnings.push("Some workouts were inferred from stream files because canonical summaries were missing.");
-  }
-  if (unknownFilesIgnored > 0) {
-    warnings.push("Some files were unrecognized and skipped from metric extraction.");
-  }
-  if (filesProcessed === 0) {
-    warnings.push("No ingestible CSV payloads were processed.");
-  }
-  const reconcileReport: HealthIngestReconcileReport = {
-    id: hashText(`${importedAt}|${filesProcessed}|${filesIgnored}|${merged.streamBucketCount}`).slice(0, 24),
-    createdAt: importedAt,
-    filesProcessed,
-    filesSkipped: emptyFilesSkipped,
-    filesIgnored,
-    importedHealthDays: parsedFiles.flatMap((entry) => entry.dailyHealth).length,
-    importedWorkouts: Math.max(0, merged.workouts.length - current.workouts.length),
-    linkedStreams: merged.linkedStreams,
-    canonicalWorkoutCount: merged.canonicalWorkoutCount,
-    streamBucketCount: merged.streamBucketCount,
-    inferredWorkoutCount: merged.inferredWorkoutCount,
-    unresolvedStreamBucketCount: merged.unresolvedStreamBucketCount,
-    duplicateFilesIgnored,
-    unknownFilesIgnored,
-    routeFilesIgnored,
-    emptyFilesSkipped,
-    warnings,
-  };
 
   const nextData: AppData = {
     ...current,
@@ -1609,19 +1552,17 @@ export function importHealthFiles(
     workoutDetails: [...detailById.values()],
     healthRawFiles: [...rawFileById.values()],
     healthRawRows: [...rawRowById.values()],
-    healthIngestReports: [...(current.healthIngestReports || []), reconcileReport],
   };
 
   return {
     nextData,
     summary: {
-      importedHealthDays: reconcileReport.importedHealthDays,
-      importedWorkouts: reconcileReport.importedWorkouts,
+      importedHealthDays: parsedFiles.flatMap((entry) => entry.dailyHealth).length,
+      importedWorkouts: Math.max(0, merged.workouts.length - current.workouts.length),
       filesProcessed,
-      filesSkipped: emptyFilesSkipped,
+      filesSkipped: files.length - parsedFiles.length,
       filesIgnored,
       linkedStreams: merged.linkedStreams,
-      reconcile: reconcileReport,
     },
   };
 }
