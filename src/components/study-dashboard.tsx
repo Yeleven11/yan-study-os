@@ -3366,6 +3366,7 @@ function SeriesPanel({
   const tail = series.slice(-20);
   const tailValues = tail.map((item) => item.value);
   const tailLabels = tail.map((item) => formatDateTime(item.timestamp));
+  const hasSinglePoint = values.length === 1;
 
   return (
     <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
@@ -3373,15 +3374,21 @@ function SeriesPanel({
       <p className="mt-1 text-xs text-[var(--muted)]">
         {values.length} points • avg {average.toFixed(2)} {unit}
       </p>
-      <div className="mt-2">
-        <CompactBars
-          values={tailValues}
-          labels={tailLabels}
-          max={Math.max(...values, 1)}
-          color={color}
-          valueFormatter={(value) => `${value.toFixed(2)} ${unit}`}
-        />
-      </div>
+      {hasSinglePoint ? (
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Summary-only point. Import per-minute workout streams to see full timeline bars.
+        </p>
+      ) : (
+        <div className="mt-2">
+          <CompactBars
+            values={tailValues}
+            labels={tailLabels}
+            max={Math.max(...values, 1)}
+            color={color}
+            valueFormatter={(value) => `${value.toFixed(2)} ${unit}`}
+          />
+        </div>
+      )}
     </div>
   );
 }

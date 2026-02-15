@@ -1195,6 +1195,119 @@ function preferCanonicalMetric(
   return inferredValue;
 }
 
+function hasPositiveMetric(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function mergeWorkoutEntryPreservingMetrics(
+  previous: WorkoutEntry | undefined,
+  incoming: WorkoutEntry,
+): WorkoutEntry {
+  if (!previous) {
+    return incoming;
+  }
+
+  const mergedHrAvg = preferCanonicalMetric(
+    incoming.hrAvg ?? incoming.avgHeartRate,
+    previous.hrAvg ?? previous.avgHeartRate,
+  );
+  const merged: WorkoutEntry = {
+    ...previous,
+    ...incoming,
+    sourceWorkoutKey: incoming.sourceWorkoutKey || previous.sourceWorkoutKey,
+    workoutNameRaw: incoming.workoutNameRaw || previous.workoutNameRaw,
+    workoutDisplayLabel: incoming.workoutDisplayLabel || previous.workoutDisplayLabel,
+    distanceKm: preferCanonicalMetric(incoming.distanceKm, previous.distanceKm),
+    avgSpeedKmh: preferCanonicalMetric(incoming.avgSpeedKmh, previous.avgSpeedKmh),
+    maxSpeedKmh: preferCanonicalMetric(incoming.maxSpeedKmh, previous.maxSpeedKmh),
+    activeEnergyKj: preferCanonicalMetric(incoming.activeEnergyKj, previous.activeEnergyKj),
+    restingEnergyKj: preferCanonicalMetric(incoming.restingEnergyKj, previous.restingEnergyKj),
+    stepCount: preferCanonicalMetric(incoming.stepCount, previous.stepCount),
+    avgCadenceSpm: preferCanonicalMetric(incoming.avgCadenceSpm, previous.avgCadenceSpm),
+    flights: preferCanonicalMetric(incoming.flights, previous.flights),
+    elevationAscM: preferCanonicalMetric(incoming.elevationAscM, previous.elevationAscM),
+    elevationDescM: preferCanonicalMetric(incoming.elevationDescM, previous.elevationDescM),
+    intensityKcalHrKg: preferCanonicalMetric(incoming.intensityKcalHrKg, previous.intensityKcalHrKg),
+    hrMin: preferCanonicalMetric(incoming.hrMin, previous.hrMin),
+    hrMax: preferCanonicalMetric(incoming.hrMax, previous.hrMax),
+    hrAvg: mergedHrAvg,
+    avgHeartRate: mergedHrAvg,
+    mergeConfidence: Math.max(incoming.mergeConfidence || 0, previous.mergeConfidence || 0) || undefined,
+    streamCount: Math.max(incoming.streamCount || 0, previous.streamCount || 0) || undefined,
+  };
+
+  if (hasPositiveMetric(incoming.activeKcal)) {
+    merged.activeKcal = incoming.activeKcal;
+  } else if (hasPositiveMetric(previous.activeKcal)) {
+    merged.activeKcal = previous.activeKcal;
+  } else if (hasPositiveMetric(merged.activeEnergyKj)) {
+    merged.activeKcal = merged.activeEnergyKj / 4.184;
+  } else {
+    merged.activeKcal = undefined;
+  }
+
+  return merged;
+}
+
+function mergeWorkoutDetailPreservingSeries(
+  previous: WorkoutDetail | undefined,
+  incoming: WorkoutDetail,
+): WorkoutDetail {
+  if (!previous) {
+    return incoming;
+  }
+
+  const incomingHasStreams = incoming.streams.length > 0;
+  const pickSeries = (
+    existingSeries: WorkoutStreamPoint[] | undefined,
+    incomingSeries: WorkoutStreamPoint[] | undefined,
+  ): WorkoutStreamPoint[] | undefined => {
+    const existingLength = existingSeries?.length || 0;
+    const incomingLength = incomingSeries?.length || 0;
+
+    if (incomingLength === 0) {
+      return existingSeries;
+    }
+
+    if (existingLength === 0) {
+      return incomingSeries;
+    }
+
+    if (incomingHasStreams || incomingLength >= existingLength) {
+      return incomingSeries;
+    }
+
+    return existingSeries;
+  };
+
+  return {
+    ...previous,
+    ...incoming,
+    sourceFiles: [...new Set([...(previous.sourceFiles || []), ...(incoming.sourceFiles || [])])],
+    streams: incoming.streams.length > 0 ? incoming.streams : previous.streams,
+    heartRateSeries: pickSeries(previous.heartRateSeries, incoming.heartRateSeries),
+    distanceSeries: pickSeries(previous.distanceSeries, incoming.distanceSeries),
+    stepSeries: pickSeries(previous.stepSeries, incoming.stepSeries),
+    activeEnergySeries: pickSeries(previous.activeEnergySeries, incoming.activeEnergySeries),
+    restingEnergySeries: pickSeries(previous.restingEnergySeries, incoming.restingEnergySeries),
+    distanceKm: preferCanonicalMetric(incoming.distanceKm, previous.distanceKm),
+    avgSpeedKmh: preferCanonicalMetric(incoming.avgSpeedKmh, previous.avgSpeedKmh),
+    maxSpeedKmh: preferCanonicalMetric(incoming.maxSpeedKmh, previous.maxSpeedKmh),
+    activeEnergyKj: preferCanonicalMetric(incoming.activeEnergyKj, previous.activeEnergyKj),
+    restingEnergyKj: preferCanonicalMetric(incoming.restingEnergyKj, previous.restingEnergyKj),
+    stepCount: preferCanonicalMetric(incoming.stepCount, previous.stepCount),
+    avgCadenceSpm: preferCanonicalMetric(incoming.avgCadenceSpm, previous.avgCadenceSpm),
+    flights: preferCanonicalMetric(incoming.flights, previous.flights),
+    elevationAscM: preferCanonicalMetric(incoming.elevationAscM, previous.elevationAscM),
+    elevationDescM: preferCanonicalMetric(incoming.elevationDescM, previous.elevationDescM),
+    hrMin: preferCanonicalMetric(incoming.hrMin, previous.hrMin),
+    hrMax: preferCanonicalMetric(incoming.hrMax, previous.hrMax),
+    hrAvg: preferCanonicalMetric(incoming.hrAvg, previous.hrAvg),
+    mergeConfidence: Math.max(incoming.mergeConfidence, previous.mergeConfidence),
+    streamCount: Math.max(incoming.streamCount, previous.streamCount),
+  };
+}
+
 function mergeWorkouts(
   canonicalWorkouts: WorkoutEntry[],
   streams: WorkoutStream[],
@@ -1385,14 +1498,20 @@ export function importHealthFiles(
 
   const canonicalById = new Map(existingWorkouts.map((workout) => [workout.id, workout]));
   for (const workout of canonicalFromFiles) {
-    canonicalById.set(workout.id, workout);
+    canonicalById.set(
+      workout.id,
+      mergeWorkoutEntryPreservingMetrics(canonicalById.get(workout.id), workout),
+    );
   }
 
   const merged = mergeWorkouts([...canonicalById.values()], streamFromFiles, importedAt);
 
   const detailById = new Map(current.workoutDetails.map((detail) => [detail.workoutId, detail]));
   for (const detail of merged.details) {
-    detailById.set(detail.workoutId, detail);
+    detailById.set(
+      detail.workoutId,
+      mergeWorkoutDetailPreservingSeries(detailById.get(detail.workoutId), detail),
+    );
   }
 
   const rawFileById = new Map(current.healthRawFiles.map((file) => [file.id, file]));

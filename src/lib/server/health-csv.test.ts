@@ -181,6 +181,36 @@ test("reprocesses duplicate hash when previous file was unknown", () => {
   assert.equal(file?.fileType, "workout_summary");
 });
 
+test("summary re-import does not downgrade existing rich workout detail series", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const first = importHealthFiles(seed, [
+    { filename: "Workouts-20260210_000000-20260210_235959.csv", csv: workoutsCsv },
+    { filename: "Outdoor Walk-Heart Rate-20260210_143218.csv", csv: hrCsv },
+    { filename: "Outdoor Walk-Walking + Running Distance-20260210_143218.csv", csv: distanceCsv },
+    { filename: "Outdoor Walk-Step Count-20260210_143218.csv", csv: stepsCsv },
+  ]);
+
+  const workout = first.nextData.workouts[0];
+  assert.ok(workout);
+  const initialDetail = first.nextData.workoutDetails.find((item) => item.workoutId === workout?.id);
+  assert.ok(initialDetail);
+  assert.ok((initialDetail?.heartRateSeries?.length || 0) > 0);
+
+  const summaryNoSeriesCsv = [
+    "Workout Name,Start Time,End Time,Duration (s),Total Energy (kcal),Distance (km),Steps",
+    "Outdoor Walk,2026-02-10 14:32:00,2026-02-10 14:57:00,1500,125,1.93,2135",
+  ].join("\n");
+
+  const second = importHealthFiles(first.nextData, [
+    { filename: "workouts-C803532A-DAE5-4CC3-AD5E-30C2A0FFD8E0.csv", csv: summaryNoSeriesCsv },
+  ]);
+
+  const afterDetail = second.nextData.workoutDetails.find((item) => item.workoutId === workout?.id);
+  assert.ok(afterDetail);
+  assert.ok((afterDetail?.heartRateSeries?.length || 0) >= (initialDetail?.heartRateSeries?.length || 0));
+  assert.ok((afterDetail?.distanceSeries?.length || 0) > 0);
+});
+
 test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {
   const form = new FormData();
   form.append(
