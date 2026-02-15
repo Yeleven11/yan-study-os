@@ -182,6 +182,8 @@ function parseDurationToMinutes(value: string | undefined): number | undefined {
 function classifyFile(filename: string, headers: string[]): { role: FileRole; streamType?: WorkoutStreamType; ignoredReason?: string } {
   const lower = filename.toLowerCase();
   const normalizedHeaders = headers.map((header) => normalizeHeader(header));
+  const hasHeader = (aliases: string[]): boolean =>
+    aliases.some((alias) => normalizedHeaders.includes(normalizeHeader(alias)));
 
   if (lower.endsWith(".gpx") || lower.includes("-route-")) {
     return {
@@ -191,6 +193,20 @@ function classifyFile(filename: string, headers: string[]): { role: FileRole; st
   }
 
   if (normalizedHeaders.includes("workouttype") && normalizedHeaders.includes("duration")) {
+    return { role: "workout_summary" };
+  }
+
+  const looksLikeWorkoutSummary =
+    hasHeader(["start", "start date", "workout start"]) &&
+    (hasHeader(["end", "end date", "workout end"]) ||
+      hasHeader(["duration", "duration (s)", "duration (sec)", "duration (min)"])) &&
+    (hasHeader(["workout type", "type", "workout", "name", "activity type"]) ||
+      /^workouts-[a-f0-9-]+\.csv$/i.test(filename.replace(/^.*\//, "")));
+
+  if (
+    looksLikeWorkoutSummary &&
+    !hasHeader(["symptom", "cycle start", "severity", "state of mind", "medication"])
+  ) {
     return { role: "workout_summary" };
   }
 
@@ -414,15 +430,61 @@ function parseWorkoutSummaryRows(
   const results: WorkoutEntry[] = [];
 
   for (const record of records) {
-    const startDate = parseDateValue(getValue(record, ["Start"]));
-    const endDate = parseDateValue(getValue(record, ["End"]));
-    const durationMin = parseDurationToMinutes(getValue(record, ["Duration"]));
+    const startDate = parseDateValue(
+      getValue(record, [
+        "Start",
+        "Start Date",
+        "Workout Start",
+        "start",
+        "startDate",
+      ]),
+    );
+    let endDate = parseDateValue(
+      getValue(record, ["End", "End Date", "Workout End", "end", "endDate"]),
+    );
+
+    const durationSec = parseNumber(
+      getValue(record, [
+        "Duration (s)",
+        "Duration (sec)",
+        "Duration (seconds)",
+        "durationSeconds",
+        "durationSec",
+      ]),
+    );
+    const durationMinFromSeconds =
+      typeof durationSec === "number" && durationSec > 0 ? durationSec / 60 : undefined;
+    const durationMinFromGeneric = parseDurationToMinutes(
+      getValue(record, [
+        "Duration",
+        "Duration (min)",
+        "Duration (minutes)",
+        "duration",
+        "durationMin",
+      ]),
+    );
+
+    let durationMin = durationMinFromSeconds ?? durationMinFromGeneric;
+
+    if (
+      typeof durationMin !== "number" &&
+      startDate &&
+      endDate &&
+      endDate.getTime() > startDate.getTime()
+    ) {
+      durationMin = (endDate.getTime() - startDate.getTime()) / 60_000;
+    }
+
+    if (!endDate && startDate && typeof durationMin === "number" && durationMin > 0) {
+      endDate = new Date(startDate.getTime() + durationMin * 60_000);
+    }
 
     if (!startDate || !endDate || typeof durationMin !== "number") {
       continue;
     }
 
-    const typeLabel = getValue(record, ["Workout Type"]) || "Workout";
+    const typeLabel =
+      getValue(record, ["Workout Type", "Type", "Workout", "Name", "Activity Type"]) || "Workout";
     const workoutNameRaw = typeLabel.trim();
     const stem = normalizeStem(typeLabel);
     const token = timestampToToken(startDate);
@@ -431,9 +493,32 @@ function parseWorkoutSummaryRows(
       0,
       24,
     );
-    const activeEnergyKj = parseNumber(getValue(record, ["Active Energy (kJ)"]));
+    const activeEnergyKjDirect = parseNumber(
+      getValue(record, [
+        "Active Energy (kJ)",
+        "Total Energy (kJ)",
+        "Energy (kJ)",
+        "activeEnergyKj",
+        "totalEnergyKj",
+      ]),
+    );
+    const activeEnergyKcal = parseNumber(
+      getValue(record, [
+        "Active Energy (kcal)",
+        "Total Energy (kcal)",
+        "Energy (kcal)",
+        "activeEnergyKcal",
+        "totalEnergyKcal",
+      ]),
+    );
+    const activeEnergyKj =
+      typeof activeEnergyKjDirect === "number"
+        ? activeEnergyKjDirect
+        : typeof activeEnergyKcal === "number"
+        ? activeEnergyKcal * 4.184
+        : undefined;
     const restingEnergyKj = parseNumber(getValue(record, ["Resting Energy (kJ)"]));
-    const distanceKm = parseNumber(getValue(record, ["Distance (km)"]));
+    const distanceKm = parseNumber(getValue(record, ["Distance (km)", "distanceKm", "distance"]));
     const workoutType = inferWorkoutType(typeLabel);
 
     results.push({
@@ -449,17 +534,25 @@ function parseWorkoutSummaryRows(
       restingEnergyKj,
       activeKcal: typeof activeEnergyKj === "number" ? activeEnergyKj / 4.184 : undefined,
       intensityKcalHrKg: parseNumber(getValue(record, ["Intensity (kcal/hr·kg)"])),
-      hrMin: parseNumber(getValue(record, ["Min. Heart Rate (count/min)"])),
-      hrMax: parseNumber(getValue(record, ["Max. Heart Rate (count/min)"])),
-      hrAvg: parseNumber(getValue(record, ["Avg. Heart Rate (count/min)"])),
-      avgHeartRate: parseNumber(getValue(record, ["Avg. Heart Rate (count/min)"])),
+      hrMin: parseNumber(
+        getValue(record, ["Min. Heart Rate (count/min)", "Min Heart Rate (count/min)", "HR Min"]),
+      ),
+      hrMax: parseNumber(
+        getValue(record, ["Max. Heart Rate (count/min)", "Max Heart Rate (count/min)", "HR Max"]),
+      ),
+      hrAvg: parseNumber(
+        getValue(record, ["Avg. Heart Rate (count/min)", "Avg Heart Rate (count/min)", "HR Avg"]),
+      ),
+      avgHeartRate: parseNumber(
+        getValue(record, ["Avg. Heart Rate (count/min)", "Avg Heart Rate (count/min)", "HR Avg"]),
+      ),
       distanceKm,
       maxSpeedKmh: parseNumber(getValue(record, ["Max. Speed (km/hr)"])),
       avgSpeedKmh: parseNumber(getValue(record, ["Avg. Speed (km/hr)"])),
-      flights: parseNumber(getValue(record, ["Flights Climbed"])),
+      flights: parseNumber(getValue(record, ["Flights Climbed", "Flights Climbed (count)"])),
       elevationAscM: parseNumber(getValue(record, ["Elevation Ascended (m)"])),
       elevationDescM: parseNumber(getValue(record, ["Elevation Descended (m)"])),
-      stepCount: parseNumber(getValue(record, ["Step Count"])),
+      stepCount: parseNumber(getValue(record, ["Step Count", "Step Count (count)"])),
       avgCadenceSpm: parseNumber(getValue(record, ["Step Cadence (spm)"])),
       mergeConfidence: 0.85,
       streamCount: 1,

@@ -40,6 +40,12 @@ const routeCsv = [
   "2026-02-10T13:38:58Z,48.31,11.54,0",
 ].join("\n");
 
+const workoutsUuidCsv = [
+  "Name,Start Date,End Date,Duration (s),Total Energy (kcal),Avg Heart Rate (count/min),Distance (km)",
+  "Outdoor Run,2026-02-11 07:10:00,2026-02-11 07:55:00,2700,520,151,8.4",
+  "Outdoor Walk,2026-02-12 18:00:00,2026-02-12 18:30:00,1800,220,98,2.6",
+].join("\n");
+
 test("merges one workout split across multiple csv streams", () => {
   const seed = createDefaultAppData("Europe/Berlin");
   const imported = importHealthFiles(seed, [
@@ -103,6 +109,23 @@ test("duplicate import remains idempotent", () => {
 
   assert.equal(second.nextData.healthRawFiles.length, 1);
   assert.equal(second.nextData.workouts.length, first.nextData.workouts.length);
+});
+
+test("parses workouts-uuid manual export format as workout summary", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const imported = importHealthFiles(seed, [
+    {
+      filename: "workouts-C803532A-DAE5-4CC3-AD5E-30C2A0FFD8E0.csv",
+      csv: workoutsUuidCsv,
+    },
+  ]);
+
+  assert.equal(imported.summary.filesProcessed, 1);
+  assert.equal(imported.summary.importedWorkouts, 2);
+  assert.equal(imported.nextData.workouts.length, 2);
+  assert.equal(imported.nextData.healthRawFiles[0]?.fileType, "workout_summary");
+  assert.equal(imported.nextData.workouts[0]?.workoutNameRaw, "Outdoor Run");
+  assert.ok((imported.nextData.workouts[0]?.distanceKm || 0) > 8);
 });
 
 test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {
