@@ -3,7 +3,11 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getDashboardStore } from "@/lib/server/store";
 import { badRequest, requireSession } from "@/lib/server/route-helpers";
-import { importSingleHealthCsv } from "@/lib/server/health-csv";
+import { importHealthFiles } from "@/lib/server/health-csv";
+import { normalizeHealthIngestRequest } from "@/lib/server/health-ingest-request";
+
+const INVALID_BODY_MESSAGE =
+  "Expected JSON { csv } or { files }, raw CSV text body, or multipart/form-data with CSV files.";
 
 function tokensMatch(expected: string, provided: string): boolean {
   const expectedBuffer = Buffer.from(expected);
@@ -39,27 +43,20 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const contentType = request.headers.get("content-type") || "";
-  let body: { csv?: string; filename?: string } | null = null;
+  const files = await normalizeHealthIngestRequest(request, {
+    allowRawText: true,
+    acceptJsonSingleCsv: true,
+    acceptJsonFiles: true,
+    defaultFilename: "HealthAutoExport.csv",
+  });
 
-  let csvText = "";
-
-  if (contentType.includes("application/json")) {
-    body = await request.json().catch(() => null);
-    csvText = typeof body?.csv === "string" ? body.csv : "";
-  } else {
-    csvText = await request.text().catch(() => "");
-  }
-
-  if (!csvText.trim()) {
-    return badRequest("CSV body is required");
+  if (files.length === 0) {
+    return badRequest(INVALID_BODY_MESSAGE);
   }
 
   const store = getDashboardStore();
   const data = await store.getData();
-  const filename = typeof body?.filename === "string" ? body.filename : "HealthAutoExport.csv";
-
-  const imported = importSingleHealthCsv(data, csvText, filename);
+  const imported = importHealthFiles(data, files);
   await store.saveData(imported.nextData);
 
   return NextResponse.json({

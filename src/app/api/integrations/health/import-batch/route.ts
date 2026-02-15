@@ -2,8 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { importHealthFiles } from "@/lib/server/health-csv";
+import { normalizeHealthIngestRequest } from "@/lib/server/health-ingest-request";
 import { getDashboardStore } from "@/lib/server/store";
 import { badRequest, requireSession } from "@/lib/server/route-helpers";
+
+const INVALID_BODY_MESSAGE =
+  "Expected JSON { files: [{ filename, csv }] } or multipart/form-data with CSV files.";
 
 function tokensMatch(expected: string, provided: string): boolean {
   const expectedBuffer = Buffer.from(expected);
@@ -39,19 +43,14 @@ export async function POST(request: NextRequest) {
     return unauthorized;
   }
 
-  const body = await request.json().catch(() => null);
-  const files = Array.isArray(body?.files)
-    ? body.files.filter(
-        (file: unknown): file is { filename: string; csv: string } =>
-          Boolean(file) &&
-          typeof file === "object" &&
-          typeof (file as { filename?: unknown }).filename === "string" &&
-          typeof (file as { csv?: unknown }).csv === "string",
-      )
-    : [];
+  const files = await normalizeHealthIngestRequest(request, {
+    allowRawText: false,
+    acceptJsonSingleCsv: false,
+    acceptJsonFiles: true,
+  });
 
   if (files.length === 0) {
-    return badRequest("Body must include files: [{ filename, csv }]");
+    return badRequest(INVALID_BODY_MESSAGE);
   }
 
   const store = getDashboardStore();

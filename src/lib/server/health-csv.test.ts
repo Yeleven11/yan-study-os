@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultAppData } from "../constants";
 import { importHealthFiles } from "./health-csv";
+import { normalizeHealthIngestRequest } from "./health-ingest-request";
 
 const aggregateCsv = [
   "Date/Time,Sleep Analysis [Total] (hr),Sleep Analysis [Core] (hr),Sleep Analysis [Deep] (hr),Sleep Analysis [REM] (hr),Sleep Analysis [Awake] (hr),Heart Rate Variability (ms),Resting Heart Rate (count/min),Walking + Running Distance (km),Step Count (count),Active Energy (kJ),Resting Energy (kJ)",
@@ -102,4 +103,88 @@ test("duplicate import remains idempotent", () => {
 
   assert.equal(second.nextData.healthRawFiles.length, 1);
   assert.equal(second.nextData.workouts.length, first.nextData.workouts.length);
+});
+
+test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {
+  const form = new FormData();
+  form.append(
+    "metrics",
+    new File([aggregateCsv], "HealthAutoExport-2026-02-10-2026-02-10.csv", { type: "text/csv" }),
+  );
+  form.append("notes", new File(["not,csv"], "notes.txt", { type: "text/plain" }));
+  form.append(
+    "workouts",
+    new File([workoutsCsv], "Workouts-20260210_000000-20260210_235959.csv", { type: "text/csv" }),
+  );
+
+  const request = new Request("http://localhost/api/integrations/health/csv", {
+    method: "POST",
+    body: form,
+  });
+
+  const files = await normalizeHealthIngestRequest(request, { allowRawText: true });
+  assert.equal(files.length, 2);
+  assert.equal(files[0]?.filename, "HealthAutoExport-2026-02-10-2026-02-10.csv");
+  assert.equal(files[1]?.filename, "Workouts-20260210_000000-20260210_235959.csv");
+});
+
+test("normalizes multipart payload with fallback filename when file name is blob", async () => {
+  const form = new FormData();
+  form.append("metrics", new File([aggregateCsv], "blob", { type: "text/csv" }));
+
+  const request = new Request("http://localhost/api/integrations/health/csv", {
+    method: "POST",
+    body: form,
+  });
+
+  const files = await normalizeHealthIngestRequest(request, { allowRawText: true });
+  assert.equal(files.length, 1);
+  assert.equal(files[0]?.filename, "metrics.csv");
+});
+
+test("normalizes json payload for csv route with files[] and single csv fallback", async () => {
+  const request = new Request("http://localhost/api/integrations/health/csv", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      files: [
+        {
+          filename: "HealthAutoExport-2026-02-10-2026-02-10.csv",
+          csv: aggregateCsv,
+        },
+      ],
+      filename: "single.csv",
+      csv: workoutsCsv,
+    }),
+  });
+
+  const files = await normalizeHealthIngestRequest(request, {
+    allowRawText: true,
+    acceptJsonSingleCsv: true,
+    acceptJsonFiles: true,
+  });
+
+  assert.equal(files.length, 2);
+  assert.equal(files[0]?.filename, "HealthAutoExport-2026-02-10-2026-02-10.csv");
+  assert.equal(files[1]?.filename, "single.csv");
+});
+
+test("normalizes raw text csv payload for csv route", async () => {
+  const request = new Request("http://localhost/api/integrations/health/csv", {
+    method: "POST",
+    headers: {
+      "content-type": "text/csv",
+    },
+    body: aggregateCsv,
+  });
+
+  const files = await normalizeHealthIngestRequest(request, {
+    allowRawText: true,
+    defaultFilename: "HealthAutoExport.csv",
+  });
+
+  assert.equal(files.length, 1);
+  assert.equal(files[0]?.filename, "HealthAutoExport.csv");
 });

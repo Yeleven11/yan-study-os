@@ -204,6 +204,58 @@ Optional:
 - `HEALTH_EXPORT_BEARER_TOKEN` for bearer-auth import mode.
 - `HEALTH_IMPORT_BASE_URL` to set default API base.
 
+### Health Auto Export App Setup (REST API)
+
+Set `HEALTH_EXPORT_BEARER_TOKEN` on your deployed server and use the same value in both automations as:
+
+- Header key: `Authorization`
+- Header value: `Bearer <HEALTH_EXPORT_BEARER_TOKEN>`
+
+Use this endpoint:
+
+- `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
+
+Create two automations in Health Auto Export:
+
+1. `IB Health Metrics`
+- Enabled: `ON`
+- Automation Type: `REST API`
+- URL: `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
+- Timeout Interval: `60`
+- Data Type: `Health Metrics`
+- Select Health Metrics: `All Selected` (or at least sleep + HRV + resting HR + steps + distance + active/resting energy)
+- Export Format: `CSV`
+- Export Version: `v2`
+- Date Range: `Since Last Sync`
+- Time Grouping: `Default` (or `Day` if available)
+- Sync Cadence: `15 Minutes` (use `5` for faster updates)
+- Notify on Cache Update / Notify When Run: optional
+
+2. `IB Workouts`
+- Enabled: `ON`
+- Automation Type: `REST API`
+- URL: `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
+- Timeout Interval: `60`
+- Data Type: `Workouts`
+- Export Format: `CSV`
+- Export Version: `v2`
+- Date Range: `Since Last Sync`
+- Time Grouping: `Default`
+- Sync Cadence: `15 Minutes`
+
+Transport compatibility:
+
+- Supports `multipart/form-data` CSV uploads (Health Auto Export CSV mode).
+- Supports JSON body `{ csv, filename }`.
+- Supports JSON body `{ files: [{ filename, csv }] }`.
+- Supports raw `text/csv` payloads on `/api/integrations/health/csv`.
+
+Troubleshooting:
+
+- `401 Unauthorized`: missing or incorrect `Authorization: Bearer ...` header, or wrong token in server env.
+- `400 Bad Request`: payload format is not one of the supported body shapes.
+- `200` with no visible data changes: CSV payload may be empty/unsupported, or file hash already imported (idempotent duplicate).
+
 ## Quality Checks
 
 ```bash
