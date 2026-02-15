@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
+import { normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
   AppData,
   DailyHealthFact,
@@ -205,6 +206,7 @@ function normalizeData(data: AppData): AppData {
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
+    flashcards: normalizeFlashcards(data.flashcards),
     dailyHealth: normalizeDailyHealth(data.dailyHealth),
     workouts: normalizeWorkouts(data.workouts),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),

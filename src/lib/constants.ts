@@ -244,6 +244,7 @@ export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
     exams: STARTER_EXAMS,
     studySessions: [],
     todos: [],
+    flashcards: [],
     dailyHealth: [],
     workouts: [],
     workoutDetails: [],

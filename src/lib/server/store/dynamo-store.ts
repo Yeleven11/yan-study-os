@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
+import { normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
   AppData,
   DailyHealthFact,
@@ -257,6 +258,7 @@ function normalizeData(data: AppData): AppData {
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
+    flashcards: normalizeFlashcards(data.flashcards),
     dailyHealth: takeTail(dailyHealth, MAX_DAILY_HEALTH_DAYS),
     workouts: takeTail(workouts, MAX_WORKOUTS),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
@@ -303,6 +305,9 @@ function createDynamoStore(): DashboardStore {
       : defaults.exams;
 
     const goals = normalizeGoals(settingsResult.Item?.goals as Partial<PerformanceGoals>);
+    const flashcards = normalizeFlashcards(
+      settingsResult.Item?.flashcards as AppData["flashcards"],
+    );
     const dailyHealth = normalizeDailyHealth(settingsResult.Item?.dailyHealth as DailyHealthFact[]);
     const workouts = normalizeWorkouts(settingsResult.Item?.workouts as WorkoutEntry[]);
     const workoutDetails = normalizeWorkoutDetails(
@@ -315,6 +320,7 @@ function createDynamoStore(): DashboardStore {
       exams,
       studySessions: (sessionsResult.Items || []) as StudySession[],
       todos: (todosResult.Items || []) as TodoItem[],
+      flashcards,
       dailyHealth,
       workouts,
       workoutDetails,
@@ -334,6 +340,7 @@ function createDynamoStore(): DashboardStore {
           timezone: data.settings.timezone,
           examHighlightColor: data.settings.examHighlightColor,
           exams: data.exams,
+          flashcards: data.flashcards,
           dailyHealth: data.dailyHealth,
           workouts: data.workouts,
           workoutDetails: data.workoutDetails,

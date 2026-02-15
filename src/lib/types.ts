@@ -42,6 +42,46 @@ export interface TodoItem {
   completedAt?: string;
 }
 
+export type FlashcardStatus = "new" | "learning" | "review" | "relearning";
+export type FlashcardOutcome = "correct" | "incorrect";
+
+export interface Flashcard {
+  id: string;
+  question: string;
+  answer: string;
+  status: FlashcardStatus;
+  dueAt: string;
+  createdAt: string;
+  updatedAt: string;
+  intervalDays: number;
+  easeFactor: number;
+  learningStepIndex?: number;
+  reviewCount: number;
+  lapseCount: number;
+  consecutiveCorrect: number;
+  lastReviewedAt?: string;
+  lastOutcome?: FlashcardOutcome;
+}
+
+export interface FlashcardGradeInput {
+  cardId: string;
+  outcome: FlashcardOutcome;
+  reviewedAt: string;
+}
+
+export interface FlashcardSessionSnapshot {
+  generatedAt: string;
+  timezone: string;
+  totalCards: number;
+  dueNowCount: number;
+  criticalTodayCount: number;
+  optionalCount: number;
+  nextDueAt?: string;
+  currentCardId?: string;
+  currentCardDueNow: boolean;
+  currentCardCritical: boolean;
+}
+
 export type SubjectTotals = Record<SubjectId, number>;
 
 export interface DayStudyAggregate {
@@ -250,12 +290,19 @@ export interface DailyRecommendation {
   workoutSuggestion: string;
   bedtimeIso: string;
   bedtimeLabel: string;
+  bedtimeRangeStartIso: string;
+  bedtimeRangeEndIso: string;
+  bedtimeRangeStartLabel: string;
+  bedtimeRangeEndLabel: string;
+  bedtimeRangeLabel: string;
+  bedtimeRangeMinutes: number;
 }
 
 export interface AppData {
   exams: Exam[];
   studySessions: StudySession[];
   todos: TodoItem[];
+  flashcards: Flashcard[];
   dailyHealth: DailyHealthFact[];
   workouts: WorkoutEntry[];
   workoutDetails: WorkoutDetail[];
@@ -312,5 +359,17 @@ export type OfflineAction =
       id: string;
       type: "updateExams";
       payload: { exams: Exam[] };
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "createFlashcard";
+      payload: Flashcard;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "gradeFlashcard";
+      payload: FlashcardGradeInput;
       createdAt: string;
     };

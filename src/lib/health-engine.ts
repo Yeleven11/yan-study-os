@@ -770,6 +770,16 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       bedtimeMinutes -= 15;
     }
 
+    const readinessPressure = clamp((70 - readiness.score) / 40, 0, 1);
+    const debtPressure = clamp(debt7 / 2, 0, 1);
+    const regularityPressure = clamp(midpointSd7 / 1.4, 0, 1);
+    const stressIndex =
+      0.5 * readinessPressure + 0.3 * debtPressure + 0.2 * regularityPressure;
+    const bedtimeHalfRangeMinutes = Math.round(10 + stressIndex * 10);
+    const bedtimeRangeStartMinutes = bedtimeMinutes - bedtimeHalfRangeMinutes;
+    const bedtimeRangeEndMinutes = bedtimeMinutes + bedtimeHalfRangeMinutes;
+    const bedtimeRangeWidthMinutes = bedtimeHalfRangeMinutes * 2;
+
     const weekStart = getWeekStartDate(dateKey);
     const workoutsThisWeek = workouts.filter((workout) => {
       const workoutDate = toDateKey(workout.startedAt);
@@ -814,6 +824,14 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       workoutSuggestion,
       bedtimeIso: toIsoOnDate(dateKey, bedtimeMinutes),
       bedtimeLabel: formatClockLabel(bedtimeMinutes),
+      bedtimeRangeStartIso: toIsoOnDate(dateKey, bedtimeRangeStartMinutes),
+      bedtimeRangeEndIso: toIsoOnDate(dateKey, bedtimeRangeEndMinutes),
+      bedtimeRangeStartLabel: formatClockLabel(bedtimeRangeStartMinutes),
+      bedtimeRangeEndLabel: formatClockLabel(bedtimeRangeEndMinutes),
+      bedtimeRangeLabel: `${formatClockLabel(bedtimeRangeStartMinutes)}-${formatClockLabel(
+        bedtimeRangeEndMinutes,
+      )}`,
+      bedtimeRangeMinutes: bedtimeRangeWidthMinutes,
     };
 
     readinessByDate[dateKey] = readiness;
@@ -855,6 +873,12 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     workoutSuggestion: "35m light cardio session.",
     bedtimeIso: toIsoOnDate(todayKey, 21 * 60 + 30),
     bedtimeLabel: "21:30",
+    bedtimeRangeStartIso: toIsoOnDate(todayKey, 21 * 60 + 20),
+    bedtimeRangeEndIso: toIsoOnDate(todayKey, 21 * 60 + 40),
+    bedtimeRangeStartLabel: "21:20",
+    bedtimeRangeEndLabel: "21:40",
+    bedtimeRangeLabel: "21:20-21:40",
+    bedtimeRangeMinutes: 20,
   };
 
   const thisWeekStart = getWeekStartDate(todayKey);

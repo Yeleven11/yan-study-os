@@ -28,6 +28,12 @@ import {
   toDateKey,
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
+import {
+  applyFlashcardGrade,
+  buildFlashcardSessionSnapshot,
+  createFlashcard,
+  pickNextFlashcard,
+} from "@/lib/flashcards/scheduler";
 import { buildPerformanceInsights } from "@/lib/health-engine";
 import {
   buildDayHoverModel,
@@ -42,6 +48,9 @@ import type {
   DailyReadiness,
   DashboardBootstrap,
   Exam,
+  Flashcard,
+  FlashcardOutcome,
+  FlashcardSessionSnapshot,
   OfflineAction,
   PerformanceGoals,
   StudySession,
@@ -165,6 +174,23 @@ function applyOfflineAction(data: AppData, action: OfflineAction): AppData {
         (left, right) =>
           new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
       ),
+    };
+  }
+
+  if (action.type === "createFlashcard") {
+    const exists = data.flashcards.some((card) => card.id === action.payload.id);
+    return {
+      ...data,
+      flashcards: exists ? data.flashcards : [...data.flashcards, action.payload],
+    };
+  }
+
+  if (action.type === "gradeFlashcard") {
+    const timezone = data.settings?.timezone || "Europe/Berlin";
+    const result = applyFlashcardGrade(data.flashcards, action.payload, timezone);
+    return {
+      ...data,
+      flashcards: result.cards,
     };
   }
 
@@ -366,6 +392,7 @@ function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
     exams: bootstrap.exams,
     studySessions: bootstrap.studySessions,
     todos: bootstrap.todos,
+    flashcards: Array.isArray(bootstrap.flashcards) ? bootstrap.flashcards : [],
     dailyHealth: Array.isArray(bootstrap.dailyHealth) ? bootstrap.dailyHealth : [],
     workouts: Array.isArray(bootstrap.workouts) ? bootstrap.workouts : [],
     workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
@@ -486,6 +513,7 @@ export default function StudyDashboard() {
   const repository = useMemo(() => createDashboardRepository(), []);
 
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [sessionIssuedAt, setSessionIssuedAt] = useState<string | null>(null);
   const [passcode, setPasscode] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -545,18 +573,26 @@ export default function StudyDashboard() {
   useEffect(() => {
     let isMounted = true;
 
-    request<{ authenticated: boolean }>("/api/auth/session")
+    request<{ authenticated: boolean; issuedAt?: string; expiresAt?: string }>(
+      "/api/auth/session",
+    )
       .then((payload) => {
         if (!isMounted) {
           return;
         }
         setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
+        setSessionIssuedAt(
+          payload.authenticated && typeof payload.issuedAt === "string"
+            ? payload.issuedAt
+            : null,
+        );
       })
       .catch(() => {
         if (!isMounted) {
           return;
         }
         setAuthStatus("signedOut");
+        setSessionIssuedAt(null);
       });
 
     return () => {
@@ -655,6 +691,14 @@ export default function StudyDashboard() {
 
         if (action.type === "updateExams") {
           await repository.updateExams(action.payload.exams);
+        }
+
+        if (action.type === "createFlashcard") {
+          await repository.createFlashcard(action.payload);
+        }
+
+        if (action.type === "gradeFlashcard") {
+          await repository.gradeFlashcard(action.payload);
         }
       } catch {
         remaining.push(action);
@@ -873,6 +917,61 @@ export default function StudyDashboard() {
     }
 
     return sortTodos(data.todos.filter((todo) => todo.archived));
+  }, [data]);
+
+  const flashcardSnapshot = useMemo<FlashcardSessionSnapshot | null>(() => {
+    if (!data) {
+      return null;
+    }
+
+    return buildFlashcardSessionSnapshot(
+      data.flashcards,
+      new Date(timePulse),
+      data.settings.timezone || "Europe/Berlin",
+    );
+  }, [data, timePulse]);
+
+  const nextFlashcard = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    return pickNextFlashcard(
+      data.flashcards,
+      new Date(timePulse),
+      data.settings.timezone || "Europe/Berlin",
+    );
+  }, [data, timePulse]);
+
+  const latestHealthUpdateIso = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    const fromRawFiles = data.healthRawFiles
+      .map((item) => item.importedAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+
+    if (fromRawFiles) {
+      return fromRawFiles;
+    }
+
+    return data.dailyHealth
+      .map((item) => item.createdAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+  }, [data]);
+
+  const latestWorkoutUpdateIso = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    return data.workouts
+      .map((item) => item.createdAt || item.startedAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
   }, [data]);
 
   const todosByDate = useMemo(() => {
@@ -1127,8 +1226,17 @@ export default function StudyDashboard() {
         method: "POST",
         body: JSON.stringify({ passcode }),
       });
+      const sessionPayload: { authenticated: boolean; issuedAt?: string } = await request<{
+        authenticated: boolean;
+        issuedAt?: string;
+      }>("/api/auth/session").catch(() => ({ authenticated: true }));
       setPasscode("");
       setAuthStatus("signedIn");
+      setSessionIssuedAt(
+        sessionPayload.authenticated && typeof sessionPayload.issuedAt === "string"
+          ? sessionPayload.issuedAt
+          : new Date().toISOString(),
+      );
     } catch (error) {
       setAuthError(
         error instanceof Error ? error.message : "Unable to verify passcode",
@@ -1139,6 +1247,7 @@ export default function StudyDashboard() {
   const handleLogout = async () => {
     await request<{ ok: true }>("/api/auth/logout", { method: "POST" }).catch(() => null);
     setAuthStatus("signedOut");
+    setSessionIssuedAt(null);
     setData(null);
   };
 
@@ -1147,11 +1256,12 @@ export default function StudyDashboard() {
       optimisticUpdate: (prev: AppData) => AppData,
       remoteAction: () => Promise<void>,
       fallbackAction?: OfflineAction,
-    ) => {
+    ): Promise<boolean> => {
       setData((previous) => (previous ? optimisticUpdate(previous) : previous));
 
       try {
         await remoteAction();
+        return true;
       } catch {
         if (fallbackAction && repository.mode === "api") {
           queueOfflineAction(fallbackAction);
@@ -1159,6 +1269,7 @@ export default function StudyDashboard() {
         } else {
           setStatusMessage("Action failed and was not synced.");
         }
+        return false;
       }
     },
     [queueOfflineAction, repository.mode],
@@ -1294,6 +1405,74 @@ export default function StudyDashboard() {
       () => repository.createTodo(todo),
       createOfflineAction({ type: "createTodo", payload: todo }),
     );
+  };
+
+  const handleCreateFlashcard = async (question: string, answer: string) => {
+    if (!data) {
+      return;
+    }
+
+    const trimmedQuestion = question.trim();
+    const trimmedAnswer = answer.trim();
+    if (!trimmedQuestion || !trimmedAnswer) {
+      setStatusMessage("Flashcard needs both a question and an answer.");
+      return;
+    }
+
+    const flashcard = createFlashcard(trimmedQuestion, trimmedAnswer);
+
+    const saved = await applyMutation(
+      (previous) => ({
+        ...previous,
+        flashcards: [...previous.flashcards, flashcard],
+      }),
+      () => repository.createFlashcard(flashcard),
+      createOfflineAction({ type: "createFlashcard", payload: flashcard }),
+    );
+
+    if (saved || repository.mode !== "api") {
+      setStatusMessage("Flashcard added and ready for review.");
+    }
+  };
+
+  const handleGradeFlashcard = async (cardId: string, outcome: FlashcardOutcome) => {
+    if (!data) {
+      return;
+    }
+
+    const reviewInput = {
+      cardId,
+      outcome,
+      reviewedAt: new Date().toISOString(),
+    };
+
+    const timezone = data.settings?.timezone || "Europe/Berlin";
+    const optimistic = applyFlashcardGrade(data.flashcards, reviewInput, timezone);
+    if (!optimistic.updatedCard) {
+      setStatusMessage("Flashcard could not be found.");
+      return;
+    }
+
+    const saved = await applyMutation(
+      (previous) => ({
+        ...previous,
+        flashcards: applyFlashcardGrade(
+          previous.flashcards,
+          reviewInput,
+          previous.settings?.timezone || timezone,
+        ).cards,
+      }),
+      () => repository.gradeFlashcard(reviewInput),
+      createOfflineAction({ type: "gradeFlashcard", payload: reviewInput }),
+    );
+
+    if (saved || repository.mode !== "api") {
+      setStatusMessage(
+        outcome === "correct"
+          ? "Flashcard marked correct and saved."
+          : "Flashcard marked incorrect and saved.",
+      );
+    }
   };
 
   const handleArchiveTodo = async (todoId: string) => {
@@ -1593,30 +1772,50 @@ export default function StudyDashboard() {
 
   return (
     <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-      <div className="h-full w-full p-3 md:p-4">
-        <div
-          className="grid h-full min-h-0 gap-4"
-          style={{
-            gridTemplateColumns: "320px minmax(0, 1fr) 320px",
-          }}
-        >
-          <TodoRail
-            activeTodos={activeTodos}
-            archivedTodos={archivedTodos}
-            onAddTodo={handleAddTodo}
-            onArchive={handleArchiveTodo}
-            onRestore={handleRestoreTodo}
-          />
-
-          <main
-            className="grid h-full min-h-0 gap-4 overflow-hidden"
+      <div className="flex h-full min-h-0 flex-col">
+        <StatusStrip
+          healthUpdatedAt={latestHealthUpdateIso}
+          workoutsUpdatedAt={latestWorkoutUpdateIso}
+          lastLoginAt={sessionIssuedAt}
+          nowMs={timePulse}
+        />
+        <div className="min-h-0 flex-1 p-3 md:p-4">
+          <div
+            className="grid h-full min-h-0 gap-4"
             style={{
-              gridTemplateRows: isCountdownExpanded
-                ? "1fr 0fr 0fr"
-                : "220px minmax(0, 1fr) 280px",
-              transition: "grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1)",
+              gridTemplateColumns: "320px minmax(0, 1fr) 320px",
             }}
           >
+            <aside
+              className="grid h-full min-h-0 gap-4"
+              style={{ gridTemplateRows: "minmax(0, 1fr) minmax(0, 1fr)" }}
+            >
+              <TodoRail
+                activeTodos={activeTodos}
+                archivedTodos={archivedTodos}
+                onAddTodo={handleAddTodo}
+                onArchive={handleArchiveTodo}
+                onRestore={handleRestoreTodo}
+              />
+              <FlashcardRail
+                currentCard={nextFlashcard?.card || null}
+                cardDueNow={Boolean(nextFlashcard?.dueNow)}
+                cardCritical={Boolean(nextFlashcard?.critical)}
+                snapshot={flashcardSnapshot}
+                onCreateFlashcard={handleCreateFlashcard}
+                onGradeFlashcard={handleGradeFlashcard}
+              />
+            </aside>
+
+            <main
+              className="grid h-full min-h-0 gap-4 overflow-hidden"
+              style={{
+                gridTemplateRows: isCountdownExpanded
+                  ? "1fr 0fr 0fr"
+                  : "220px minmax(0, 1fr) 280px",
+                transition: "grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+            >
             <section
               className="h-full min-h-0 overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
               onClick={() => {
@@ -1799,7 +1998,7 @@ export default function StudyDashboard() {
                           Study target: {todayRecommendation.studyTargetHours.toFixed(1)}h
                         </span>
                         <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-                          Bedtime: {todayRecommendation.bedtimeLabel}
+                          Bedtime: {todayRecommendation.bedtimeRangeLabel}
                         </span>
                       </div>
                     </div>
@@ -2572,6 +2771,7 @@ export default function StudyDashboard() {
           />
         ) : null}
       </FocusModal>
+      </div>
     </div>
   );
 }
@@ -2594,6 +2794,305 @@ function MetricBar({ label, value }: { label: string; value: number }) {
         />
       </div>
     </div>
+  );
+}
+
+function formatRelativeTimestamp(value: string | null, nowMs: number): string {
+  if (!value) {
+    return "Never";
+  }
+
+  const timestampMs = new Date(value).getTime();
+  if (!Number.isFinite(timestampMs)) {
+    return "Never";
+  }
+
+  const diffMs = nowMs - timestampMs;
+  const absDiffMs = Math.abs(diffMs);
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (absDiffMs < minuteMs) {
+    return "just now";
+  }
+
+  if (absDiffMs < hourMs) {
+    const minutes = Math.round(absDiffMs / minuteMs);
+    return diffMs >= 0 ? `${minutes}m ago` : `in ${minutes}m`;
+  }
+
+  if (absDiffMs < dayMs) {
+    const hours = Math.round(absDiffMs / hourMs);
+    return diffMs >= 0 ? `${hours}h ago` : `in ${hours}h`;
+  }
+
+  const days = Math.round(absDiffMs / dayMs);
+  return diffMs >= 0 ? `${days}d ago` : `in ${days}d`;
+}
+
+function StatusStrip({
+  healthUpdatedAt,
+  workoutsUpdatedAt,
+  lastLoginAt,
+  nowMs,
+}: {
+  healthUpdatedAt: string | null;
+  workoutsUpdatedAt: string | null;
+  lastLoginAt: string | null;
+  nowMs: number;
+}) {
+  return (
+    <header className="h-6 border-b border-[var(--panel-border)] bg-[var(--panel)] px-3 md:px-4">
+      <div className="flex h-full items-center gap-4 overflow-x-auto text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+        <StatusStripItem
+          label="Health Updated"
+          value={formatRelativeTimestamp(healthUpdatedAt, nowMs)}
+          absoluteValue={healthUpdatedAt}
+        />
+        <StatusStripItem
+          label="Workouts Updated"
+          value={formatRelativeTimestamp(workoutsUpdatedAt, nowMs)}
+          absoluteValue={workoutsUpdatedAt}
+        />
+        <StatusStripItem
+          label="Last Login"
+          value={formatRelativeTimestamp(lastLoginAt, nowMs)}
+          absoluteValue={lastLoginAt}
+        />
+      </div>
+    </header>
+  );
+}
+
+function StatusStripItem({
+  label,
+  value,
+  absoluteValue,
+}: {
+  label: string;
+  value: string;
+  absoluteValue: string | null;
+}) {
+  return (
+    <span className="whitespace-nowrap" title={absoluteValue ? formatDateTime(absoluteValue) : "Never"}>
+      {label}: {value}
+    </span>
+  );
+}
+
+function FlashcardRail({
+  currentCard,
+  cardDueNow,
+  cardCritical,
+  snapshot,
+  onCreateFlashcard,
+  onGradeFlashcard,
+}: {
+  currentCard: Flashcard | null;
+  cardDueNow: boolean;
+  cardCritical: boolean;
+  snapshot: FlashcardSessionSnapshot | null;
+  onCreateFlashcard: (question: string, answer: string) => Promise<void>;
+  onGradeFlashcard: (cardId: string, outcome: FlashcardOutcome) => Promise<void>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [questionDraft, setQuestionDraft] = useState("");
+  const [answerDraft, setAnswerDraft] = useState("");
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [cardUi, setCardUi] = useState<{
+    cardId: string | null;
+    flipped: boolean;
+    grading: boolean;
+  }>({
+    cardId: null,
+    flipped: false,
+    grading: false,
+  });
+
+  const activeCardId = currentCard?.id ?? null;
+  const flipped = cardUi.cardId === activeCardId ? cardUi.flipped : false;
+  const grading = cardUi.cardId === activeCardId ? cardUi.grading : false;
+
+  const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = questionDraft.trim();
+    const answer = answerDraft.trim();
+
+    if (!question || !answer) {
+      setPanelError("Question and answer are required.");
+      return;
+    }
+
+    setPanelError(null);
+    await onCreateFlashcard(question, answer);
+    setQuestionDraft("");
+    setAnswerDraft("");
+    setAdding(false);
+  };
+
+  const handleGrade = async (outcome: FlashcardOutcome) => {
+    if (!currentCard || grading) {
+      return;
+    }
+
+    const currentCardId = currentCard.id;
+    setCardUi({
+      cardId: currentCardId,
+      flipped: true,
+      grading: true,
+    });
+
+    try {
+      await onGradeFlashcard(currentCardId, outcome);
+    } finally {
+      setCardUi((previous) =>
+        previous.cardId === currentCardId
+          ? {
+              ...previous,
+              grading: false,
+            }
+          : previous,
+      );
+    }
+  };
+
+  return (
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Flashcards</p>
+          <h2 className="text-sm font-semibold">Always Ready Review</h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAdding((current) => !current)}
+          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+        >
+          {adding ? "Cancel" : "+ Add"}
+        </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+          Critical Today: {snapshot?.criticalTodayCount ?? 0}
+        </span>
+        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+          Due Now: {snapshot?.dueNowCount ?? 0}
+        </span>
+        {snapshot && snapshot.optionalCount > 0 ? (
+          <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+            Optional: {snapshot.optionalCount}
+          </span>
+        ) : null}
+      </div>
+
+      {adding ? (
+        <form
+          onSubmit={handleCreate}
+          className="mb-3 space-y-2 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
+        >
+          <input
+            value={questionDraft}
+            onChange={(event) => setQuestionDraft(event.target.value)}
+            placeholder="Question"
+            className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+          />
+          <textarea
+            value={answerDraft}
+            onChange={(event) => setAnswerDraft(event.target.value)}
+            placeholder="Answer"
+            className="h-16 w-full resize-none rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+          />
+          {panelError ? (
+            <p className="text-xs text-[#ff9896]">{panelError}</p>
+          ) : (
+            <p className="text-xs text-[var(--muted)]">
+              This card becomes reviewable instantly after save.
+            </p>
+          )}
+          <button
+            type="submit"
+            className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+          >
+            Save Flashcard
+          </button>
+        </form>
+      ) : null}
+
+      <div className="min-h-0 flex-1">
+        {currentCard ? (
+          <div className="flex h-full min-h-0 flex-col">
+            <button
+              type="button"
+              onClick={() =>
+                setCardUi({
+                  cardId: activeCardId,
+                  flipped: true,
+                  grading: false,
+                })
+              }
+              className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-4 text-left transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+            >
+              {!cardCritical ? (
+                <span className="absolute right-3 top-3 rounded border border-[var(--panel-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Optional
+                </span>
+              ) : null}
+              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                {flipped ? "Answer" : "Question"}
+              </p>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
+                {flipped ? currentCard.answer : currentCard.question}
+              </p>
+              {!flipped ? (
+                <p className="mt-4 text-xs text-[var(--muted)]">
+                  Click to flip and reveal the answer.
+                </p>
+              ) : null}
+              {flipped ? (
+                <p className="mt-4 text-xs text-[var(--muted)]">
+                  Grade only after you genuinely tried to recall.
+                </p>
+              ) : null}
+            </button>
+
+            {flipped ? (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleGrade("incorrect")}
+                  disabled={grading}
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#ff8787] hover:text-[#ffb0b0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                >
+                  Incorrect
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleGrade("correct")}
+                  disabled={grading}
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#7de9a1] hover:text-[#b8ffd0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                >
+                  Correct
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-[var(--muted)]">
+                {cardDueNow
+                  ? "Due now. Flip to answer and grade."
+                  : "Not due yet. Optional review only."}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-[var(--panel-border)] bg-[var(--panel-soft)] p-4 text-center">
+            <p className="text-sm text-[var(--muted)]">
+              Add your first flashcard. Your next question will always be ready here.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2655,7 +3154,7 @@ function TodoRail({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
@@ -2791,7 +3290,7 @@ function TodoRail({
           <p className="text-sm text-[var(--muted)]">No todos in this view.</p>
         ) : null}
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -2949,7 +3448,10 @@ function HealthExplorer({
           <MetricTile label="Readiness" value={`${Math.round(todayReadiness?.score || 0)} / 100`} />
           <MetricTile label="Sleep Score" value={`${Math.round(todayReadiness?.sleepScore || 0)}`} />
           <MetricTile label="Sleep Debt" value={`${(todayReadiness?.sleepDebtHours || 0).toFixed(2)}h`} />
-          <MetricTile label="Tonight Bedtime" value={todayRecommendation?.bedtimeLabel || "--:--"} />
+          <MetricTile
+            label="Tonight Bedtime"
+            value={todayRecommendation?.bedtimeRangeLabel || "--:--"}
+          />
         </section>
 
         <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">

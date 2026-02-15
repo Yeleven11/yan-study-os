@@ -2,11 +2,14 @@
 
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
+import { applyFlashcardGrade, normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
   AppData,
   DashboardBootstrap,
   DailyHealthFact,
   Exam,
+  Flashcard,
+  FlashcardGradeInput,
   HealthRawFile,
   PerformanceGoals,
   StudySession,
@@ -23,6 +26,8 @@ export interface DashboardRepository {
   createStudySession: (session: StudySession) => Promise<void>;
   createWorkout: (workout: WorkoutEntry) => Promise<void>;
   createTodo: (todo: TodoItem) => Promise<void>;
+  createFlashcard: (flashcard: Flashcard) => Promise<void>;
+  gradeFlashcard: (input: FlashcardGradeInput) => Promise<void>;
   updateTodo: (id: string, patch: Partial<TodoItem>) => Promise<void>;
   archiveTodo: (id: string) => Promise<void>;
   restoreTodo: (id: string) => Promise<void>;
@@ -159,6 +164,7 @@ function parseStoredData(raw: string | null): AppData {
       exams: Array.isArray(parsed.exams) ? parsed.exams : createDefaultAppData().exams,
       studySessions: Array.isArray(parsed.studySessions) ? parsed.studySessions : [],
       todos: Array.isArray(parsed.todos) ? parsed.todos : [],
+      flashcards: normalizeFlashcards(parsed.flashcards),
       dailyHealth: parseDailyHealth(parsed.dailyHealth),
       workouts: parseWorkouts(parsed.workouts),
       workoutDetails: parseWorkoutDetails(parsed.workoutDetails),
@@ -228,6 +234,21 @@ function createLocalRepository(): DashboardRepository {
     async createTodo(todo) {
       const data = readLocalData();
       data.todos = sortTodos([...data.todos, todo]);
+      writeLocalData(data);
+    },
+    async createFlashcard(flashcard) {
+      const data = readLocalData();
+      const exists = data.flashcards.some((item) => item.id === flashcard.id);
+      data.flashcards = exists
+        ? normalizeFlashcards(data.flashcards)
+        : normalizeFlashcards([...data.flashcards, flashcard]);
+      writeLocalData(data);
+    },
+    async gradeFlashcard(input) {
+      const data = readLocalData();
+      const timezone = data.settings?.timezone || getTimezone();
+      const result = applyFlashcardGrade(data.flashcards, input, timezone);
+      data.flashcards = result.cards;
       writeLocalData(data);
     },
     async updateTodo(id, patch) {
@@ -413,6 +434,18 @@ function createApiRepository(): DashboardRepository {
       await apiRequest<{ ok: true }>("/api/todos", {
         method: "POST",
         body: JSON.stringify(todo),
+      });
+    },
+    async createFlashcard(flashcard) {
+      await apiRequest<{ ok: true }>("/api/flashcards", {
+        method: "POST",
+        body: JSON.stringify(flashcard),
+      });
+    },
+    async gradeFlashcard(input) {
+      await apiRequest<{ ok: true }>("/api/flashcards/review", {
+        method: "POST",
+        body: JSON.stringify(input),
       });
     },
     async updateTodo(id, patch) {
