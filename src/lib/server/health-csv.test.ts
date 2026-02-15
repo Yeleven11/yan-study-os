@@ -126,6 +126,15 @@ test("parses workouts-uuid manual export format as workout summary", () => {
   assert.equal(imported.nextData.healthRawFiles[0]?.fileType, "workout_summary");
   assert.equal(imported.nextData.workouts[0]?.workoutNameRaw, "Outdoor Run");
   assert.ok((imported.nextData.workouts[0]?.distanceKm || 0) > 8);
+
+  const firstWorkoutId = imported.nextData.workouts[0]?.id;
+  const firstDetail = imported.nextData.workoutDetails.find(
+    (item) => item.workoutId === firstWorkoutId,
+  );
+
+  assert.ok(firstDetail);
+  assert.ok((firstDetail?.heartRateSeries?.length || 0) > 0);
+  assert.ok((firstDetail?.distanceSeries?.length || 0) > 0);
 });
 
 test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {

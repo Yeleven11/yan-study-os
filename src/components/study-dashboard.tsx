@@ -514,6 +514,7 @@ export default function StudyDashboard() {
     const storedTimer = readStoredTimer();
     return storedTimer?.subjectId ?? SUBJECT_IDS[0];
   });
+  const [quickAddMinutes, setQuickAddMinutes] = useState("45");
   const [clockNowMs, setClockNowMs] = useState(INITIAL_NOW_MS);
   const [timePulse, setTimePulse] = useState(INITIAL_NOW_MS);
 
@@ -1242,6 +1243,46 @@ export default function StudyDashboard() {
     );
 
     setStatusMessage(`Saved ${formatDuration(totalSeconds)} of ${SUBJECT_BY_ID[subjectId].name}.`);
+  };
+
+  const handleQuickAddSession = async () => {
+    if (!data) {
+      return;
+    }
+
+    const minutes = Number(quickAddMinutes.replace(",", "."));
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      setStatusMessage("Enter quick-add minutes greater than 0.");
+      return;
+    }
+
+    const durationSec = Math.max(60, Math.round(minutes * 60));
+    const endedAt = new Date().toISOString();
+    const startedAt = new Date(Date.now() - durationSec * 1000).toISOString();
+    const subjectId = activeTimer ? activeTimer.subjectId : timerSubjectId;
+
+    const session: StudySession = {
+      id: crypto.randomUUID(),
+      subjectId,
+      startedAt,
+      endedAt,
+      durationSec,
+      createdAt: endedAt,
+    };
+
+    await applyMutation(
+      (previous) => ({
+        ...previous,
+        studySessions: [...previous.studySessions, session],
+      }),
+      () => repository.createStudySession(session),
+      createOfflineAction({ type: "createStudySession", payload: session }),
+    );
+
+    setQuickAddMinutes("");
+    setStatusMessage(
+      `Quick-added ${formatDuration(durationSec)} of ${SUBJECT_BY_ID[subjectId].name}.`,
+    );
   };
 
   const handleAddTodo = async (todo: TodoItem) => {
@@ -2087,6 +2128,30 @@ export default function StudyDashboard() {
                       </button>
                     </>
                   )}
+                </div>
+
+                <div className="mt-3 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                    Quick Add Missed Session
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={quickAddMinutes}
+                      onChange={(event) => setQuickAddMinutes(event.target.value)}
+                      placeholder="Minutes"
+                      className="w-24 rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleQuickAddSession()}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    >
+                      Quick Add
+                    </button>
+                  </div>
                 </div>
 
               </section>

@@ -933,7 +933,88 @@ function computeMergeConfidence(
   return clamp(confidence, 0.55, 0.99);
 }
 
+function pickSeriesTimestamp(
+  startedAt: string,
+  endedAt: string,
+  mode: "midpoint" | "end",
+): string {
+  const startMs = new Date(startedAt).getTime();
+  const endMs = new Date(endedAt).getTime();
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return startedAt;
+  }
+
+  if (mode === "end") {
+    return new Date(endMs).toISOString();
+  }
+
+  return new Date(startMs + (endMs - startMs) / 2).toISOString();
+}
+
+function buildSummaryFallbackSeries(workout: WorkoutEntry): {
+  heartRateSeries: WorkoutStreamPoint[];
+  distanceSeries: WorkoutStreamPoint[];
+  stepSeries: WorkoutStreamPoint[];
+  activeEnergySeries: WorkoutStreamPoint[];
+  restingEnergySeries: WorkoutStreamPoint[];
+} {
+  const midpoint = pickSeriesTimestamp(workout.startedAt, workout.endedAt, "midpoint");
+  const end = pickSeriesTimestamp(workout.startedAt, workout.endedAt, "end");
+  const hrAvg = workout.hrAvg ?? workout.avgHeartRate;
+
+  const heartRateSeries: WorkoutStreamPoint[] =
+    (typeof workout.hrMin === "number" && workout.hrMin > 0) ||
+    (typeof workout.hrMax === "number" && workout.hrMax > 0) ||
+    (typeof hrAvg === "number" && hrAvg > 0)
+      ? [
+          {
+            timestamp: midpoint,
+            min: typeof workout.hrMin === "number" && workout.hrMin > 0 ? workout.hrMin : undefined,
+            max: typeof workout.hrMax === "number" && workout.hrMax > 0 ? workout.hrMax : undefined,
+            avg: typeof hrAvg === "number" && hrAvg > 0 ? hrAvg : undefined,
+            context: "summary",
+          },
+        ]
+      : [];
+
+  const distanceSeries: WorkoutStreamPoint[] =
+    typeof workout.distanceKm === "number" && workout.distanceKm > 0
+      ? [{ timestamp: end, value: workout.distanceKm, context: "summary_total" }]
+      : [];
+
+  const stepSeries: WorkoutStreamPoint[] =
+    typeof workout.stepCount === "number" && workout.stepCount > 0
+      ? [{ timestamp: end, value: workout.stepCount, context: "summary_total" }]
+      : [];
+
+  const activeEnergySeries: WorkoutStreamPoint[] =
+    typeof workout.activeEnergyKj === "number" && workout.activeEnergyKj > 0
+      ? [{ timestamp: end, value: workout.activeEnergyKj, context: "summary_total" }]
+      : [];
+
+  const restingEnergySeries: WorkoutStreamPoint[] =
+    typeof workout.restingEnergyKj === "number" && workout.restingEnergyKj > 0
+      ? [{ timestamp: end, value: workout.restingEnergyKj, context: "summary_total" }]
+      : [];
+
+  return {
+    heartRateSeries,
+    distanceSeries,
+    stepSeries,
+    activeEnergySeries,
+    restingEnergySeries,
+  };
+}
+
 function buildWorkoutDetail(workout: WorkoutEntry, streams: WorkoutStream[]): WorkoutDetail {
+  const heartRateSeries = flattenSeries(streams, ["heart_rate", "hr_recovery"]);
+  const distanceSeries = flattenSeries(streams, ["distance"]);
+  const stepSeries = flattenSeries(streams, ["steps"]);
+  const activeEnergySeries = flattenSeries(streams, ["active_energy"]);
+  const restingEnergySeries = flattenSeries(streams, ["resting_energy"]);
+  const summaryFallback = buildSummaryFallbackSeries(workout);
+
   return {
     workoutId: workout.id,
     workoutKey: workout.sourceWorkoutKey || `workout-${workout.id}`,
@@ -960,11 +1041,13 @@ function buildWorkoutDetail(workout: WorkoutEntry, streams: WorkoutStream[]): Wo
     hrAvg: workout.hrAvg,
     sourceFiles: [...new Set(streams.map((stream) => stream.sourceFile))],
     streams,
-    heartRateSeries: flattenSeries(streams, ["heart_rate", "hr_recovery"]),
-    distanceSeries: flattenSeries(streams, ["distance"]),
-    stepSeries: flattenSeries(streams, ["steps"]),
-    activeEnergySeries: flattenSeries(streams, ["active_energy"]),
-    restingEnergySeries: flattenSeries(streams, ["resting_energy"]),
+    heartRateSeries: heartRateSeries.length > 0 ? heartRateSeries : summaryFallback.heartRateSeries,
+    distanceSeries: distanceSeries.length > 0 ? distanceSeries : summaryFallback.distanceSeries,
+    stepSeries: stepSeries.length > 0 ? stepSeries : summaryFallback.stepSeries,
+    activeEnergySeries:
+      activeEnergySeries.length > 0 ? activeEnergySeries : summaryFallback.activeEnergySeries,
+    restingEnergySeries:
+      restingEnergySeries.length > 0 ? restingEnergySeries : summaryFallback.restingEnergySeries,
   };
 }
 
