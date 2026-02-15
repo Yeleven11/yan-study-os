@@ -20,17 +20,44 @@ function tokensMatch(expected: string, provided: string): boolean {
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
+function normalizeToken(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+}
+
+function getConfiguredToken(): string {
+  return normalizeToken(
+    process.env.HEALTH_EXPORT_BEARER_TOKEN || process.env.HEALTH_EXPORT_BEARER_TOKE,
+  );
+}
+
+function getBearerTokenFromHeader(authorizationHeader: string): string {
+  const match = authorizationHeader.trim().match(/^Bearer\s+(.+)$/i);
+  if (!match || !match[1]) {
+    return "";
+  }
+
+  return normalizeToken(match[1]);
+}
+
 function requireIngestAuth(request: NextRequest): NextResponse | null {
-  const token = process.env.HEALTH_EXPORT_BEARER_TOKEN;
+  const token = getConfiguredToken();
 
   if (!token) {
     return requireSession(request);
   }
 
   const authorization = request.headers.get("authorization") || "";
-  const [scheme, rawValue] = authorization.split(" ");
+  const rawValue = getBearerTokenFromHeader(authorization);
 
-  if (scheme !== "Bearer" || !rawValue || !tokensMatch(token, rawValue)) {
+  if (!rawValue || !tokensMatch(token, rawValue)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
