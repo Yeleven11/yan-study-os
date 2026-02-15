@@ -11,6 +11,7 @@ import type {
   DailyReadiness,
   DailyRecommendation,
   PerformanceGoals,
+  SleepDriverKey,
   StudySession,
   WorkoutEntry,
   WorkoutType,
@@ -33,6 +34,49 @@ export type PerformanceInsights = {
   daysSinceWorkout: number;
   trendDelta7d: number;
 };
+
+function sentenceForDriver(
+  mode: "negative" | "positive",
+  key: SleepDriverKey,
+): string {
+  if (mode === "negative") {
+    if (key === "debt") {
+      return "Your score is mainly held down by accumulated sleep debt from recent nights.";
+    }
+    if (key === "duration") {
+      return "Your score is mainly held down by sleep duration falling short of your target.";
+    }
+    if (key === "regularity") {
+      return "Your score is mainly held down by inconsistent sleep timing across recent nights.";
+    }
+    if (key === "stage") {
+      return "Your score is mainly held down by less favorable deep and REM sleep balance.";
+    }
+    if (key === "awake") {
+      return "Your score is mainly held down by too much awake time during your sleep window.";
+    }
+
+    return "Your score is mainly held down by mismatch with your target sleep schedule timing.";
+  }
+
+  if (key === "debt") {
+    return "Your score is mainly boosted by low accumulated sleep debt from recent nights.";
+  }
+  if (key === "duration") {
+    return "Your score is mainly boosted by strong sleep duration relative to your target.";
+  }
+  if (key === "regularity") {
+    return "Your score is mainly boosted by consistent sleep timing across recent nights.";
+  }
+  if (key === "stage") {
+    return "Your score is mainly boosted by favorable deep and REM sleep balance.";
+  }
+  if (key === "awake") {
+    return "Your score is mainly boosted by low awake time during your sleep window.";
+  }
+
+  return "Your score is mainly boosted by good alignment with your target sleep schedule timing.";
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -489,15 +533,48 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     const sleepScheduleScore = hasScheduleSignal
       ? clamp(100 - Math.abs(midpoint - 3.1) * 14 - midpointSd7 * 8, 40, 100)
       : 0;
-    const sleepScoreRaw = hasScheduleSignal
-      ? 0.3 * durationScore +
-        0.2 * regularityScore +
-        0.2 * stageScore +
-        0.1 * awakeScore +
-        0.2 * sleepScheduleScore
-      : 0.4 * durationScore + 0.25 * regularityScore + 0.25 * stageScore + 0.1 * awakeScore;
-    const sleepScore = clamp(sleepScoreRaw - 5 * debt, 0, 100);
+    const durationWeight = hasScheduleSignal ? 0.3 : 0.4;
+    const regularityWeight = hasScheduleSignal ? 0.2 : 0.25;
+    const stageWeight = hasScheduleSignal ? 0.2 : 0.25;
+    const awakeWeight = 0.1;
+    const scheduleWeight = hasScheduleSignal ? 0.2 : 0;
+
+    const sleepScoreRaw =
+      durationWeight * durationScore +
+      regularityWeight * regularityScore +
+      stageWeight * stageScore +
+      awakeWeight * awakeScore +
+      scheduleWeight * sleepScheduleScore;
+    const debtPenalty = 5 * debt;
+    const sleepScore = clamp(sleepScoreRaw - debtPenalty, 0, 100);
     const sleepComponent = sleepScore;
+
+    const sleepNegativeDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
+      { key: "debt", impact: debtPenalty },
+      { key: "duration", impact: (100 - durationScore) * durationWeight },
+      { key: "regularity", impact: (100 - regularityScore) * regularityWeight },
+      { key: "stage", impact: (100 - stageScore) * stageWeight },
+      { key: "awake", impact: (100 - awakeScore) * awakeWeight },
+      { key: "schedule", impact: hasScheduleSignal ? (100 - sleepScheduleScore) * scheduleWeight : 0 },
+    ];
+
+    const sleepPositiveDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
+      { key: "duration", impact: durationScore * durationWeight },
+      { key: "regularity", impact: regularityScore * regularityWeight },
+      { key: "stage", impact: stageScore * stageWeight },
+      { key: "awake", impact: awakeScore * awakeWeight },
+      { key: "schedule", impact: hasScheduleSignal ? sleepScheduleScore * scheduleWeight : 0 },
+    ];
+
+    const sleepDriverMode: "negative" | "positive" = sleepScore < 65 ? "negative" : "positive";
+    const dominantSleepDriver =
+      sleepDriverMode === "negative"
+        ? sleepNegativeDrivers.slice().sort((left, right) => right.impact - left.impact)[0]
+        : sleepPositiveDrivers.slice().sort((left, right) => right.impact - left.impact)[0];
+
+    const sleepDriverKey: SleepDriverKey = dominantSleepDriver?.key || "duration";
+    const sleepDriverImpact = dominantSleepDriver?.impact || 0;
+    const sleepDriverSentence = sentenceForDriver(sleepDriverMode, sleepDriverKey);
 
     let zHrv = 0;
     let zRhr = 0;
@@ -582,6 +659,10 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       sleepStageScore: round(stageScore, 1),
       sleepAwakeScore: round(awakeScore, 1),
       sleepScheduleScore: round(sleepScheduleScore || regularityScore, 1),
+      sleepDriverMode,
+      sleepDriverKey,
+      sleepDriverImpact: round(sleepDriverImpact, 1),
+      sleepDriverSentence,
       sleepComponent: round(sleepComponent, 1),
       autonomicComponent: round(autonomicComponent, 1),
       loadComponent: round(loadComponent, 1),
@@ -714,6 +795,10 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     sleepStageScore: 50,
     sleepAwakeScore: 50,
     sleepScheduleScore: 50,
+    sleepDriverMode: "negative" as const,
+    sleepDriverKey: "duration" as const,
+    sleepDriverImpact: 0,
+    sleepDriverSentence: "Your score is mainly held down by sleep duration falling short of your target.",
     sleepComponent: 50,
     autonomicComponent: 50,
     loadComponent: 50,

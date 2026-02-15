@@ -53,6 +53,8 @@ test("merges one workout split across multiple csv streams", () => {
   assert.equal(imported.nextData.workouts.length, 1);
   const workout = imported.nextData.workouts[0];
   assert.equal(workout.sourceWorkoutKey, "outdoor-walk-20260210_143200");
+  assert.equal(workout.workoutNameRaw, "Outdoor Walk");
+  assert.equal(workout.workoutDisplayLabel, "1.9 km Outdoor Walk");
   assert.ok((workout.streamCount || 0) >= 4);
   assert.ok((workout.mergeConfidence || 0) > 0.85);
   assert.ok((workout.hrAvg || 0) > 0);
@@ -60,6 +62,7 @@ test("merges one workout split across multiple csv streams", () => {
   const detail = imported.nextData.workoutDetails.find((item) => item.workoutId === workout.id);
   assert.ok(detail);
   assert.equal(detail?.workoutType, "recovery");
+  assert.equal(detail?.workoutDisplayLabel, "1.9 km Outdoor Walk");
   assert.ok((detail?.distanceSeries?.length || 0) > 0);
   assert.ok((detail?.heartRateSeries?.length || 0) > 0);
 
@@ -79,6 +82,8 @@ test("creates inferred workout when no summary file exists", () => {
   assert.equal(imported.nextData.workouts.length, 1);
   assert.equal(imported.nextData.workouts[0].source, "health_import");
   assert.equal(imported.nextData.workouts[0].sourceWorkoutKey, "outdoor-walk-20260210_143218");
+  assert.equal(imported.nextData.workouts[0].workoutNameRaw, "Outdoor Walk");
+  assert.equal(imported.nextData.workouts[0].workoutDisplayLabel, "0.2 km Outdoor Walk");
   assert.ok((imported.nextData.workouts[0].mergeConfidence || 0) >= 0.6);
 });
 

@@ -58,6 +58,13 @@ export interface AppSettings {
 }
 
 export type WorkoutType = "cardio" | "strength" | "mobility" | "recovery";
+export type SleepDriverKey =
+  | "debt"
+  | "duration"
+  | "regularity"
+  | "stage"
+  | "awake"
+  | "schedule";
 export type WorkoutStreamType =
   | "summary"
   | "heart_rate"
@@ -71,6 +78,8 @@ export type WorkoutStreamType =
 export interface WorkoutEntry {
   id: string;
   sourceWorkoutKey?: string;
+  workoutNameRaw?: string;
+  workoutDisplayLabel?: string;
   mergeConfidence?: number;
   streamCount?: number;
   type: WorkoutType;
@@ -149,6 +158,8 @@ export interface WorkoutDetail {
   workoutId: string;
   workoutKey: string;
   workoutType: WorkoutType;
+  workoutNameRaw?: string;
+  workoutDisplayLabel?: string;
   startedAt: string;
   endedAt: string;
   durationMin: number;
@@ -215,6 +226,10 @@ export interface DailyReadiness {
   sleepStageScore: number;
   sleepAwakeScore: number;
   sleepScheduleScore: number;
+  sleepDriverMode: "negative" | "positive";
+  sleepDriverKey: SleepDriverKey;
+  sleepDriverImpact: number;
+  sleepDriverSentence: string;
   sleepComponent: number;
   autonomicComponent: number;
   loadComponent: number;

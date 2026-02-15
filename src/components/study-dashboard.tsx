@@ -924,9 +924,23 @@ export default function StudyDashboard() {
     return tail.reduce((sum, value) => sum + value, 0) / tail.length;
   }, [healthDaysSorted]);
 
-  const readinessTrend14 = useMemo(() => {
-    return sleepTrend14.map((day) => readinessByDate[day.date]?.sleepScore || 0);
-  }, [readinessByDate, sleepTrend14]);
+  const sleepScoreSeries7 = useMemo(() => {
+    return healthDaysSorted.slice(-7).map((day) => ({
+      date: day.date,
+      score: readinessByDate[day.date]?.sleepScore || 0,
+    }));
+  }, [healthDaysSorted, readinessByDate]);
+
+  const sleepScoreAverage7 = useMemo(() => {
+    if (sleepScoreSeries7.length === 0) {
+      return 0;
+    }
+
+    return (
+      sleepScoreSeries7.reduce((sum, item) => sum + item.score, 0) /
+      sleepScoreSeries7.length
+    );
+  }, [sleepScoreSeries7]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1740,9 +1754,6 @@ export default function StudyDashboard() {
                   )}
                 </div>
 
-                <p className="mt-3 text-xs text-[var(--muted)]">
-                  Sessions shorter than 5 minutes are ignored.
-                </p>
               </section>
 
               <section className="h-full min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
@@ -1959,7 +1970,8 @@ export default function StudyDashboard() {
 
           <HealthRail
             sleepTrend14={sleepTrend14}
-            readinessTrend14={readinessTrend14}
+            sleepScoreSeries7={sleepScoreSeries7}
+            sleepScoreAverage7={sleepScoreAverage7}
             sortedWorkouts={sortedWorkouts}
             todayReadiness={todayReadiness}
             sevenDaySleepAverage={sleepAverage7}
@@ -2343,7 +2355,8 @@ function TodoRail({
 
 function HealthRail({
   sleepTrend14,
-  readinessTrend14,
+  sleepScoreSeries7,
+  sleepScoreAverage7,
   sortedWorkouts,
   todayReadiness,
   sevenDaySleepAverage,
@@ -2353,7 +2366,8 @@ function HealthRail({
   usingSampleData,
 }: {
   sleepTrend14: DailyHealthFact[];
-  readinessTrend14: number[];
+  sleepScoreSeries7: Array<{ date: string; score: number }>;
+  sleepScoreAverage7: number;
   sortedWorkouts: WorkoutEntry[];
   todayReadiness: DailyReadiness | null;
   sevenDaySleepAverage: number;
@@ -2391,6 +2405,12 @@ function HealthRail({
         <MetricTile label="Workouts 7d" value={`${workouts7d}`} />
       </div>
 
+      {todayReadiness ? (
+        <p className="mb-3 rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-1.5 text-xs text-[var(--muted)]">
+          {todayReadiness.sleepDriverSentence}
+        </p>
+      ) : null}
+
       <div className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
         <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
           Sleep Hours (14d)
@@ -2404,9 +2424,9 @@ function HealthRail({
 
       <div className="mt-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
         <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-          Sleep Score (14d)
+          Sleep Score (7d)
         </p>
-        <CompactBars values={readinessTrend14} max={100} color="#8af58b" />
+        <SleepScoreScatter points={sleepScoreSeries7} average={sleepScoreAverage7} />
       </div>
 
       {usingSampleData ? (
@@ -2431,7 +2451,9 @@ function HealthRail({
             >
               <div className="mb-2 h-1 rounded bg-[#5BC0EB]" />
               <div className="flex items-center justify-between gap-2 text-xs text-[var(--muted)]">
-                <span className="font-semibold capitalize text-[var(--text)]">{workout.type}</span>
+                <span className="font-semibold text-[var(--text)]">
+                  {formatWorkoutLabel(workout)}
+                </span>
                 <span>{workout.durationMin.toFixed(0)}m</span>
               </div>
               <p className="mt-1 text-xs text-[var(--muted)]">{formatDateTime(workout.startedAt)}</p>
@@ -2562,7 +2584,7 @@ function HealthExplorer({
                     onClick={() => onSelectWorkout(workout.id)}
                   >
                     <td className="px-1 py-1">{formatDateTime(workout.startedAt)}</td>
-                    <td className="px-1 py-1 capitalize">{workout.type}</td>
+                    <td className="px-1 py-1">{formatWorkoutLabel(workout)}</td>
                     <td className="px-1 py-1 text-right">{workout.durationMin.toFixed(0)}m</td>
                     <td className="px-1 py-1 text-right">{formatOptionalNumber(workout.distanceKm, "km", 2)}</td>
                     <td className="px-1 py-1 text-right">
@@ -2586,9 +2608,7 @@ function HealthExplorer({
         ) : selectedWorkoutDetail ? (
           <div className="mt-2 space-y-3">
             <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-xs">
-              <p className="font-semibold capitalize text-[var(--text)]">
-                {selectedWorkoutDetail.workoutType} workout
-              </p>
+              <p className="font-semibold text-[var(--text)]">{formatWorkoutDetailLabel(selectedWorkoutDetail)}</p>
               <p className="mt-1 text-[var(--muted)]">
                 {formatDateTime(selectedWorkoutDetail.startedAt)} to{" "}
                 {formatDateTime(selectedWorkoutDetail.endedAt)}
@@ -2676,6 +2696,83 @@ function HealthExplorer({
           <p className="mt-3 text-xs text-[var(--muted)]">{todayRecommendation.workoutSuggestion}</p>
         ) : null}
       </aside>
+    </div>
+  );
+}
+
+function SleepScoreScatter({
+  points,
+  average,
+}: {
+  points: Array<{ date: string; score: number }>;
+  average: number;
+}) {
+  if (points.length === 0) {
+    return <p className="text-xs text-[var(--muted)]">No sleep-score data yet.</p>;
+  }
+
+  const width = 300;
+  const height = 110;
+  const padLeft = 14;
+  const padRight = 10;
+  const padTop = 12;
+  const padBottom = 20;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+
+  const xForIndex = (index: number): number => {
+    if (points.length <= 1) {
+      return padLeft + plotWidth / 2;
+    }
+
+    return padLeft + (index / (points.length - 1)) * plotWidth;
+  };
+
+  const yForScore = (score: number): number =>
+    padTop + (1 - Math.max(0, Math.min(100, score)) / 100) * plotHeight;
+
+  const polyline = points
+    .map((point, index) => `${xForIndex(index)},${yForScore(point.score)}`)
+    .join(" ");
+  const avgY = yForScore(average);
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full">
+        <line
+          x1={padLeft}
+          x2={width - padRight}
+          y1={avgY}
+          y2={avgY}
+          stroke="#8af58b"
+          strokeDasharray="4 3"
+          strokeWidth="1"
+          opacity="0.8"
+        />
+        <polyline fill="none" stroke="#8af58b" strokeWidth="2" points={polyline} />
+        {points.map((point, index) => (
+          <circle
+            key={`sleep-score-point-${point.date}`}
+            cx={xForIndex(index)}
+            cy={yForScore(point.score)}
+            r={3.2}
+            fill="#8af58b"
+          />
+        ))}
+        <text
+          x={width - padRight}
+          y={padTop}
+          textAnchor="end"
+          fontSize="10"
+          fill="var(--muted)"
+        >
+          7-day avg: {average.toFixed(1)}
+        </text>
+      </svg>
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
+        <span>{points[0].date.slice(5)}</span>
+        <span>{points[points.length - 1].date.slice(5)}</span>
+      </div>
     </div>
   );
 }
@@ -2773,6 +2870,22 @@ function formatOptionalNumber(
   }
 
   return value.toFixed(digits);
+}
+
+function formatWorkoutLabel(workout: WorkoutEntry): string {
+  return (
+    workout.workoutDisplayLabel ||
+    workout.workoutNameRaw ||
+    `${workout.type[0].toUpperCase()}${workout.type.slice(1)}`
+  );
+}
+
+function formatWorkoutDetailLabel(workout: WorkoutDetail): string {
+  return (
+    workout.workoutDisplayLabel ||
+    workout.workoutNameRaw ||
+    `${workout.workoutType[0].toUpperCase()}${workout.workoutType.slice(1)} Workout`
+  );
 }
 
 function ExamEditor({

@@ -68,6 +68,18 @@ function normalizeStem(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function titleCaseWords(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((word) => (word ? `${word[0].toUpperCase()}${word.slice(1)}` : ""))
+    .join(" ")
+    .trim();
+}
+
+function humanizeStem(stem: string): string {
+  return titleCaseWords(stem.replace(/-/g, " ").trim());
+}
+
 function parseCsvRows(csv: string): string[][] {
   const rows: string[][] = [];
   let currentRow: string[] = [];
@@ -253,6 +265,35 @@ function inferWorkoutType(value: string | undefined): WorkoutType {
   return "cardio";
 }
 
+function defaultWorkoutNameForType(type: WorkoutType): string {
+  if (type === "strength") {
+    return "Strength";
+  }
+  if (type === "mobility") {
+    return "Mobility";
+  }
+  if (type === "recovery") {
+    return "Recovery";
+  }
+  return "Cardio";
+}
+
+function buildWorkoutDisplayLabel(
+  workoutNameRaw: string | undefined,
+  distanceKm: number | undefined,
+  type: WorkoutType,
+): string {
+  const baseName = workoutNameRaw && workoutNameRaw.trim().length > 0
+    ? workoutNameRaw.trim()
+    : defaultWorkoutNameForType(type);
+
+  if (typeof distanceKm === "number" && Number.isFinite(distanceKm) && distanceKm > 0) {
+    return `${distanceKm.toFixed(1)} km ${baseName}`;
+  }
+
+  return baseName;
+}
+
 function timestampToToken(date: Date): string {
   const year = `${date.getFullYear()}`;
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -382,6 +423,7 @@ function parseWorkoutSummaryRows(
     }
 
     const typeLabel = getValue(record, ["Workout Type"]) || "Workout";
+    const workoutNameRaw = typeLabel.trim();
     const stem = normalizeStem(typeLabel);
     const token = timestampToToken(startDate);
     const sourceWorkoutKey = `${stem}-${token}`;
@@ -391,11 +433,15 @@ function parseWorkoutSummaryRows(
     );
     const activeEnergyKj = parseNumber(getValue(record, ["Active Energy (kJ)"]));
     const restingEnergyKj = parseNumber(getValue(record, ["Resting Energy (kJ)"]));
+    const distanceKm = parseNumber(getValue(record, ["Distance (km)"]));
+    const workoutType = inferWorkoutType(typeLabel);
 
     results.push({
       id,
       sourceWorkoutKey,
-      type: inferWorkoutType(typeLabel),
+      workoutNameRaw,
+      workoutDisplayLabel: buildWorkoutDisplayLabel(workoutNameRaw, distanceKm, workoutType),
+      type: workoutType,
       startedAt: startDate.toISOString(),
       endedAt: endDate.toISOString(),
       durationMin,
@@ -407,7 +453,7 @@ function parseWorkoutSummaryRows(
       hrMax: parseNumber(getValue(record, ["Max. Heart Rate (count/min)"])),
       hrAvg: parseNumber(getValue(record, ["Avg. Heart Rate (count/min)"])),
       avgHeartRate: parseNumber(getValue(record, ["Avg. Heart Rate (count/min)"])),
-      distanceKm: parseNumber(getValue(record, ["Distance (km)"])),
+      distanceKm,
       maxSpeedKmh: parseNumber(getValue(record, ["Max. Speed (km/hr)"])),
       avgSpeedKmh: parseNumber(getValue(record, ["Avg. Speed (km/hr)"])),
       flights: parseNumber(getValue(record, ["Flights Climbed"])),
@@ -799,6 +845,8 @@ function buildWorkoutDetail(workout: WorkoutEntry, streams: WorkoutStream[]): Wo
     workoutId: workout.id,
     workoutKey: workout.sourceWorkoutKey || `workout-${workout.id}`,
     workoutType: workout.type,
+    workoutNameRaw: workout.workoutNameRaw,
+    workoutDisplayLabel: workout.workoutDisplayLabel,
     startedAt: workout.startedAt,
     endedAt: workout.endedAt,
     durationMin: workout.durationMin,
@@ -911,6 +959,15 @@ function mergeWorkouts(
     workout.hrMax = preferCanonicalMetric(workout.hrMax, metrics.hrMax);
     workout.hrAvg = preferCanonicalMetric(workout.hrAvg, metrics.hrAvg);
     workout.avgHeartRate = workout.avgHeartRate ?? workout.hrAvg;
+    workout.workoutNameRaw =
+      workout.workoutNameRaw ||
+      (workout.sourceWorkoutKey ? humanizeStem(workoutStemFromKey(workout.sourceWorkoutKey)) : undefined) ||
+      defaultWorkoutNameForType(workout.type);
+    workout.workoutDisplayLabel = buildWorkoutDisplayLabel(
+      workout.workoutNameRaw,
+      workout.distanceKm,
+      workout.type,
+    );
     workout.streamCount = 1 + linked.length;
     workout.mergeConfidence = computeMergeConfidence(
       true,
@@ -942,6 +999,7 @@ function mergeWorkouts(
       id,
       sourceWorkoutKey: workoutKey,
       type: inferWorkoutType(stem),
+      workoutNameRaw: humanizeStem(stem),
       startedAt,
       endedAt,
       durationMin,
@@ -964,6 +1022,11 @@ function mergeWorkouts(
       source: "health_import",
       createdAt: importedAt,
     };
+    inferred.workoutDisplayLabel = buildWorkoutDisplayLabel(
+      inferred.workoutNameRaw,
+      inferred.distanceKm,
+      inferred.type,
+    );
 
     canonical.push(inferred);
     detailsById.set(id, buildWorkoutDetail(inferred, streamList));
