@@ -19,6 +19,12 @@ import type {
 
 const A7 = 2 / (7 + 1);
 const A28 = 2 / (28 + 1);
+const SLEEP_SCORE_MIN_WITH_DATA = 30;
+const DEBT_DECAY = 0.7;
+const DEBT_PENALTY_PER_HOUR = 3.0;
+const RECOVERY_WINDOW_DAYS = 3;
+const RECOVERY_TARGET_TOLERANCE_HOURS = 0.25;
+const RECOVERY_DEBT_MULTIPLIER = 0.35;
 
 export type PerformanceInsights = {
   usingSampleData: boolean;
@@ -481,7 +487,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
   const hrvHistory: number[] = [];
   const rhrHistory: number[] = [];
   const midpointHistory: number[] = [];
-  const sleepHistory: number[] = [];
+  const sleepHistory: Array<{ hours: number; missing: boolean }> = [];
 
   for (let index = 0; index < dateWindow.length; index += 1) {
     const dateKey = dateWindow[index];
@@ -501,8 +507,22 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     const midpointTail = midpointHistory.slice(-7);
     const midpointSd7 = stdDev(midpointTail);
 
-    debt = Math.max(0, debt * 0.85 + (goals.sleepHoursTarget - sleepHours));
-    sleepHistory.push(sleepHours);
+    const deficit = missingSleep ? 0 : goals.sleepHoursTarget - sleepHours;
+    debt = Math.max(0, debt * DEBT_DECAY + deficit);
+    sleepHistory.push({ hours: sleepHours, missing: missingSleep });
+
+    const recentSleepWindow = sleepHistory.slice(-RECOVERY_WINDOW_DAYS);
+    const hitRecoveryWindow =
+      recentSleepWindow.length === RECOVERY_WINDOW_DAYS &&
+      recentSleepWindow.every(
+        (entry) =>
+          !entry.missing &&
+          entry.hours >= goals.sleepHoursTarget - RECOVERY_TARGET_TOLERANCE_HOURS,
+      );
+
+    if (hitRecoveryWindow) {
+      debt *= RECOVERY_DEBT_MULTIPLIER;
+    }
 
     const regularityScore = clamp(100 - 18 * midpointSd7, 40, 100);
     const sufficiency = clamp(sleepHours / goals.sleepHoursTarget, 0, 1.15);
@@ -545,9 +565,11 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       stageWeight * stageScore +
       awakeWeight * awakeScore +
       scheduleWeight * sleepScheduleScore;
-    const debtPenalty = 5 * debt;
-    const sleepScore = clamp(sleepScoreRaw - debtPenalty, 0, 100);
-    const sleepComponent = sleepScore;
+    const debtPenalty = DEBT_PENALTY_PER_HOUR * debt;
+    const sleepScore = missingSleep
+      ? 0
+      : clamp(sleepScoreRaw - debtPenalty, SLEEP_SCORE_MIN_WITH_DATA, 100);
+    const sleepComponent = missingSleep ? 50 : sleepScore;
 
     const sleepNegativeDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
       { key: "debt", impact: debtPenalty },
@@ -555,7 +577,10 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       { key: "regularity", impact: (100 - regularityScore) * regularityWeight },
       { key: "stage", impact: (100 - stageScore) * stageWeight },
       { key: "awake", impact: (100 - awakeScore) * awakeWeight },
-      { key: "schedule", impact: hasScheduleSignal ? (100 - sleepScheduleScore) * scheduleWeight : 0 },
+      {
+        key: "schedule",
+        impact: hasScheduleSignal ? (100 - sleepScheduleScore) * scheduleWeight : 0,
+      },
     ];
 
     const sleepPositiveDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
@@ -566,15 +591,26 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       { key: "schedule", impact: hasScheduleSignal ? sleepScheduleScore * scheduleWeight : 0 },
     ];
 
-    const sleepDriverMode: "negative" | "positive" = sleepScore < 65 ? "negative" : "positive";
-    const dominantSleepDriver =
-      sleepDriverMode === "negative"
-        ? sleepNegativeDrivers.slice().sort((left, right) => right.impact - left.impact)[0]
-        : sleepPositiveDrivers.slice().sort((left, right) => right.impact - left.impact)[0];
+    let sleepDriverMode: "negative" | "positive" = sleepScore < 65 ? "negative" : "positive";
+    let sleepDriverKey: SleepDriverKey = "duration";
+    let sleepDriverImpact = 0;
+    let sleepDriverSentence = sentenceForDriver(sleepDriverMode, sleepDriverKey);
 
-    const sleepDriverKey: SleepDriverKey = dominantSleepDriver?.key || "duration";
-    const sleepDriverImpact = dominantSleepDriver?.impact || 0;
-    const sleepDriverSentence = sentenceForDriver(sleepDriverMode, sleepDriverKey);
+    if (missingSleep) {
+      sleepDriverMode = "negative";
+      sleepDriverKey = "duration";
+      sleepDriverImpact = 0;
+      sleepDriverSentence = "No sleep data available for this day; import needed for scoring.";
+    } else {
+      const dominantSleepDriver =
+        sleepDriverMode === "negative"
+          ? sleepNegativeDrivers.slice().sort((left, right) => right.impact - left.impact)[0]
+          : sleepPositiveDrivers.slice().sort((left, right) => right.impact - left.impact)[0];
+
+      sleepDriverKey = dominantSleepDriver?.key || "duration";
+      sleepDriverImpact = dominantSleepDriver?.impact || 0;
+      sleepDriverSentence = sentenceForDriver(sleepDriverMode, sleepDriverKey);
+    }
 
     let zHrv = 0;
     let zRhr = 0;
@@ -712,13 +748,13 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
     let debt7 = 0;
     for (let i = 0; i < 7; i += 1) {
-      const sleepValue = sleepHistory[sleepHistory.length - 1 - i];
-      if (typeof sleepValue !== "number") {
+      const sleepEntry = sleepHistory[sleepHistory.length - 1 - i];
+      if (!sleepEntry || sleepEntry.missing) {
         continue;
       }
 
-      const deficit = Math.max(0, goals.sleepHoursTarget - sleepValue);
-      debt7 += deficit * 0.85 ** i;
+      const deficit = Math.max(0, goals.sleepHoursTarget - sleepEntry.hours);
+      debt7 += deficit * DEBT_DECAY ** i;
     }
 
     const repayTonight = Math.min(1, 0.3 * debt7);

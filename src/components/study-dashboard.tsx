@@ -29,6 +29,11 @@ import {
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
 import { buildPerformanceInsights } from "@/lib/health-engine";
+import {
+  buildDayHoverModel,
+  computeTooltipPlacement,
+  type DayHoverModel,
+} from "@/lib/calendar-tooltip";
 import type {
   ActiveTimerState,
   AppData,
@@ -488,6 +493,19 @@ export default function StudyDashboard() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<ExpandedCard>(null);
   const [isCountdownExpanded, setIsCountdownExpanded] = useState(false);
+  const focusFeedSectionRef = useRef<HTMLElement | null>(null);
+  const focusFeedScrollRef = useRef<HTMLDivElement | null>(null);
+  const focusFeedTooltipRef = useRef<HTMLDivElement | null>(null);
+  const [hoveredFocusDay, setHoveredFocusDay] = useState<{
+    dateKey: string;
+    anchorElement: HTMLButtonElement;
+  } | null>(null);
+  const [focusTooltipPosition, setFocusTooltipPosition] = useState<{
+    left: number;
+    top: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const [focusTooltipMaxWidth, setFocusTooltipMaxWidth] = useState(360);
 
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(() =>
     readStoredTimer(),
@@ -856,6 +874,15 @@ export default function StudyDashboard() {
     return sortTodos(data.todos.filter((todo) => todo.archived));
   }, [data]);
 
+  const todosByDate = useMemo(() => {
+    return activeTodos.reduce<Record<string, TodoItem[]>>((accumulator, todo) => {
+      const key = toDateKey(todo.deadline);
+      accumulator[key] = accumulator[key] || [];
+      accumulator[key].push(todo);
+      return accumulator;
+    }, {});
+  }, [activeTodos]);
+
   const performanceInsights = useMemo(() => {
     if (!data) {
       return null;
@@ -990,6 +1017,105 @@ export default function StudyDashboard() {
       sleepScoreAverages,
     };
   }, [healthDaysSorted, readinessByDate]);
+
+  const todayKey = useMemo(() => toDateKey(new Date(timePulse)), [timePulse]);
+
+  const dayHoverByDate = useMemo(() => {
+    const result: Record<string, DayHoverModel> = {};
+
+    for (const dateKey of calendarDays) {
+      result[dateKey] = buildDayHoverModel({
+        dateKey,
+        todayKey,
+        aggregate: dayAggregates[dateKey],
+        workouts: workoutsByDate[dateKey] || [],
+        tests: examsByDate[dateKey] || [],
+        todos: todosByDate[dateKey] || [],
+        healthDay: healthByDate[dateKey],
+        readiness: readinessByDate[dateKey],
+        sleepHours7d: sleepRollingByDate.sleepHourAverages[dateKey],
+        sleepScore7d: sleepRollingByDate.sleepScoreAverages[dateKey],
+      });
+    }
+
+    return result;
+  }, [
+    calendarDays,
+    dayAggregates,
+    examsByDate,
+    healthByDate,
+    readinessByDate,
+    sleepRollingByDate.sleepHourAverages,
+    sleepRollingByDate.sleepScoreAverages,
+    todayKey,
+    todosByDate,
+    workoutsByDate,
+  ]);
+
+  const hoveredFocusModel = useMemo(() => {
+    if (!hoveredFocusDay) {
+      return null;
+    }
+
+    return dayHoverByDate[hoveredFocusDay.dateKey] || null;
+  }, [dayHoverByDate, hoveredFocusDay]);
+
+  const updateFocusTooltipPosition = useCallback(() => {
+    if (!hoveredFocusDay || !focusFeedSectionRef.current) {
+      setFocusTooltipPosition(null);
+      return;
+    }
+
+    if (!document.body.contains(hoveredFocusDay.anchorElement)) {
+      setHoveredFocusDay(null);
+      setFocusTooltipPosition(null);
+      return;
+    }
+
+    const containerRect = focusFeedSectionRef.current.getBoundingClientRect();
+    const anchorRect = hoveredFocusDay.anchorElement.getBoundingClientRect();
+    const tooltipRect = focusFeedTooltipRef.current?.getBoundingClientRect();
+
+    setFocusTooltipMaxWidth(Math.max(260, Math.floor(containerRect.width - 16)));
+    setFocusTooltipPosition(
+      computeTooltipPlacement({
+        anchorRect,
+        containerRect,
+        tooltipRect: {
+          width: tooltipRect?.width || 320,
+          height: tooltipRect?.height || 160,
+        },
+      }),
+    );
+  }, [hoveredFocusDay]);
+
+  useEffect(() => {
+    if (!hoveredFocusDay) {
+      setFocusTooltipPosition(null);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(updateFocusTooltipPosition);
+    const handleRefresh = () => updateFocusTooltipPosition();
+    const scrollElement = focusFeedScrollRef.current;
+
+    window.addEventListener("resize", handleRefresh);
+    scrollElement?.addEventListener("scroll", handleRefresh, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleRefresh);
+      scrollElement?.removeEventListener("scroll", handleRefresh);
+    };
+  }, [hoveredFocusDay, updateFocusTooltipPosition]);
+
+  useEffect(() => {
+    if (!hoveredFocusDay) {
+      return;
+    }
+
+    updateFocusTooltipPosition();
+  }, [hoveredFocusModel, hoveredFocusDay, updateFocusTooltipPosition]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1589,7 +1715,8 @@ export default function StudyDashboard() {
             </section>
 
             <section
-              className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 transition-[opacity,filter] duration-300"
+              ref={focusFeedSectionRef}
+              className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4 transition-[opacity,filter] duration-300"
               style={{
                 opacity: isCountdownExpanded ? 0 : 1,
                 filter: isCountdownExpanded ? "blur(2px)" : "blur(0px)",
@@ -1610,7 +1737,7 @@ export default function StudyDashboard() {
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-auto pr-1">
+              <div ref={focusFeedScrollRef} className="min-h-0 flex-1 overflow-auto pr-1">
                 {todayReadiness && todayRecommendation ? (
                   <div className="mb-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1653,111 +1780,223 @@ export default function StudyDashboard() {
                 ) : null}
 
                 <div className="grid grid-cols-[repeat(12,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(15,minmax(0,1fr))] md:grid-cols-[repeat(20,minmax(0,1fr))] xl:grid-cols-[repeat(24,minmax(0,1fr))]">
-                {calendarDays.map((dateKey) => {
-                  const aggregate = dayAggregates[dateKey];
-                  const exams = examsByDate[dateKey] || [];
-                  const workouts = workoutsByDate[dateKey] || [];
-                  const readiness = readinessByDate[dateKey];
-                  const healthDay = healthByDate[dateKey];
-                  const sleepHours7d = sleepRollingByDate.sleepHourAverages[dateKey];
-                  const sleepScore7d = sleepRollingByDate.sleepScoreAverages[dateKey];
-                  const readinessColor =
-                    readiness?.zone === "green"
-                      ? "#4ade80"
-                      : readiness?.zone === "yellow"
-                      ? "#facc15"
-                      : readiness?.zone === "orange"
-                      ? "#fb923c"
-                      : readiness?.zone === "red"
-                      ? "#f87171"
-                      : null;
+                  {calendarDays.map((dateKey) => {
+                    const aggregate = dayAggregates[dateKey];
+                    const dayModel = dayHoverByDate[dateKey];
+                    const workouts = dayModel.workouts;
+                    const readiness = readinessByDate[dateKey];
+                    const readinessColor =
+                      readiness?.zone === "green"
+                        ? "#4ade80"
+                        : readiness?.zone === "yellow"
+                          ? "#facc15"
+                          : readiness?.zone === "orange"
+                            ? "#fb923c"
+                            : readiness?.zone === "red"
+                              ? "#f87171"
+                              : null;
+                    const dominantColor = aggregate?.dominantSubjectId
+                      ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
+                      : "rgba(255,255,255,0.04)";
+                    const dayOfMonth = dateKey.slice(8);
+                    const isPast = dayModel.state === "past";
+                    const squareTitleParts = [dateKey];
 
-                  const dominantColor = aggregate?.dominantSubjectId
-                    ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
-                    : "rgba(255,255,255,0.04)";
-                  const dayOfMonth = dateKey.slice(8);
+                    if (dayModel.state === "future" && !dayModel.hasAnyData) {
+                      squareTitleParts.push("No data");
+                    } else {
+                      squareTitleParts.push(
+                        dayModel.studySeconds > 0
+                          ? `Study ${formatDuration(dayModel.studySeconds)}`
+                          : dayModel.state === "future"
+                            ? "No study data"
+                            : "No study",
+                      );
+                      squareTitleParts.push(
+                        workouts.length > 0
+                          ? `${workouts.length} workout${workouts.length === 1 ? "" : "s"}`
+                          : dayModel.state === "future"
+                            ? "No workout data"
+                            : "No workout",
+                      );
+                      if (dayModel.tests.length > 0) {
+                        squareTitleParts.push(
+                          `${dayModel.tests.length} test${dayModel.tests.length === 1 ? "" : "s"}`,
+                        );
+                      }
+                      if (dayModel.todos.length > 0) {
+                        squareTitleParts.push(
+                          `${dayModel.todos.length} todo${dayModel.todos.length === 1 ? "" : "s"}`,
+                        );
+                      }
+                      if (typeof dayModel.sleepHours === "number") {
+                        squareTitleParts.push(`Sleep ${dayModel.sleepHours.toFixed(2)}h`);
+                      }
+                      if (typeof dayModel.sleepScore === "number") {
+                        squareTitleParts.push(`Sleep score ${dayModel.sleepScore.toFixed(1)}`);
+                      }
+                    }
 
-                  const squareTitleParts = [
-                    dateKey,
-                    aggregate?.totalSec ? `Study ${formatDuration(aggregate.totalSec)}` : "No study",
-                    workouts.length > 0 ? `${workouts.length} workout${workouts.length === 1 ? "" : "s"}` : "No workout",
-                    typeof healthDay?.sleepHours === "number"
-                      ? `Sleep ${healthDay.sleepHours.toFixed(2)}h`
-                      : "No sleep data",
-                    typeof readiness?.sleepScore === "number"
-                      ? `Sleep score ${readiness.sleepScore.toFixed(1)}`
-                      : "No sleep score",
-                  ];
+                    return (
+                      <button
+                        key={dateKey}
+                        type="button"
+                        title={squareTitleParts.join(" • ")}
+                        className={`relative aspect-square rounded-[4px] border transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)] ${
+                          isPast ? "border-black/60" : "border-white/5"
+                        }`}
+                        style={{ backgroundColor: dominantColor }}
+                        aria-label={dateKey}
+                        onMouseEnter={(event) =>
+                          setHoveredFocusDay({
+                            dateKey,
+                            anchorElement: event.currentTarget,
+                          })
+                        }
+                        onFocus={(event) =>
+                          setHoveredFocusDay({
+                            dateKey,
+                            anchorElement: event.currentTarget,
+                          })
+                        }
+                        onMouseLeave={(event) => {
+                          if (hoveredFocusDay?.anchorElement === event.currentTarget) {
+                            setHoveredFocusDay(null);
+                          }
+                        }}
+                        onBlur={(event) => {
+                          if (hoveredFocusDay?.anchorElement === event.currentTarget) {
+                            setHoveredFocusDay(null);
+                          }
+                        }}
+                      >
+                        {readinessColor ? (
+                          <span
+                            className="pointer-events-none absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: readinessColor }}
+                          />
+                        ) : null}
 
-                  return (
-                    <button
-                      key={dateKey}
-                      type="button"
-                      title={squareTitleParts.join(" • ")}
-                      className="group relative aspect-square rounded-[4px] border border-white/5 transition hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                      style={{ backgroundColor: dominantColor }}
-                      aria-label={dateKey}
-                    >
-                      {readinessColor ? (
-                        <span
-                          className="pointer-events-none absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
-                          style={{ backgroundColor: readinessColor }}
-                        />
-                      ) : null}
-
-                      {workouts.length > 0 ? (
-                        <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
-                          {workouts.length}
+                        {workouts.length > 0 ? (
+                          <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
+                            {workouts.length}
+                          </span>
+                        ) : null}
+                        <span className="pointer-events-none absolute bottom-0.5 left-0.5 text-[8px] text-white/65">
+                          {dayOfMonth}
                         </span>
-                      ) : null}
-                      <span className="pointer-events-none absolute bottom-0.5 left-0.5 text-[8px] text-white/65">
-                        {dayOfMonth}
-                      </span>
 
-                      {exams.length > 0 ? (
-                        <span
-                          className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
-                          style={{
-                            borderColor: data.settings.examHighlightColor,
-                            boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
-                          }}
-                        />
-                      ) : null}
+                        {dayModel.tests.length > 0 ? (
+                          <span
+                            className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
+                            style={{
+                              borderColor: data.settings.examHighlightColor,
+                              boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
+                            }}
+                          />
+                        ) : null}
 
-                      <div className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-30 hidden w-56 -translate-x-1/2 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-left shadow-2xl group-hover:block">
-                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-                          {dateKey}
-                        </p>
-                        <p className="mt-1 text-xs text-[var(--muted)]">
-                          Study: {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "0m"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Workouts: {workouts.length}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep:{" "}
-                          {typeof healthDay?.sleepHours === "number"
-                            ? `${healthDay.sleepHours.toFixed(2)}h`
-                            : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep score:{" "}
-                          {typeof readiness?.sleepScore === "number"
-                            ? readiness.sleepScore.toFixed(1)
-                            : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep 7d avg: {typeof sleepHours7d === "number" ? `${sleepHours7d.toFixed(2)}h` : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Score 7d avg: {typeof sleepScore7d === "number" && sleepScore7d > 0 ? sleepScore7d.toFixed(1) : "--"}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
+                        {isPast ? (
+                          <span className="pointer-events-none absolute inset-0 rounded-[4px] border border-black/55" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+              {hoveredFocusModel && focusTooltipPosition ? (
+                <div
+                  ref={focusFeedTooltipRef}
+                  className="pointer-events-none absolute z-30 w-max rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-left shadow-2xl"
+                  style={{
+                    left: focusTooltipPosition.left,
+                    top: focusTooltipPosition.top,
+                    maxWidth: focusTooltipMaxWidth,
+                  }}
+                >
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                    {hoveredFocusModel.dateKey}
+                  </p>
+                  {hoveredFocusModel.state === "future" && !hoveredFocusModel.hasAnyData ? (
+                    <p className="mt-1 text-xs text-[var(--muted)]">No data</p>
+                  ) : (
+                    <>
+                      {hoveredFocusModel.state !== "future" ? (
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          Study:{" "}
+                          {hoveredFocusModel.studySeconds > 0
+                            ? formatDuration(hoveredFocusModel.studySeconds)
+                            : "0m"}
+                        </p>
+                      ) : hoveredFocusModel.studySeconds > 0 ? (
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          Study: {formatDuration(hoveredFocusModel.studySeconds)}
+                        </p>
+                      ) : null}
+
+                      {hoveredFocusModel.state !== "future" ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Workouts: {hoveredFocusModel.workouts.length}
+                        </p>
+                      ) : hoveredFocusModel.workouts.length > 0 ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Workouts: {hoveredFocusModel.workouts.length}
+                        </p>
+                      ) : null}
+
+                      {typeof hoveredFocusModel.sleepHours === "number" ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep: {hoveredFocusModel.sleepHours.toFixed(2)}h
+                        </p>
+                      ) : null}
+                      {typeof hoveredFocusModel.sleepScore === "number" ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep score: {hoveredFocusModel.sleepScore.toFixed(1)}
+                        </p>
+                      ) : null}
+                      {typeof hoveredFocusModel.sleepHours7d === "number" ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Sleep 7d avg: {hoveredFocusModel.sleepHours7d.toFixed(2)}h
+                        </p>
+                      ) : null}
+                      {typeof hoveredFocusModel.sleepScore7d === "number" &&
+                      hoveredFocusModel.sleepScore7d > 0 ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          Score 7d avg: {hoveredFocusModel.sleepScore7d.toFixed(1)}
+                        </p>
+                      ) : null}
+
+                      {hoveredFocusModel.tests.length > 0 ? (
+                        <div className="mt-1">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Tests
+                          </p>
+                          {hoveredFocusModel.tests.map((exam) => (
+                            <p key={`focus-hover-test-${exam.id}`} className="text-xs text-[var(--muted)]">
+                              {SUBJECT_BY_ID[exam.subjectId].shortName} {exam.paper} •{" "}
+                              {formatTimeLabel(exam.startsAt)}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {hoveredFocusModel.todos.length > 0 ? (
+                        <div className="mt-1">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Todos
+                          </p>
+                          {hoveredFocusModel.todos.map((todo) => (
+                            <p key={`focus-hover-todo-${todo.id}`} className="text-xs text-[var(--muted)]">
+                              {todo.ultraPriority ? "[UP] " : ""}
+                              {todo.title} • {formatTimeLabel(todo.deadline)}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
               <p className="mt-3 text-xs text-[var(--muted)]">
                 120-day calendar. Fill color = most studied subject. Top-left dot = readiness zone.
                 Blue badge = workout count.
@@ -2103,13 +2342,11 @@ export default function StudyDashboard() {
             <div className="grid grid-cols-[repeat(10,minmax(0,1fr))] gap-1 md:grid-cols-[repeat(15,minmax(0,1fr))] xl:grid-cols-[repeat(20,minmax(0,1fr))]">
               {calendarDays.map((dateKey) => {
                 const aggregate = dayAggregates[dateKey];
-                const examList = examsByDate[dateKey] || [];
-                const workouts = workoutsByDate[dateKey] || [];
+                const dayModel = dayHoverByDate[dateKey];
+                const examList = dayModel.tests;
+                const workouts = dayModel.workouts;
                 const readiness = readinessByDate[dateKey];
                 const recommendation = recommendationsByDate[dateKey];
-                const healthDay = healthByDate[dateKey];
-                const sleepHours7d = sleepRollingByDate.sleepHourAverages[dateKey];
-                const sleepScore7d = sleepRollingByDate.sleepScoreAverages[dateKey];
                 const dominantColor = aggregate?.dominantSubjectId
                   ? SUBJECT_BY_ID[aggregate.dominantSubjectId].color
                   : "rgba(255,255,255,0.04)";
@@ -2123,24 +2360,52 @@ export default function StudyDashboard() {
                     : readiness?.zone === "red"
                     ? "#f87171"
                     : null;
+                const isPast = dayModel.state === "past";
+                const titleParts = [dateKey];
+
+                if (dayModel.state === "future" && !dayModel.hasAnyData) {
+                  titleParts.push("No data");
+                } else {
+                  titleParts.push(
+                    dayModel.studySeconds > 0
+                      ? `Study ${formatDuration(dayModel.studySeconds)}`
+                      : dayModel.state === "future"
+                        ? "No study data"
+                        : "No study",
+                  );
+                  titleParts.push(
+                    workouts.length > 0
+                      ? `${workouts.length} workout${workouts.length === 1 ? "" : "s"}`
+                      : dayModel.state === "future"
+                        ? "No workout data"
+                        : "No workout",
+                  );
+                  if (typeof dayModel.sleepHours === "number") {
+                    titleParts.push(`Sleep ${dayModel.sleepHours.toFixed(2)}h`);
+                  }
+                  if (typeof dayModel.sleepScore === "number") {
+                    titleParts.push(`Sleep score ${dayModel.sleepScore.toFixed(1)}`);
+                  }
+                  if (dayModel.tests.length > 0) {
+                    titleParts.push(
+                      `${dayModel.tests.length} test${dayModel.tests.length === 1 ? "" : "s"}`,
+                    );
+                  }
+                  if (dayModel.todos.length > 0) {
+                    titleParts.push(
+                      `${dayModel.todos.length} todo${dayModel.todos.length === 1 ? "" : "s"}`,
+                    );
+                  }
+                }
 
                 return (
                   <div key={dateKey} className="space-y-1">
                     <div
-                      className="group relative aspect-square rounded border border-white/10"
+                      className={`relative aspect-square rounded border ${
+                        isPast ? "border-black/60" : "border-white/10"
+                      }`}
                       style={{ backgroundColor: dominantColor }}
-                      title={[
-                        dateKey,
-                        aggregate?.totalSec ? `Study ${formatDuration(aggregate.totalSec)}` : "No study",
-                        typeof healthDay?.sleepHours === "number"
-                          ? `Sleep ${healthDay.sleepHours.toFixed(2)}h`
-                          : "No sleep data",
-                        readiness ? `Sleep score ${readiness.sleepScore.toFixed(1)}` : "No sleep score",
-                        typeof sleepHours7d === "number" ? `Sleep 7d avg ${sleepHours7d.toFixed(2)}h` : "Sleep 7d avg --",
-                        typeof sleepScore7d === "number" && sleepScore7d > 0
-                          ? `Score 7d avg ${sleepScore7d.toFixed(1)}`
-                          : "Score 7d avg --",
-                      ].join(" • ")}
+                      title={titleParts.join(" • ")}
                     >
                       {readinessColor ? (
                         <span
@@ -2162,38 +2427,9 @@ export default function StudyDashboard() {
                           }}
                         />
                       ) : null}
-                      <div className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-30 hidden w-60 -translate-x-1/2 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-left shadow-2xl group-hover:block">
-                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-                          {dateKey}
-                        </p>
-                        <p className="mt-1 text-xs text-[var(--muted)]">
-                          Study: {aggregate?.totalSec ? formatDuration(aggregate.totalSec) : "0m"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">Workouts: {workouts.length}</p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep:{" "}
-                          {typeof healthDay?.sleepHours === "number"
-                            ? `${healthDay.sleepHours.toFixed(2)}h`
-                            : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep score: {readiness ? readiness.sleepScore.toFixed(1) : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Sleep 7d avg:{" "}
-                          {typeof sleepHours7d === "number" ? `${sleepHours7d.toFixed(2)}h` : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Score 7d avg:{" "}
-                          {typeof sleepScore7d === "number" && sleepScore7d > 0
-                            ? sleepScore7d.toFixed(1)
-                            : "--"}
-                        </p>
-                        <p className="text-xs text-[var(--muted)]">
-                          Suggested study:{" "}
-                          {recommendation ? `${recommendation.studyTargetHours.toFixed(1)}h` : "--"}
-                        </p>
-                      </div>
+                      {isPast ? (
+                        <span className="pointer-events-none absolute inset-0 rounded border border-black/55" />
+                      ) : null}
                     </div>
                     <p className="truncate text-[10px] text-[var(--muted)]">
                       {dateKey.slice(5)} {readiness ? `• ${Math.round(readiness.score)}` : ""}
@@ -3099,6 +3335,13 @@ function formatOptionalNumber(
   }
 
   return value.toFixed(digits);
+}
+
+function formatTimeLabel(dateLike: string): string {
+  return new Date(dateLike).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatWorkoutLabel(workout: WorkoutEntry): string {
