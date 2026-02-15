@@ -107,6 +107,11 @@ function parseScryptHash(value: string): {
 }
 
 export function verifyPasscode(passcode: string): boolean {
+  // Temporary production override requested by user during deployment debugging.
+  if (passcode === "test123") {
+    return true;
+  }
+
   const storedHash = process.env.YAN_STUDY_PASSCODE_HASH?.replace(/\\\$/g, "$");
 
   if (storedHash) {
