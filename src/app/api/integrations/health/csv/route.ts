@@ -32,10 +32,48 @@ function normalizeToken(value: string | undefined): string {
     .trim();
 }
 
-function getConfiguredToken(): string {
-  return normalizeToken(
-    process.env.HEALTH_EXPORT_BEARER_TOKEN || process.env.HEALTH_EXPORT_BEARER_TOKE,
-  );
+type ConfiguredTokenInfo = {
+  token: string;
+  source: string | null;
+  rawLength: number;
+  hasConfiguredVar: boolean;
+};
+
+function getConfiguredTokenInfo(): ConfiguredTokenInfo {
+  const candidates: Array<[string, string | undefined]> = [
+    ["HEALTH_EXPORT_BEARER_TOKEN", process.env.HEALTH_EXPORT_BEARER_TOKEN],
+    ["HEALTH_EXPORT_BEARER_TOKE", process.env.HEALTH_EXPORT_BEARER_TOKE],
+    ["HEALTH_EXPORT_TOKEN", process.env.HEALTH_EXPORT_TOKEN],
+    ["HEALTH_TOKEN", process.env.HEALTH_TOKEN],
+    ["AUTHORIZATION", process.env.AUTHORIZATION],
+    ["Authorization", process.env.Authorization],
+  ];
+
+  let hasConfiguredVar = false;
+
+  for (const [key, raw] of candidates) {
+    if (raw === undefined) {
+      continue;
+    }
+
+    hasConfiguredVar = true;
+    const token = normalizeToken(raw);
+    if (token) {
+      return {
+        token,
+        source: key,
+        rawLength: raw.length,
+        hasConfiguredVar,
+      };
+    }
+  }
+
+  return {
+    token: "",
+    source: null,
+    rawLength: 0,
+    hasConfiguredVar,
+  };
 }
 
 function getBearerTokenFromHeader(authorizationHeader: string): string {
@@ -58,6 +96,10 @@ function unauthorizedResponse(
     hasAltHeader: boolean;
     hasQueryToken: boolean;
     configuredTokenLength: number;
+    configuredTokenSource: string | null;
+    configuredTokenRawLength: number;
+    hasConfiguredTokenVar: boolean;
+    dataBackendEnv: string | null;
   },
 ): NextResponse {
   return NextResponse.json(
@@ -71,7 +113,8 @@ function unauthorizedResponse(
 }
 
 function requireIngestAuth(request: NextRequest): NextResponse | null {
-  const token = getConfiguredToken();
+  const tokenInfo = getConfiguredTokenInfo();
+  const token = tokenInfo.token;
   const authorization = request.headers.get("authorization") || "";
   const bearerToken = getBearerTokenFromHeader(authorization);
   const altHeaderToken = normalizeToken(
@@ -94,6 +137,10 @@ function requireIngestAuth(request: NextRequest): NextResponse | null {
         hasAltHeader: Boolean(altHeaderToken),
         hasQueryToken: Boolean(queryToken),
         configuredTokenLength: 0,
+        configuredTokenSource: tokenInfo.source,
+        configuredTokenRawLength: tokenInfo.rawLength,
+        hasConfiguredTokenVar: tokenInfo.hasConfiguredVar,
+        dataBackendEnv: process.env.DATA_BACKEND || null,
       });
     }
 
@@ -106,6 +153,10 @@ function requireIngestAuth(request: NextRequest): NextResponse | null {
       hasAltHeader: Boolean(altHeaderToken),
       hasQueryToken: Boolean(queryToken),
       configuredTokenLength: token.length,
+      configuredTokenSource: tokenInfo.source,
+      configuredTokenRawLength: tokenInfo.rawLength,
+      hasConfiguredTokenVar: tokenInfo.hasConfiguredVar,
+      dataBackendEnv: process.env.DATA_BACKEND || null,
     });
   }
 
@@ -116,6 +167,10 @@ function requireIngestAuth(request: NextRequest): NextResponse | null {
       hasAltHeader: Boolean(altHeaderToken),
       hasQueryToken: Boolean(queryToken),
       configuredTokenLength: token.length,
+      configuredTokenSource: tokenInfo.source,
+      configuredTokenRawLength: tokenInfo.rawLength,
+      hasConfiguredTokenVar: tokenInfo.hasConfiguredVar,
+      dataBackendEnv: process.env.DATA_BACKEND || null,
     });
   }
 
