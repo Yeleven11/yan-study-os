@@ -98,6 +98,12 @@ export interface AppSettings {
 }
 
 export type WorkoutType = "cardio" | "strength" | "mobility" | "recovery";
+export type TrainingCategory =
+  | "rest_walk"
+  | "recovery"
+  | "easy_run"
+  | "steady_run"
+  | "quality_run";
 export type SleepDriverKey =
   | "debt"
   | "duration"
@@ -142,6 +148,10 @@ export interface WorkoutEntry {
   elevationAscM?: number;
   elevationDescM?: number;
   intensityKcalHrKg?: number;
+  difficultyAuto?: number;
+  difficultyUser?: number;
+  difficultyEffective?: number;
+  trainingLoad?: number;
   source: "manual" | "health_import" | "sample";
   createdAt: string;
 }
@@ -252,6 +262,8 @@ export interface PerformanceGoals {
   weeklyWorkoutTarget: number;
   weekdayWakeTime: string;
   weekendWakeTime: string;
+  preferredBedtimeStart: string;
+  preferredBedtimeEnd: string;
   ageYears: number;
 }
 
@@ -285,6 +297,16 @@ export interface DailyReadiness {
 export interface DailyRecommendation {
   date: string;
   studyTargetHours: number;
+  trainingCategory: TrainingCategory;
+  trainingLabel: string;
+  runMinutesMin: number;
+  runMinutesMax: number;
+  walkMinutesMin: number;
+  walkMinutesMax: number;
+  targetRpeMin: number;
+  targetRpeMax: number;
+  trainingRationale: string;
+  isRunRecommended: boolean;
   workoutType: WorkoutType;
   workoutDurationMin: number;
   workoutSuggestion: string;

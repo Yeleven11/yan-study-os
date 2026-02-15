@@ -59,7 +59,6 @@ import type {
   WorkoutDetail,
   WorkoutEntry,
   WorkoutStreamPoint,
-  WorkoutType,
 } from "@/lib/types";
 
 type AuthStatus = "checking" | "signedOut" | "signedIn";
@@ -77,6 +76,19 @@ type ExamDraftRow = Exam & {
   monthDay: string;
   timeSlot: ExamTimeSlot;
 };
+type GoalsDraftState = {
+  sleepHoursTarget: string;
+  baselineStudyHours: string;
+  weeklyWorkoutTarget: string;
+  weekdayWakeTime: string;
+  weekendWakeTime: string;
+  preferredBedtimeStart: string;
+  preferredBedtimeEnd: string;
+  ageYears: string;
+};
+type GoalsDraftErrors = Partial<Record<keyof GoalsDraftState, string>>;
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 function createOfflineAction(
   action: Omit<OfflineAction, "id" | "createdAt">,
@@ -187,6 +199,112 @@ function getActiveElapsedSeconds(timer: ActiveTimerState | null, nowMs: number):
       : 0;
 
   return timer.elapsedBeforePauseSec + currentRunSeconds;
+}
+
+function toGoalsDraft(goals: PerformanceGoals): GoalsDraftState {
+  return {
+    sleepHoursTarget: goals.sleepHoursTarget.toString(),
+    baselineStudyHours: goals.baselineStudyHours.toString(),
+    weeklyWorkoutTarget: goals.weeklyWorkoutTarget.toString(),
+    weekdayWakeTime: goals.weekdayWakeTime,
+    weekendWakeTime: goals.weekendWakeTime,
+    preferredBedtimeStart: goals.preferredBedtimeStart,
+    preferredBedtimeEnd: goals.preferredBedtimeEnd,
+    ageYears: goals.ageYears.toString(),
+  };
+}
+
+function parseGoalsDraft(draft: GoalsDraftState): {
+  parsed: PerformanceGoals | null;
+  errors: GoalsDraftErrors;
+} {
+  const errors: GoalsDraftErrors = {};
+  const parseBoundedNumber = (
+    key: keyof GoalsDraftState,
+    label: string,
+    min: number,
+    max: number,
+    roundToInt = false,
+  ): number | null => {
+    const raw = draft[key].trim().replace(",", ".");
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      errors[key] = `${label} must be a valid number.`;
+      return null;
+    }
+    if (value < min || value > max) {
+      errors[key] = `${label} must be between ${min} and ${max}.`;
+      return null;
+    }
+    return roundToInt ? Math.round(value) : value;
+  };
+
+  const sleepHoursTarget = parseBoundedNumber(
+    "sleepHoursTarget",
+    "Sleep target",
+    4,
+    12,
+  );
+  const baselineStudyHours = parseBoundedNumber(
+    "baselineStudyHours",
+    "Study target",
+    0.5,
+    12,
+  );
+  const weeklyWorkoutTarget = parseBoundedNumber(
+    "weeklyWorkoutTarget",
+    "Weekly run target",
+    0,
+    14,
+    true,
+  );
+  const ageYears = parseBoundedNumber("ageYears", "Age", 12, 90, true);
+
+  if (!TIME_PATTERN.test(draft.weekdayWakeTime.trim())) {
+    errors.weekdayWakeTime = "Weekday wake time must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.weekendWakeTime.trim())) {
+    errors.weekendWakeTime = "Weekend wake time must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.preferredBedtimeStart.trim())) {
+    errors.preferredBedtimeStart = "Preferred bedtime start must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.preferredBedtimeEnd.trim())) {
+    errors.preferredBedtimeEnd = "Preferred bedtime end must use HH:mm.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { parsed: null, errors };
+  }
+
+  return {
+    parsed: {
+      sleepHoursTarget: sleepHoursTarget as number,
+      baselineStudyHours: baselineStudyHours as number,
+      weeklyWorkoutTarget: weeklyWorkoutTarget as number,
+      weekdayWakeTime: draft.weekdayWakeTime.trim(),
+      weekendWakeTime: draft.weekendWakeTime.trim(),
+      preferredBedtimeStart: draft.preferredBedtimeStart.trim(),
+      preferredBedtimeEnd: draft.preferredBedtimeEnd.trim(),
+      ageYears: ageYears as number,
+    },
+    errors,
+  };
+}
+
+function getExamSubjectIds(exams: Exam[]): SubjectId[] {
+  const seen = new Set<SubjectId>();
+  const ordered: SubjectId[] = [];
+
+  for (const exam of exams) {
+    if (seen.has(exam.subjectId)) {
+      continue;
+    }
+    seen.add(exam.subjectId);
+    ordered.push(exam.subjectId);
+  }
+
+  return ordered;
 }
 
 function applyOfflineAction(data: AppData, action: OfflineAction): AppData {
@@ -638,7 +756,9 @@ export default function StudyDashboard() {
   const [countdownBaselines, setCountdownBaselines] = useState<Record<string, number>>(
     () => readCountdownBaselines(),
   );
-  const [goalsDraft, setGoalsDraft] = useState<PerformanceGoals | null>(null);
+  const [goalsDraft, setGoalsDraft] = useState<GoalsDraftState | null>(null);
+  const [goalsDirty, setGoalsDirty] = useState(false);
+  const [goalsErrors, setGoalsErrors] = useState<GoalsDraftErrors>({});
   const [goalsSaving, setGoalsSaving] = useState(false);
   const [csvInput, setCsvInput] = useState("");
   const [csvImporting, setCsvImporting] = useState(false);
@@ -649,9 +769,6 @@ export default function StudyDashboard() {
     filesSkipped: number;
     linkedStreams?: number;
   } | null>(null);
-  const [workoutTypeDraft, setWorkoutTypeDraft] = useState<WorkoutType>("cardio");
-  const [workoutDurationDraft, setWorkoutDurationDraft] = useState("35");
-  const [workoutKcalDraft, setWorkoutKcalDraft] = useState("");
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
   const [selectedWorkoutDetail, setSelectedWorkoutDetail] = useState<WorkoutDetail | null>(null);
   const [loadingWorkoutDetail, setLoadingWorkoutDetail] = useState(false);
@@ -868,8 +985,13 @@ export default function StudyDashboard() {
       return;
     }
 
-    setGoalsDraft(data.goals);
-  }, [data]);
+    if (goalsDirty) {
+      return;
+    }
+
+    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsErrors({});
+  }, [data, goalsDirty]);
 
   useEffect(() => {
     if (!data || !selectedWorkoutId) {
@@ -1216,7 +1338,44 @@ export default function StudyDashboard() {
     };
   }, [healthDaysSorted, readinessByDate]);
 
-  const todayKey = useMemo(() => toDateKey(new Date(timePulse)), [timePulse]);
+  const dashboardTimezone = data?.settings.timezone || "Europe/Berlin";
+  const todayKey = useMemo(
+    () => toDateKeyInTimezone(new Date(timePulse), dashboardTimezone),
+    [dashboardTimezone, timePulse],
+  );
+  const todayLoggedStudySeconds = useMemo(() => {
+    if (!data || !todayKey) {
+      return 0;
+    }
+
+    return data.studySessions.reduce((sum, session) => {
+      if (toDateKeyInTimezone(session.startedAt, dashboardTimezone) !== todayKey) {
+        return sum;
+      }
+      return sum + Math.max(0, session.durationSec);
+    }, 0);
+  }, [dashboardTimezone, data, todayKey]);
+  const liveTimerTodaySeconds = useMemo(() => {
+    if (!activeTimer || !todayKey) {
+      return 0;
+    }
+    if (toDateKeyInTimezone(activeTimer.startedAt, dashboardTimezone) !== todayKey) {
+      return 0;
+    }
+    return getActiveElapsedSeconds(activeTimer, clockNowMs);
+  }, [activeTimer, clockNowMs, dashboardTimezone, todayKey]);
+  const todayStudyHoursLive = useMemo(
+    () => (todayLoggedStudySeconds + liveTimerTodaySeconds) / 3600,
+    [liveTimerTodaySeconds, todayLoggedStudySeconds],
+  );
+  const todayStudyTargetHours = todayRecommendation?.studyTargetHours || 0;
+  const todayStudyProgressRatio = useMemo(() => {
+    if (todayStudyTargetHours <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, todayStudyHoursLive / todayStudyTargetHours));
+  }, [todayStudyHoursLive, todayStudyTargetHours]);
+  const todayStudyProgressPercent = Math.round(todayStudyProgressRatio * 100);
 
   const dayHoverByDate = useMemo(() => {
     const result: Record<string, DayHoverModel> = {};
@@ -1656,20 +1815,54 @@ export default function StudyDashboard() {
       return;
     }
 
+    const { parsed, errors } = parseGoalsDraft(goalsDraft);
+    setGoalsErrors(errors);
+    if (!parsed) {
+      setStatusMessage("Fix goal field errors before saving.");
+      return;
+    }
+
     setGoalsSaving(true);
 
     try {
-      await applyMutation(
+      const saved = await applyMutation(
         (previous) => ({
           ...previous,
-          goals: goalsDraft,
+          goals: parsed,
         }),
-        () => repository.updateGoals(goalsDraft),
+        () => repository.updateGoals(parsed),
       );
-      setStatusMessage("Performance goals updated.");
+      if (saved || repository.mode !== "api") {
+        setGoalsDirty(false);
+        setGoalsDraft(toGoalsDraft(parsed));
+        setStatusMessage("Performance goals updated.");
+      }
     } finally {
       setGoalsSaving(false);
     }
+  };
+
+  const handleGoalFieldChange = (field: keyof GoalsDraftState, value: string) => {
+    setGoalsDirty(true);
+    setGoalsDraft((current) => (current ? { ...current, [field]: value } : current));
+    setGoalsErrors((current) => {
+      if (!current[field]) {
+        return current;
+      }
+      return {
+        ...current,
+        [field]: undefined,
+      };
+    });
+  };
+
+  const handleResetGoalsDraft = () => {
+    if (!data) {
+      return;
+    }
+    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsErrors({});
+    setGoalsDirty(false);
   };
 
   const handleImportCsv = async () => {
@@ -1733,47 +1926,6 @@ export default function StudyDashboard() {
     }
   };
 
-  const handleAddWorkout = async () => {
-    if (!data) {
-      return;
-    }
-
-    const durationMin = Number(workoutDurationDraft);
-    if (!Number.isFinite(durationMin) || durationMin < 10) {
-      setStatusMessage("Workout duration must be at least 10 minutes.");
-      return;
-    }
-
-    const activeKcal = Number(workoutKcalDraft);
-    const endedAt = new Date().toISOString();
-    const startedAt = new Date(Date.now() - durationMin * 60_000).toISOString();
-    const workout: WorkoutEntry = {
-      id: crypto.randomUUID(),
-      type: workoutTypeDraft,
-      startedAt,
-      endedAt,
-      durationMin,
-      activeKcal: Number.isFinite(activeKcal) && activeKcal > 0 ? activeKcal : undefined,
-      source: "manual",
-      createdAt: endedAt,
-    };
-
-    await applyMutation(
-      (previous) => ({
-        ...previous,
-        workouts: [...previous.workouts, workout].sort(
-          (left, right) =>
-            new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
-        ),
-      }),
-      () => repository.createWorkout(workout),
-    );
-
-    setWorkoutDurationDraft("35");
-    setWorkoutKcalDraft("");
-    setStatusMessage(`${workout.type} workout logged (${durationMin} min).`);
-  };
-
   const handleSelectWorkout = useCallback(
     async (workoutId: string) => {
       if (!data) {
@@ -1798,6 +1950,39 @@ export default function StudyDashboard() {
       }
     },
     [data, repository],
+  );
+
+  const handleUpdateWorkoutDifficulty = useCallback(
+    async (workoutId: string, difficultyUser: number | null) => {
+      const normalizedDifficulty =
+        typeof difficultyUser === "number"
+          ? Math.max(1, Math.min(10, Math.round(difficultyUser)))
+          : null;
+
+      const saved = await applyMutation(
+        (previous) => ({
+          ...previous,
+          workouts: previous.workouts.map((workout) =>
+            workout.id === workoutId
+              ? {
+                  ...workout,
+                  difficultyUser: normalizedDifficulty === null ? undefined : normalizedDifficulty,
+                }
+              : workout,
+          ),
+        }),
+        () => repository.updateWorkout(workoutId, { difficultyUser: normalizedDifficulty }),
+      );
+
+      if (saved || repository.mode !== "api") {
+        setStatusMessage(
+          normalizedDifficulty === null
+            ? "Workout difficulty override cleared."
+            : `Workout difficulty set to ${normalizedDifficulty}/10.`,
+        );
+      }
+    },
+    [applyMutation, repository],
   );
 
   useEffect(() => {
@@ -2088,14 +2273,26 @@ export default function StudyDashboard() {
                           Readiness {Math.round(todayReadiness.score)} / 100
                         </p>
                         <p className="text-xs text-[var(--muted)]">
-                          Zone: {todayReadiness.zone.toUpperCase()} • Confidence{" "}
+                          Zone: {todayReadiness.zone.toUpperCase()} • Confidence (readiness data){" "}
                           {Math.round(todayReadiness.confidence * 100)}%
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-                          Study target: {todayRecommendation.studyTargetHours.toFixed(1)}h
-                        </span>
+                      <div className="flex min-w-[260px] flex-1 flex-wrap items-center justify-end gap-2 text-xs text-[var(--muted)]">
+                        <div className="min-w-[220px] rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                            Study Progress
+                          </p>
+                          <div className="mt-1 h-1.5 rounded bg-black/35">
+                            <div
+                              className="h-full rounded bg-[#5BC0EB] transition-all duration-300"
+                              style={{ width: `${Math.max(0, Math.min(100, todayStudyProgressPercent))}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-[11px] text-[var(--muted)]">
+                            {todayStudyHoursLive.toFixed(1)}h / {todayStudyTargetHours.toFixed(1)}h (
+                            {todayStudyProgressPercent}%)
+                          </p>
+                        </div>
                         <span className="rounded border border-[var(--panel-border)] px-2 py-1">
                           Bedtime: {todayRecommendation.bedtimeRangeLabel}
                         </span>
@@ -2103,10 +2300,13 @@ export default function StudyDashboard() {
                     </div>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <p className="text-xs text-[var(--muted)]">
-                        {todayRecommendation.workoutSuggestion}
+                        {todayRecommendation.trainingLabel}: {todayRecommendation.workoutSuggestion}
                       </p>
                       <p className="text-xs text-[var(--muted)]">
-                        7-day trend: {performanceInsights?.trendDelta7d && performanceInsights.trendDelta7d > 0 ? "+" : ""}
+                        {todayRecommendation.trainingRationale} 7-day trend:{" "}
+                        {performanceInsights?.trendDelta7d && performanceInsights.trendDelta7d > 0
+                          ? "+"
+                          : ""}
                         {performanceInsights?.trendDelta7d || 0}
                       </p>
                     </div>
@@ -2225,15 +2425,7 @@ export default function StudyDashboard() {
                           {dayOfMonth}
                         </span>
 
-                        {dayModel.tests.length > 0 ? (
-                          <span
-                            className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
-                            style={{
-                              borderColor: data.settings.examHighlightColor,
-                              boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
-                            }}
-                          />
-                        ) : null}
+                        <ExamSubjectRings exams={dayModel.tests} roundedClassName="rounded-[4px]" />
 
                         {isPast ? (
                           <span className="pointer-events-none absolute inset-0 rounded-[4px] border border-black/55" />
@@ -2338,7 +2530,7 @@ export default function StudyDashboard() {
               ) : null}
               <p className="mt-3 text-xs text-[var(--muted)]">
                 120-day calendar. Fill color = most studied subject. Top-left dot = readiness zone.
-                Blue badge = workout count.
+                Blue badge = workout count. Inner rings = exam subjects.
               </p>
             </section>
 
@@ -2509,118 +2701,180 @@ export default function StudyDashboard() {
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Workout Tracker
+                    Training Readiness
                   </p>
                   <p className="text-xs text-[var(--muted)]">
                     This week: {performanceInsights?.weeklyWorkoutCount || 0}/
-                    {performanceInsights?.weeklyWorkoutTarget || 0} • Last workout{" "}
-                    {performanceInsights?.daysSinceWorkout ?? 0}d ago
+                    {performanceInsights?.weeklyWorkoutTarget || 0} run sessions • Last run{" "}
+                    {performanceInsights?.daysSinceRun ?? 0}d ago
                   </p>
-                  <div className="grid grid-cols-[1fr_86px_86px_auto] gap-2">
-                    <select
-                      value={workoutTypeDraft}
-                      onChange={(event) => setWorkoutTypeDraft(event.target.value as WorkoutType)}
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    >
-                      <option value="cardio">Cardio</option>
-                      <option value="strength">Strength</option>
-                      <option value="mobility">Mobility</option>
-                      <option value="recovery">Recovery</option>
-                    </select>
-                    <input
-                      value={workoutDurationDraft}
-                      onChange={(event) => setWorkoutDurationDraft(event.target.value)}
-                      placeholder="min"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={workoutKcalDraft}
-                      onChange={(event) => setWorkoutKcalDraft(event.target.value)}
-                      placeholder="kcal"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddWorkout}
-                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                    >
-                      Log
-                    </button>
-                  </div>
+                  {todayRecommendation ? (
+                    <p className="text-xs text-[var(--muted)]">
+                      {todayRecommendation.trainingLabel}: run {todayRecommendation.runMinutesMin}-
+                      {todayRecommendation.runMinutesMax}m, walk{" "}
+                      {todayRecommendation.walkMinutesMin}-{todayRecommendation.walkMinutesMax}m, RPE{" "}
+                      {todayRecommendation.targetRpeMin}-{todayRecommendation.targetRpeMax}.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Goals
-                  </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      value={goalsDraft?.sleepHoursTarget ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, sleepHoursTarget: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Sleep h"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.baselineStudyHours ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, baselineStudyHours: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Study h"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.weeklyWorkoutTarget ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, weeklyWorkoutTarget: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Weekly WO"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Goals
+                    </p>
+                    {goalsDirty ? (
+                      <span className="text-[10px] uppercase tracking-[0.14em] text-[#facc15]">
+                        Unsaved
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      value={goalsDraft?.weekdayWakeTime ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current ? { ...current, weekdayWakeTime: event.target.value } : current,
-                        )
-                      }
-                      placeholder="Weekday wake"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.weekendWakeTime ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current ? { ...current, weekendWakeTime: event.target.value } : current,
-                        )
-                      }
-                      placeholder="Weekend wake"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="text-xs text-[var(--muted)]">
+                      Sleep Target (hours)
+                      <input
+                        value={goalsDraft?.sleepHoursTarget ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("sleepHoursTarget", event.target.value)
+                        }
+                        inputMode="decimal"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.sleepHoursTarget ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.sleepHoursTarget}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Study Baseline (hours)
+                      <input
+                        value={goalsDraft?.baselineStudyHours ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("baselineStudyHours", event.target.value)
+                        }
+                        inputMode="decimal"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.baselineStudyHours ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.baselineStudyHours}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekly Run Target
+                      <input
+                        value={goalsDraft?.weeklyWorkoutTarget ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weeklyWorkoutTarget", event.target.value)
+                        }
+                        inputMode="numeric"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weeklyWorkoutTarget ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weeklyWorkoutTarget}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Age
+                      <input
+                        value={goalsDraft?.ageYears ?? ""}
+                        onChange={(event) => handleGoalFieldChange("ageYears", event.target.value)}
+                        inputMode="numeric"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.ageYears ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.ageYears}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekday Wake Time
+                      <input
+                        type="time"
+                        value={goalsDraft?.weekdayWakeTime ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weekdayWakeTime", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weekdayWakeTime ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weekdayWakeTime}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekend Wake Time
+                      <input
+                        type="time"
+                        value={goalsDraft?.weekendWakeTime ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weekendWakeTime", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weekendWakeTime ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weekendWakeTime}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Preferred Bedtime Start
+                      <input
+                        type="time"
+                        value={goalsDraft?.preferredBedtimeStart ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("preferredBedtimeStart", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.preferredBedtimeStart ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.preferredBedtimeStart}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Preferred Bedtime End
+                      <input
+                        type="time"
+                        value={goalsDraft?.preferredBedtimeEnd ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("preferredBedtimeEnd", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.preferredBedtimeEnd ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.preferredBedtimeEnd}
+                        </span>
+                      ) : null}
+                    </label>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveGoals}
-                    disabled={!goalsDraft || goalsSaving}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
-                  >
-                    {goalsSaving ? "Saving..." : "Save Goals"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveGoals}
+                      disabled={!goalsDraft || goalsSaving || !goalsDirty}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      {goalsSaving ? "Saving..." : "Save Goals"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetGoalsDraft}
+                      disabled={!goalsDraft || goalsSaving || !goalsDirty}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      Reset
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
@@ -2781,15 +3035,7 @@ export default function StudyDashboard() {
                           {workouts.length}
                         </span>
                       ) : null}
-                      {examList.length > 0 ? (
-                        <span
-                          className="pointer-events-none absolute inset-[-2px] rounded border"
-                          style={{
-                            borderColor: data.settings.examHighlightColor,
-                            boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
-                          }}
-                        />
-                      ) : null}
+                      <ExamSubjectRings exams={examList} roundedClassName="rounded" />
                       {isPast ? (
                         <span className="pointer-events-none absolute inset-0 rounded border border-black/55" />
                       ) : null}
@@ -2813,14 +3059,17 @@ export default function StudyDashboard() {
                 </div>
               ))}
               <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                <span
-                  className="inline-block h-3 w-3 rounded border"
-                  style={{
-                    borderColor: data.settings.examHighlightColor,
-                    boxShadow: `0 0 8px ${data.settings.examHighlightColor}`,
-                  }}
-                />
-                <span>Exam Day Highlight</span>
+                <span className="relative inline-block h-3.5 w-3.5 rounded border border-white/15 bg-black/20">
+                  <span
+                    className="absolute rounded border"
+                    style={{ inset: "1px", borderColor: SUBJECTS[0].color }}
+                  />
+                  <span
+                    className="absolute rounded border"
+                    style={{ inset: "3px", borderColor: SUBJECTS[2].color }}
+                  />
+                </span>
+                <span>Exam Rings (subject colors)</span>
               </div>
             </div>
           </div>
@@ -2866,6 +3115,7 @@ export default function StudyDashboard() {
             selectedWorkoutDetail={selectedWorkoutDetail}
             loadingWorkoutDetail={loadingWorkoutDetail}
             onSelectWorkout={(workoutId) => void handleSelectWorkout(workoutId)}
+            onUpdateWorkoutDifficulty={handleUpdateWorkoutDifficulty}
             rawFiles={data.healthRawFiles}
           />
         ) : null}
@@ -3508,7 +3758,12 @@ function HealthRail({
               <p className="mt-1 text-xs text-[var(--muted)]">
                 {formatOptionalNumber(workout.distanceKm, "km", 2)} •{" "}
                 {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "bpm", 0)} •{" "}
-                Confidence {Math.round((workout.mergeConfidence || 0) * 100)}%
+                Data Quality {Math.round((workout.mergeConfidence || 0) * 100)}%
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Difficulty {(workout.difficultyEffective ?? workout.difficultyAuto ?? 0).toFixed(0)}
+                /10
+                {typeof workout.difficultyUser === "number" ? " (manual)" : " (auto)"}
               </p>
             </button>
           ))
@@ -3528,6 +3783,7 @@ function HealthExplorer({
   selectedWorkoutDetail,
   loadingWorkoutDetail,
   onSelectWorkout,
+  onUpdateWorkoutDifficulty,
   rawFiles,
 }: {
   todayReadiness: DailyReadiness | null;
@@ -3539,12 +3795,81 @@ function HealthExplorer({
   selectedWorkoutDetail: WorkoutDetail | null;
   loadingWorkoutDetail: boolean;
   onSelectWorkout: (workoutId: string) => void;
+  onUpdateWorkoutDifficulty: (workoutId: string, difficultyUser: number | null) => Promise<void>;
   rawFiles: AppData["healthRawFiles"];
 }) {
   const sleepScores30 = sleepTrend30.map((item) => readinessByDate[item.date]?.sleepScore || 0);
   const workouts30 = workouts.slice(0, 30);
   const selectedWorkout =
     workouts.find((workout) => workout.id === selectedWorkoutId) || workouts[0] || null;
+  const detailForSelectedWorkout =
+    selectedWorkout && selectedWorkoutDetail?.workoutId === selectedWorkout.id
+      ? selectedWorkoutDetail
+      : null;
+  const [difficultyDraft, setDifficultyDraft] = useState("");
+  const [difficultyDirty, setDifficultyDirty] = useState(false);
+  const [difficultySaving, setDifficultySaving] = useState(false);
+  const [difficultyError, setDifficultyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedWorkout) {
+      setDifficultyDraft("");
+      setDifficultyDirty(false);
+      setDifficultyError(null);
+      return;
+    }
+
+    setDifficultyDraft(
+      typeof selectedWorkout.difficultyUser === "number"
+        ? Math.round(selectedWorkout.difficultyUser).toString()
+        : "",
+    );
+    setDifficultyDirty(false);
+    setDifficultyError(null);
+  }, [selectedWorkout]);
+
+  const handleSaveDifficulty = async () => {
+    if (!selectedWorkout) {
+      return;
+    }
+
+    const raw = difficultyDraft.trim();
+    let parsed: number | null = null;
+
+    if (raw.length > 0) {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 1 || value > 10) {
+        setDifficultyError("Difficulty must be between 1 and 10.");
+        return;
+      }
+      parsed = Math.round(value);
+    }
+
+    setDifficultyError(null);
+    setDifficultySaving(true);
+    try {
+      await onUpdateWorkoutDifficulty(selectedWorkout.id, parsed);
+      setDifficultyDirty(false);
+      setDifficultyDraft(parsed === null ? "" : parsed.toString());
+    } finally {
+      setDifficultySaving(false);
+    }
+  };
+
+  const handleClearDifficulty = async () => {
+    if (!selectedWorkout) {
+      return;
+    }
+    setDifficultyError(null);
+    setDifficultySaving(true);
+    try {
+      await onUpdateWorkoutDifficulty(selectedWorkout.id, null);
+      setDifficultyDraft("");
+      setDifficultyDirty(false);
+    } finally {
+      setDifficultySaving(false);
+    }
+  };
 
   return (
     <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
@@ -3618,7 +3943,7 @@ function HealthExplorer({
               Workout Timeline
             </p>
             <p className="text-xs text-[var(--muted)]">
-              Study target {todayRecommendation?.studyTargetHours?.toFixed(1) || "0.0"}h
+              {todayRecommendation?.trainingLabel || "Training recommendation unavailable"}
             </p>
           </div>
           <div className="overflow-auto">
@@ -3630,7 +3955,9 @@ function HealthExplorer({
                   <th className="px-1 py-1 text-right">Duration</th>
                   <th className="px-1 py-1 text-right">Distance</th>
                   <th className="px-1 py-1 text-right">Avg HR</th>
-                  <th className="px-1 py-1 text-right">Energy</th>
+                  <th className="px-1 py-1 text-right">Auto</th>
+                  <th className="px-1 py-1 text-right">Your</th>
+                  <th className="px-1 py-1 text-right">Effective</th>
                 </tr>
               </thead>
               <tbody>
@@ -3649,12 +3976,24 @@ function HealthExplorer({
                     <td className="px-1 py-1 text-right">
                       {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "", 0)}
                     </td>
-                    <td className="px-1 py-1 text-right">{formatOptionalNumber(workout.activeEnergyKj, "kJ", 0)}</td>
+                    <td className="px-1 py-1 text-right">
+                      {formatOptionalNumber(workout.difficultyAuto, "", 0)}
+                    </td>
+                    <td className="px-1 py-1 text-right">
+                      {typeof workout.difficultyUser === "number"
+                        ? Math.round(workout.difficultyUser).toString()
+                        : "--"}
+                    </td>
+                    <td className="px-1 py-1 text-right">
+                      {(workout.difficultyEffective ?? workout.difficultyAuto ?? 0).toFixed(0)}
+                      {typeof workout.difficultyUser === "number" ? "*" : ""}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="mt-1 text-[11px] text-[var(--muted)]">* = manual difficulty override</p>
         </section>
       </div>
 
@@ -3664,70 +4003,177 @@ function HealthExplorer({
         </p>
         {loadingWorkoutDetail ? (
           <p className="mt-2 text-sm text-[var(--muted)]">Loading workout details...</p>
-        ) : selectedWorkoutDetail ? (
+        ) : selectedWorkout ? (
           <div className="mt-2 space-y-3">
             <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-xs">
-              <p className="font-semibold text-[var(--text)]">{formatWorkoutDetailLabel(selectedWorkoutDetail)}</p>
-              <p className="mt-1 text-[var(--muted)]">
-                {formatDateTime(selectedWorkoutDetail.startedAt)} to{" "}
-                {formatDateTime(selectedWorkoutDetail.endedAt)}
+              <p className="font-semibold text-[var(--text)]">
+                {detailForSelectedWorkout
+                  ? formatWorkoutDetailLabel(detailForSelectedWorkout)
+                  : formatWorkoutLabel(selectedWorkout)}
               </p>
               <p className="mt-1 text-[var(--muted)]">
-                {selectedWorkoutDetail.durationMin.toFixed(0)}m • Stream count{" "}
-                {selectedWorkoutDetail.streamCount} • Confidence{" "}
-                {Math.round(selectedWorkoutDetail.mergeConfidence * 100)}%
+                {formatDateTime(selectedWorkout.startedAt)} to{" "}
+                {formatDateTime(selectedWorkout.endedAt)}
               </p>
               <p className="mt-1 text-[var(--muted)]">
-                {formatOptionalNumber(selectedWorkoutDetail.distanceKm, "km", 2)} •{" "}
-                {formatOptionalNumber(selectedWorkoutDetail.hrAvg, "bpm", 0)} •{" "}
-                {formatOptionalNumber(selectedWorkoutDetail.activeEnergyKj, "kJ", 0)}
+                {selectedWorkout.durationMin.toFixed(0)}m
+                {detailForSelectedWorkout ? (
+                  <>
+                    {" "}
+                    • Stream count {detailForSelectedWorkout.streamCount} • Data Quality{" "}
+                    {Math.round(detailForSelectedWorkout.mergeConfidence * 100)}%
+                  </>
+                ) : (
+                  <>
+                    {" "}
+                    • Data Quality {Math.round((selectedWorkout.mergeConfidence || 0) * 100)}%
+                  </>
+                )}
               </p>
+              <p className="mt-1 text-[var(--muted)]">
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.distanceKm ?? selectedWorkout.distanceKm,
+                  "km",
+                  2,
+                )}{" "}
+                •{" "}
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.hrAvg ??
+                    selectedWorkout.hrAvg ??
+                    selectedWorkout.avgHeartRate,
+                  "bpm",
+                  0,
+                )}{" "}
+                •{" "}
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.activeEnergyKj ?? selectedWorkout.activeEnergyKj,
+                  "kJ",
+                  0,
+                )}
+              </p>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--muted)]">
+                <span>
+                  Auto:{" "}
+                  {formatOptionalNumber(
+                    selectedWorkout?.difficultyAuto,
+                    "",
+                    0,
+                  )}
+                </span>
+                <span>
+                  Your:{" "}
+                  {typeof selectedWorkout?.difficultyUser === "number"
+                    ? Math.round(selectedWorkout.difficultyUser).toString()
+                    : "--"}
+                </span>
+                <span>
+                  Effective:{" "}
+                  {(selectedWorkout?.difficultyEffective ??
+                    selectedWorkout?.difficultyAuto ??
+                    0).toFixed(0)}
+                  /10
+                </span>
+              </div>
+              <div className="mt-2 rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                  Your Difficulty Override (1-10)
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <input
+                    value={difficultyDraft}
+                    onChange={(event) => {
+                      setDifficultyDraft(event.target.value);
+                      setDifficultyDirty(true);
+                      setDifficultyError(null);
+                    }}
+                    inputMode="numeric"
+                    placeholder="Auto"
+                    className="w-20 rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDifficulty()}
+                    disabled={!selectedWorkout || difficultySaving || !difficultyDirty}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    {difficultySaving ? "Saving..." : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleClearDifficulty()}
+                    disabled={
+                      !selectedWorkout ||
+                      difficultySaving ||
+                      typeof selectedWorkout.difficultyUser !== "number"
+                    }
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    Clear Override
+                  </button>
+                </div>
+                {difficultyError ? (
+                  <p className="mt-1 text-[11px] text-[#ff9896]">{difficultyError}</p>
+                ) : (
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">
+                    Effective difficulty feeds future training-load recommendations.
+                  </p>
+                )}
+              </div>
             </div>
 
-            <SeriesPanel
-              title="Heart Rate Series"
-              rows={selectedWorkoutDetail.heartRateSeries || []}
-              extractValue={(row) => row.avg ?? row.max ?? row.min}
-              color="#ff8f8f"
-              unit="bpm"
-            />
-            <SeriesPanel
-              title="Distance Series"
-              rows={selectedWorkoutDetail.distanceSeries || []}
-              extractValue={(row) => row.value}
-              color="#6bd4ff"
-              unit="km"
-            />
-            <SeriesPanel
-              title="Step Series"
-              rows={selectedWorkoutDetail.stepSeries || []}
-              extractValue={(row) => row.value}
-              color="#ffe27a"
-              unit="steps"
-            />
-            <SeriesPanel
-              title="Active Energy Series"
-              rows={selectedWorkoutDetail.activeEnergySeries || []}
-              extractValue={(row) => row.value}
-              color="#8af58b"
-              unit="kJ"
-            />
+            {detailForSelectedWorkout ? (
+              <>
+                <SeriesPanel
+                  title="Heart Rate Series"
+                  rows={detailForSelectedWorkout.heartRateSeries || []}
+                  extractValue={(row) => row.avg ?? row.max ?? row.min}
+                  color="#ff8f8f"
+                  unit="bpm"
+                />
+                <SeriesPanel
+                  title="Distance Series"
+                  rows={detailForSelectedWorkout.distanceSeries || []}
+                  extractValue={(row) => row.value}
+                  color="#6bd4ff"
+                  unit="km"
+                />
+                <SeriesPanel
+                  title="Step Series"
+                  rows={detailForSelectedWorkout.stepSeries || []}
+                  extractValue={(row) => row.value}
+                  color="#ffe27a"
+                  unit="steps"
+                />
+                <SeriesPanel
+                  title="Active Energy Series"
+                  rows={detailForSelectedWorkout.activeEnergySeries || []}
+                  extractValue={(row) => row.value}
+                  color="#8af58b"
+                  unit="kJ"
+                />
 
-            <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                Stream Provenance
+                <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Stream Provenance
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Key: {detailForSelectedWorkout.workoutKey}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                    {detailForSelectedWorkout.sourceFiles.map((file) => (
+                      <li key={`source-${file}`} className="truncate">
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-[var(--muted)]">
+                Detailed workout streams are unavailable for this session, but difficulty override
+                and recommendation logic still work.
               </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Key: {selectedWorkoutDetail.workoutKey}
-              </p>
-              <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
-                {selectedWorkoutDetail.sourceFiles.map((file) => (
-                  <li key={`source-${file}`} className="truncate">
-                    {file}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            )}
           </div>
         ) : (
           <p className="mt-2 text-sm text-[var(--muted)]">
@@ -4036,6 +4482,34 @@ function formatWorkoutDetailLabel(workout: WorkoutDetail): string {
     workout.workoutDisplayLabel ||
     workout.workoutNameRaw ||
     `${workout.workoutType[0].toUpperCase()}${workout.workoutType.slice(1)} Workout`
+  );
+}
+
+function ExamSubjectRings({
+  exams,
+  roundedClassName,
+}: {
+  exams: Exam[];
+  roundedClassName: string;
+}) {
+  const subjectIds = getExamSubjectIds(exams);
+  if (subjectIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className={`pointer-events-none absolute inset-0 ${roundedClassName}`}>
+      {subjectIds.map((subjectId, index) => (
+        <span
+          key={`exam-ring-${subjectId}-${index}`}
+          className={`absolute border ${roundedClassName}`}
+          style={{
+            inset: `${1 + index * 2}px`,
+            borderColor: SUBJECT_BY_ID[subjectId].color,
+          }}
+        />
+      ))}
+    </span>
   );
 }
 

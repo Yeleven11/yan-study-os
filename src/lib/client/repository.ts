@@ -25,6 +25,10 @@ export interface DashboardRepository {
   getBootstrap: () => Promise<DashboardBootstrap>;
   createStudySession: (session: StudySession) => Promise<void>;
   createWorkout: (workout: WorkoutEntry) => Promise<void>;
+  updateWorkout: (
+    id: string,
+    patch: Omit<Partial<WorkoutEntry>, "difficultyUser"> & { difficultyUser?: number | null },
+  ) => Promise<void>;
   createTodo: (todo: TodoItem) => Promise<void>;
   createFlashcard: (flashcard: Flashcard) => Promise<void>;
   gradeFlashcard: (input: FlashcardGradeInput) => Promise<void>;
@@ -145,6 +149,15 @@ function parseGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGo
       typeof goals?.weekendWakeTime === "string" && goals.weekendWakeTime.trim().length > 0
         ? goals.weekendWakeTime
         : defaults.weekendWakeTime,
+    preferredBedtimeStart:
+      typeof goals?.preferredBedtimeStart === "string" &&
+      goals.preferredBedtimeStart.trim().length > 0
+        ? goals.preferredBedtimeStart
+        : defaults.preferredBedtimeStart,
+    preferredBedtimeEnd:
+      typeof goals?.preferredBedtimeEnd === "string" && goals.preferredBedtimeEnd.trim().length > 0
+        ? goals.preferredBedtimeEnd
+        : defaults.preferredBedtimeEnd,
     ageYears:
       typeof goals?.ageYears === "number" && Number.isFinite(goals.ageYears)
         ? goals.ageYears
@@ -229,6 +242,29 @@ function createLocalRepository(): DashboardRepository {
       const data = readLocalData();
       const exists = data.workouts.some((entry) => entry.id === workout.id);
       data.workouts = exists ? data.workouts : [...data.workouts, workout];
+      writeLocalData(data);
+    },
+    async updateWorkout(id, patch) {
+      const data = readLocalData();
+      data.workouts = data.workouts.map((workout) => {
+        if (workout.id !== id) {
+          return workout;
+        }
+
+        const { difficultyUser, ...otherPatch } = patch;
+        const next: WorkoutEntry = {
+          ...workout,
+          ...otherPatch,
+        };
+
+        if (typeof difficultyUser === "number") {
+          next.difficultyUser = difficultyUser;
+        } else if (difficultyUser === null) {
+          delete next.difficultyUser;
+        }
+
+        return next;
+      });
       writeLocalData(data);
     },
     async createTodo(todo) {
@@ -428,6 +464,12 @@ function createApiRepository(): DashboardRepository {
       await apiRequest<{ ok: true }>("/api/workouts", {
         method: "POST",
         body: JSON.stringify(workout),
+      });
+    },
+    async updateWorkout(id, patch) {
+      await apiRequest<{ ok: true }>(`/api/workouts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
       });
     },
     async createTodo(todo) {

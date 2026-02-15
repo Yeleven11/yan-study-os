@@ -47,6 +47,15 @@ function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): Performan
       typeof goals?.weekendWakeTime === "string" && goals.weekendWakeTime.trim().length > 0
         ? goals.weekendWakeTime
         : defaults.weekendWakeTime,
+    preferredBedtimeStart:
+      typeof goals?.preferredBedtimeStart === "string" &&
+      goals.preferredBedtimeStart.trim().length > 0
+        ? goals.preferredBedtimeStart
+        : defaults.preferredBedtimeStart,
+    preferredBedtimeEnd:
+      typeof goals?.preferredBedtimeEnd === "string" && goals.preferredBedtimeEnd.trim().length > 0
+        ? goals.preferredBedtimeEnd
+        : defaults.preferredBedtimeEnd,
     ageYears:
       typeof goals?.ageYears === "number" && Number.isFinite(goals.ageYears)
         ? goals.ageYears
