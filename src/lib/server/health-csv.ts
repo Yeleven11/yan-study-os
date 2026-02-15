@@ -192,15 +192,68 @@ function classifyFile(filename: string, headers: string[]): { role: FileRole; st
     };
   }
 
+  const hasStartLike = hasHeader([
+    "Start",
+    "Start Date",
+    "Workout Start",
+    "Start Time",
+    "startDate",
+    "startedAt",
+    "begin",
+  ]);
+  const hasEndLike = hasHeader([
+    "End",
+    "End Date",
+    "Workout End",
+    "End Time",
+    "endDate",
+    "endedAt",
+    "finish",
+  ]);
+  const hasDurationLike = hasHeader([
+    "Duration",
+    "Duration (s)",
+    "Duration (sec)",
+    "Duration (seconds)",
+    "Duration (min)",
+    "duration",
+    "durationSeconds",
+    "durationMin",
+    "elapsed",
+  ]);
+  const hasTypeLike = hasHeader([
+    "Workout Type",
+    "Type",
+    "Workout",
+    "Name",
+    "Activity Type",
+    "Activity",
+    "Workout Name",
+    "Activity Name",
+    "Sport",
+  ]);
+  const hasSummaryMetricLike = hasHeader([
+    "Distance (km)",
+    "Total Distance (km)",
+    "Active Energy (kJ)",
+    "Active Energy (kcal)",
+    "Total Energy (kcal)",
+    "Avg Heart Rate (bpm)",
+    "Average Heart Rate (bpm)",
+    "Avg. Heart Rate (count/min)",
+    "Step Count (count)",
+    "Steps",
+  ]);
+
   if (normalizedHeaders.includes("workouttype") && normalizedHeaders.includes("duration")) {
     return { role: "workout_summary" };
   }
 
   const looksLikeWorkoutSummary =
-    hasHeader(["start", "start date", "workout start"]) &&
-    (hasHeader(["end", "end date", "workout end"]) ||
-      hasHeader(["duration", "duration (s)", "duration (sec)", "duration (min)"])) &&
-    (hasHeader(["workout type", "type", "workout", "name", "activity type"]) ||
+    hasStartLike &&
+    (hasEndLike || hasDurationLike) &&
+    (hasTypeLike ||
+      hasSummaryMetricLike ||
       /^workouts-[a-f0-9-]+\.csv$/i.test(filename.replace(/^.*\//, "")));
 
   if (
@@ -435,12 +488,26 @@ function parseWorkoutSummaryRows(
         "Start",
         "Start Date",
         "Workout Start",
+        "Start Time",
+        "Workout Start Time",
+        "startedAt",
         "start",
         "startDate",
+        "begin",
       ]),
     );
     let endDate = parseDateValue(
-      getValue(record, ["End", "End Date", "Workout End", "end", "endDate"]),
+      getValue(record, [
+        "End",
+        "End Date",
+        "Workout End",
+        "End Time",
+        "Workout End Time",
+        "endedAt",
+        "end",
+        "endDate",
+        "finish",
+      ]),
     );
 
     const durationSec = parseNumber(
@@ -448,6 +515,8 @@ function parseWorkoutSummaryRows(
         "Duration (s)",
         "Duration (sec)",
         "Duration (seconds)",
+        "Elapsed (s)",
+        "Elapsed Time (s)",
         "durationSeconds",
         "durationSec",
       ]),
@@ -459,6 +528,8 @@ function parseWorkoutSummaryRows(
         "Duration",
         "Duration (min)",
         "Duration (minutes)",
+        "Elapsed",
+        "Elapsed Time (min)",
         "duration",
         "durationMin",
       ]),
@@ -484,7 +555,17 @@ function parseWorkoutSummaryRows(
     }
 
     const typeLabel =
-      getValue(record, ["Workout Type", "Type", "Workout", "Name", "Activity Type"]) || "Workout";
+      getValue(record, [
+        "Workout Type",
+        "Workout Name",
+        "Type",
+        "Workout",
+        "Name",
+        "Activity Type",
+        "Activity Name",
+        "Activity",
+        "Sport",
+      ]) || "Workout";
     const workoutNameRaw = typeLabel.trim();
     const stem = normalizeStem(typeLabel);
     const token = timestampToToken(startDate);
@@ -498,6 +579,9 @@ function parseWorkoutSummaryRows(
         "Active Energy (kJ)",
         "Total Energy (kJ)",
         "Energy (kJ)",
+        "active energy",
+        "total energy",
+        "energy",
         "activeEnergyKj",
         "totalEnergyKj",
       ]),
@@ -507,6 +591,9 @@ function parseWorkoutSummaryRows(
         "Active Energy (kcal)",
         "Total Energy (kcal)",
         "Energy (kcal)",
+        "Energy Burned (kcal)",
+        "Calories (kcal)",
+        "Calories",
         "activeEnergyKcal",
         "totalEnergyKcal",
       ]),
@@ -518,8 +605,63 @@ function parseWorkoutSummaryRows(
         ? activeEnergyKcal * 4.184
         : undefined;
     const restingEnergyKj = parseNumber(getValue(record, ["Resting Energy (kJ)"]));
-    const distanceKm = parseNumber(getValue(record, ["Distance (km)", "distanceKm", "distance"]));
+    const distanceKmDirect = parseNumber(
+      getValue(record, [
+        "Distance (km)",
+        "Total Distance (km)",
+        "Walking + Running Distance (km)",
+        "distanceKm",
+        "distance",
+      ]),
+    );
+    const distanceM = parseNumber(getValue(record, ["Distance (m)", "distanceM"]));
+    const distanceMi = parseNumber(getValue(record, ["Distance (mi)", "Distance (mile)", "distanceMi"]));
+    const distanceKm =
+      typeof distanceKmDirect === "number"
+        ? distanceKmDirect
+        : typeof distanceM === "number"
+        ? distanceM / 1000
+        : typeof distanceMi === "number"
+        ? distanceMi * 1.60934
+        : undefined;
     const workoutType = inferWorkoutType(typeLabel);
+    const hrMin = parseNumber(
+      getValue(record, [
+        "Min. Heart Rate (count/min)",
+        "Min Heart Rate (count/min)",
+        "Minimum Heart Rate (count/min)",
+        "Min. Heart Rate (bpm)",
+        "Min Heart Rate (bpm)",
+        "Minimum Heart Rate (bpm)",
+        "Min Heart Rate",
+        "HR Min",
+      ]),
+    );
+    const hrMax = parseNumber(
+      getValue(record, [
+        "Max. Heart Rate (count/min)",
+        "Max Heart Rate (count/min)",
+        "Maximum Heart Rate (count/min)",
+        "Max. Heart Rate (bpm)",
+        "Max Heart Rate (bpm)",
+        "Maximum Heart Rate (bpm)",
+        "Max Heart Rate",
+        "HR Max",
+      ]),
+    );
+    const hrAvg = parseNumber(
+      getValue(record, [
+        "Avg. Heart Rate (count/min)",
+        "Avg Heart Rate (count/min)",
+        "Average Heart Rate (count/min)",
+        "Avg. Heart Rate (bpm)",
+        "Avg Heart Rate (bpm)",
+        "Average Heart Rate (bpm)",
+        "Avg Heart Rate",
+        "Average Heart Rate",
+        "HR Avg",
+      ]),
+    );
 
     results.push({
       id,
@@ -534,25 +676,17 @@ function parseWorkoutSummaryRows(
       restingEnergyKj,
       activeKcal: typeof activeEnergyKj === "number" ? activeEnergyKj / 4.184 : undefined,
       intensityKcalHrKg: parseNumber(getValue(record, ["Intensity (kcal/hr·kg)"])),
-      hrMin: parseNumber(
-        getValue(record, ["Min. Heart Rate (count/min)", "Min Heart Rate (count/min)", "HR Min"]),
-      ),
-      hrMax: parseNumber(
-        getValue(record, ["Max. Heart Rate (count/min)", "Max Heart Rate (count/min)", "HR Max"]),
-      ),
-      hrAvg: parseNumber(
-        getValue(record, ["Avg. Heart Rate (count/min)", "Avg Heart Rate (count/min)", "HR Avg"]),
-      ),
-      avgHeartRate: parseNumber(
-        getValue(record, ["Avg. Heart Rate (count/min)", "Avg Heart Rate (count/min)", "HR Avg"]),
-      ),
+      hrMin,
+      hrMax,
+      hrAvg,
+      avgHeartRate: hrAvg,
       distanceKm,
       maxSpeedKmh: parseNumber(getValue(record, ["Max. Speed (km/hr)"])),
       avgSpeedKmh: parseNumber(getValue(record, ["Avg. Speed (km/hr)"])),
       flights: parseNumber(getValue(record, ["Flights Climbed", "Flights Climbed (count)"])),
       elevationAscM: parseNumber(getValue(record, ["Elevation Ascended (m)"])),
       elevationDescM: parseNumber(getValue(record, ["Elevation Descended (m)"])),
-      stepCount: parseNumber(getValue(record, ["Step Count", "Step Count (count)"])),
+      stepCount: parseNumber(getValue(record, ["Step Count", "Step Count (count)", "Steps"])),
       avgCadenceSpm: parseNumber(getValue(record, ["Step Cadence (spm)"])),
       mergeConfidence: 0.85,
       streamCount: 1,
@@ -1220,7 +1354,11 @@ export function importHealthFiles(
   current: AppData,
   files: HealthImportInputFile[],
 ): { nextData: AppData; summary: HealthImportSummary } {
-  const existingHashes = new Set(current.healthRawFiles.map((file) => file.hash));
+  const existingHashes = new Set(
+    current.healthRawFiles
+      .filter((file) => file.fileType !== "unknown")
+      .map((file) => file.hash),
+  );
   const parsedFiles: ParsedFile[] = [];
 
   for (const file of files) {

@@ -2053,7 +2053,7 @@ export default function StudyDashboard() {
                 pointerEvents: isCountdownExpanded ? "none" : "auto",
               }}
             >
-              <section className="h-full min-h-0 rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+              <section className="h-full min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Timer</p>

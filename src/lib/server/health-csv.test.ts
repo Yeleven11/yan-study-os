@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createDefaultAppData } from "../constants";
 import { importHealthFiles } from "./health-csv";
 import { normalizeHealthIngestRequest } from "./health-ingest-request";
@@ -44,6 +45,11 @@ const workoutsUuidCsv = [
   "Name,Start Date,End Date,Duration (s),Total Energy (kcal),Avg Heart Rate (count/min),Distance (km)",
   "Outdoor Run,2026-02-11 07:10:00,2026-02-11 07:55:00,2700,520,151,8.4",
   "Outdoor Walk,2026-02-12 18:00:00,2026-02-12 18:30:00,1800,220,98,2.6",
+].join("\n");
+
+const workoutsBpmCsv = [
+  "Workout Name,Start Time,End Time,Duration (s),Total Energy (kcal),Average Heart Rate (bpm),Min Heart Rate (bpm),Max Heart Rate (bpm),Total Distance (km),Steps",
+  "Outdoor Walk,2026-02-10 14:32:00,2026-02-10 14:57:00,1500,125,105,97,125,1.93,2135",
 ].join("\n");
 
 test("merges one workout split across multiple csv streams", () => {
@@ -135,6 +141,44 @@ test("parses workouts-uuid manual export format as workout summary", () => {
   assert.ok(firstDetail);
   assert.ok((firstDetail?.heartRateSeries?.length || 0) > 0);
   assert.ok((firstDetail?.distanceSeries?.length || 0) > 0);
+});
+
+test("parses workout summary with bpm heart-rate aliases", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const imported = importHealthFiles(seed, [
+    {
+      filename: "workouts-C803532A-DAE5-4CC3-AD5E-30C2A0FFD8E0.csv",
+      csv: workoutsBpmCsv,
+    },
+  ]);
+
+  assert.equal(imported.summary.importedWorkouts, 1);
+  const workout = imported.nextData.workouts[0];
+  assert.ok(workout);
+  assert.equal(workout?.workoutNameRaw, "Outdoor Walk");
+  assert.equal(workout?.hrAvg, 105);
+  assert.equal(workout?.hrMin, 97);
+  assert.equal(workout?.hrMax, 125);
+});
+
+test("reprocesses duplicate hash when previous file was unknown", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const filename = "workouts-C803532A-DAE5-4CC3-AD5E-30C2A0FFD8E0.csv";
+  const hash = createHash("sha256").update(`${filename}\n${workoutsBpmCsv}`).digest("hex");
+
+  seed.healthRawFiles.push({
+    id: hash.slice(0, 24),
+    hash,
+    filename,
+    fileType: "unknown",
+    rowCount: 1,
+    importedAt: "2026-02-01T00:00:00.000Z",
+  });
+
+  const imported = importHealthFiles(seed, [{ filename, csv: workoutsBpmCsv }]);
+  assert.equal(imported.summary.importedWorkouts, 1);
+  const file = imported.nextData.healthRawFiles.find((item) => item.hash === hash);
+  assert.equal(file?.fileType, "workout_summary");
 });
 
 test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {

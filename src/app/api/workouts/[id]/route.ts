@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getDashboardStore } from "@/lib/server/store";
 import { badRequest, requireSession } from "@/lib/server/route-helpers";
+import { withWorkoutSeriesFallback } from "@/lib/server/workout-detail";
 
 export async function GET(
   request: NextRequest,
@@ -19,9 +20,11 @@ export async function GET(
 
   const store = getDashboardStore();
   const data = await store.getData();
+  const workout = data.workouts.find((item) => item.id === id) || null;
   const detail = data.workoutDetails.find((item) => item.workoutId === id) || null;
+  const enriched = withWorkoutSeriesFallback(detail, workout);
 
-  return NextResponse.json({ data: detail });
+  return NextResponse.json({ data: enriched });
 }
 
 export async function DELETE(
