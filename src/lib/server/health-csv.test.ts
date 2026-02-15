@@ -211,6 +211,26 @@ test("summary re-import does not downgrade existing rich workout detail series",
   assert.ok((afterDetail?.distanceSeries?.length || 0) > 0);
 });
 
+test("allows workout re-import when workouts were cleared but raw file hashes remain", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const filename = "workouts-C803532A-DAE5-4CC3-AD5E-30C2A0FFD8E0.csv";
+  const hash = createHash("sha256").update(`${filename}\n${workoutsBpmCsv}`).digest("hex");
+
+  seed.healthRawFiles.push({
+    id: hash.slice(0, 24),
+    hash,
+    filename,
+    fileType: "workout_summary",
+    rowCount: 1,
+    importedAt: "2026-02-01T00:00:00.000Z",
+  });
+
+  const imported = importHealthFiles(seed, [{ filename, csv: workoutsBpmCsv }]);
+  assert.equal(imported.summary.filesProcessed, 1);
+  assert.equal(imported.summary.importedWorkouts, 1);
+  assert.equal(imported.nextData.workouts.length, 1);
+});
+
 test("normalizes multipart payload with multiple csv files and keeps deterministic ordering", async () => {
   const form = new FormData();
   form.append(

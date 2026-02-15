@@ -1467,9 +1467,25 @@ export function importHealthFiles(
   current: AppData,
   files: HealthImportInputFile[],
 ): { nextData: AppData; summary: HealthImportSummary } {
+  const allowWorkoutReimport =
+    current.workouts.length === 0 && current.workoutDetails.length === 0;
+  const isWorkoutLikeRawFile = (file: HealthRawFile): boolean =>
+    file.fileType === "workout_summary" ||
+    file.fileType === "workout_stream" ||
+    /\bworkouts?\b/i.test(file.filename);
   const existingHashes = new Set(
     current.healthRawFiles
-      .filter((file) => file.fileType !== "unknown")
+      .filter((file) => {
+        if (file.fileType === "unknown") {
+          return false;
+        }
+
+        if (allowWorkoutReimport && isWorkoutLikeRawFile(file)) {
+          return false;
+        }
+
+        return true;
+      })
       .map((file) => file.hash),
   );
   const parsedFiles: ParsedFile[] = [];
