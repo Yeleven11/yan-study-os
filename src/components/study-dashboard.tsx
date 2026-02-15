@@ -71,6 +71,7 @@ const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
 const COUNTDOWN_BASELINES_KEY = "yan-study-os:countdown-baselines:v1";
 const INITIAL_NOW_MS = Date.now();
 const CALENDAR_MIN_START_DATE = "2026-02-10";
+const STUDY_STREAK_THRESHOLD_SECONDS = 90 * 60;
 type ExamTimeSlot = "09:00" | "13:00";
 type ExamDraftRow = Exam & {
   monthDay: string;
@@ -85,6 +86,91 @@ function createOfflineAction(
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
   } as OfflineAction;
+}
+
+function toDateKeyInTimezone(dateLike: string | Date, timezone: string): string {
+  const date = typeof dateLike === "string" ? new Date(dateLike) : dateLike;
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // Fall back to local formatter if timezone is invalid.
+  }
+
+  return toDateKey(date);
+}
+
+function shiftDateKeyByDays(dateKey: string, offsetDays: number): string {
+  const base = new Date(`${dateKey}T00:00:00Z`);
+  if (!Number.isFinite(base.getTime())) {
+    return dateKey;
+  }
+
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return base.toISOString().slice(0, 10);
+}
+
+function computeStudyStreakDays(
+  sessions: StudySession[],
+  timezone: string,
+  now = new Date(),
+): number {
+  if (sessions.length === 0) {
+    return 0;
+  }
+
+  const totalByDate = new Map<string, number>();
+  for (const session of sessions) {
+    if (!session || !Number.isFinite(session.durationSec) || session.durationSec <= 0) {
+      continue;
+    }
+
+    const dateKey = toDateKeyInTimezone(session.startedAt, timezone);
+    if (!dateKey) {
+      continue;
+    }
+
+    totalByDate.set(
+      dateKey,
+      (totalByDate.get(dateKey) || 0) + Math.max(0, Math.floor(session.durationSec)),
+    );
+  }
+
+  const todayKey = toDateKeyInTimezone(now, timezone);
+  if (!todayKey) {
+    return 0;
+  }
+
+  let streakDays = 0;
+  let cursor = todayKey;
+
+  for (let safety = 0; safety < 4000; safety += 1) {
+    const totalSeconds = totalByDate.get(cursor) || 0;
+    if (totalSeconds < STUDY_STREAK_THRESHOLD_SECONDS) {
+      break;
+    }
+
+    streakDays += 1;
+    cursor = shiftDateKeyByDays(cursor, -1);
+  }
+
+  return streakDays;
 }
 
 function getActiveElapsedSeconds(timer: ActiveTimerState | null, nowMs: number): number {
@@ -974,6 +1060,18 @@ export default function StudyDashboard() {
       .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
   }, [data]);
 
+  const studyStreakDays = useMemo(() => {
+    if (!data) {
+      return 0;
+    }
+
+    return computeStudyStreakDays(
+      data.studySessions,
+      data.settings.timezone || "Europe/Berlin",
+      new Date(timePulse),
+    );
+  }, [data, timePulse]);
+
   const todosByDate = useMemo(() => {
     return activeTodos.reduce<Record<string, TodoItem[]>>((accumulator, todo) => {
       const key = toDateKey(todo.deadline);
@@ -1777,6 +1875,7 @@ export default function StudyDashboard() {
           healthUpdatedAt={latestHealthUpdateIso}
           workoutsUpdatedAt={latestWorkoutUpdateIso}
           lastLoginAt={sessionIssuedAt}
+          studyStreakDays={studyStreakDays}
           nowMs={timePulse}
         />
         <div className="min-h-0 flex-1 p-3 md:p-4">
@@ -2835,11 +2934,13 @@ function StatusStrip({
   healthUpdatedAt,
   workoutsUpdatedAt,
   lastLoginAt,
+  studyStreakDays,
   nowMs,
 }: {
   healthUpdatedAt: string | null;
   workoutsUpdatedAt: string | null;
   lastLoginAt: string | null;
+  studyStreakDays: number;
   nowMs: number;
 }) {
   return (
@@ -2860,6 +2961,7 @@ function StatusStrip({
           value={formatRelativeTimestamp(lastLoginAt, nowMs)}
           absoluteValue={lastLoginAt}
         />
+        <StatusStripItem label="Study Streak" value={`${studyStreakDays}d`} />
       </div>
     </header>
   );
@@ -2872,10 +2974,13 @@ function StatusStripItem({
 }: {
   label: string;
   value: string;
-  absoluteValue: string | null;
+  absoluteValue?: string | null;
 }) {
   return (
-    <span className="whitespace-nowrap" title={absoluteValue ? formatDateTime(absoluteValue) : "Never"}>
+    <span
+      className="whitespace-nowrap"
+      title={absoluteValue ? formatDateTime(absoluteValue) : undefined}
+    >
       {label}: {value}
     </span>
   );
