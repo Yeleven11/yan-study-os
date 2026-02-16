@@ -24,14 +24,19 @@ import type {
 import type { DashboardStore } from "./types";
 
 const SETTINGS_PK = "settings";
-const MAX_DAILY_HEALTH_DAYS = 730;
-const MAX_WORKOUTS = 1000;
-const MAX_WORKOUT_DETAILS = 240;
+const MAX_DAILY_HEALTH_DAYS = 180;
+const MAX_WORKOUTS = 240;
+const MAX_WORKOUT_DETAILS = 80;
 const MAX_HEALTH_RAW_FILES = 1000;
-const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 480;
-const MAX_SERIES_POINTS = 480;
+const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 0;
+const MAX_SERIES_POINTS = 0;
+const MAX_SETTINGS_ITEM_BYTES = 330_000;
 
 function takeTail<T>(items: T[], max: number): T[] {
+  if (max <= 0) {
+    return [];
+  }
+
   if (items.length <= max) {
     return items;
   }
@@ -281,6 +286,58 @@ function normalizeData(data: AppData): AppData {
   };
 }
 
+function buildSettingsItem(data: AppData): Record<string, unknown> {
+  return {
+    pk: SETTINGS_PK,
+    timezone: data.settings.timezone,
+    examHighlightColor: data.settings.examHighlightColor,
+    exams: data.exams,
+    flashcards: data.flashcards,
+    dailyHealth: data.dailyHealth,
+    workouts: data.workouts,
+    workoutDetails: data.workoutDetails,
+    healthRawFiles: data.healthRawFiles,
+    healthRawRows: data.healthRawRows,
+    goals: data.goals,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function settingsItemSizeBytes(data: AppData): number {
+  return Buffer.byteLength(JSON.stringify(buildSettingsItem(data)), "utf8");
+}
+
+function compactForSettingsItem(data: AppData): AppData {
+  const compactionPlans = [
+    { dailyHealth: 180, workouts: 240, workoutDetails: 80 },
+    { dailyHealth: 120, workouts: 160, workoutDetails: 50 },
+    { dailyHealth: 90, workouts: 120, workoutDetails: 35 },
+    { dailyHealth: 60, workouts: 80, workoutDetails: 20 },
+    { dailyHealth: 30, workouts: 50, workoutDetails: 10 },
+    { dailyHealth: 0, workouts: 30, workoutDetails: 0 },
+  ] as const;
+
+  for (const plan of compactionPlans) {
+    const candidate: AppData = {
+      ...data,
+      dailyHealth: takeTail(data.dailyHealth, plan.dailyHealth),
+      workouts: takeTail(data.workouts, plan.workouts),
+      workoutDetails: takeTail(data.workoutDetails, plan.workoutDetails),
+    };
+
+    if (settingsItemSizeBytes(candidate) <= MAX_SETTINGS_ITEM_BYTES) {
+      return candidate;
+    }
+  }
+
+  return {
+    ...data,
+    dailyHealth: [],
+    workouts: [],
+    workoutDetails: [],
+  };
+}
+
 function createDynamoStore(): DashboardStore {
   const doc = createDocumentClient();
   const sessionsTable = getRequiredEnv("YAN_STUDY_SESSIONS_TABLE");
@@ -341,23 +398,16 @@ function createDynamoStore(): DashboardStore {
   }
 
   async function persistSettings(data: AppData): Promise<void> {
+    const compacted = compactForSettingsItem(data);
+    const payloadBytes = settingsItemSizeBytes(compacted);
+    if (payloadBytes > MAX_SETTINGS_ITEM_BYTES) {
+      throw new Error("Dynamo settings item is still too large after compaction");
+    }
+
     await doc.send(
       new PutCommand({
         TableName: settingsTable,
-        Item: {
-          pk: SETTINGS_PK,
-          timezone: data.settings.timezone,
-          examHighlightColor: data.settings.examHighlightColor,
-          exams: data.exams,
-          flashcards: data.flashcards,
-          dailyHealth: data.dailyHealth,
-          workouts: data.workouts,
-          workoutDetails: data.workoutDetails,
-          healthRawFiles: data.healthRawFiles,
-          healthRawRows: data.healthRawRows,
-          goals: data.goals,
-          updatedAt: new Date().toISOString(),
-        },
+        Item: buildSettingsItem(compacted),
       }),
     );
   }

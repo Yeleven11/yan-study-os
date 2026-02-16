@@ -29,6 +29,7 @@ enum SyncTrigger: String {
     case appLaunch
     case foregroundInterval
     case manual
+    case manualRange
     case backgroundTask
     case healthObserver
     case retryQueue

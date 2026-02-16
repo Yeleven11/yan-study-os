@@ -5,6 +5,9 @@ struct ContentView: View {
     @EnvironmentObject private var settings: AppSettingsStore
 
     @State private var showTokenPlainText = false
+    @State private var manualRangeDays = 30
+
+    private let manualRangeOptions = [7, 14, 30, 60, 90, 180, 365]
 
     var body: some View {
         NavigationStack {
@@ -74,6 +77,29 @@ struct ContentView: View {
                             }
                         } else {
                             Text("Sync Now")
+                        }
+                    }
+                    .disabled(coordinator.isSyncing)
+                }
+
+                Section("Manual Backfill") {
+                    Picker("Time range", selection: $manualRangeDays) {
+                        ForEach(manualRangeOptions, id: \.self) { option in
+                            Text("Last \(option) days").tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button {
+                        coordinator.triggerManualRangeUpload(days: manualRangeDays)
+                    } label: {
+                        if coordinator.isSyncing {
+                            HStack {
+                                ProgressView()
+                                Text("Uploading range...")
+                            }
+                        } else {
+                            Text("Upload Last \(manualRangeDays) Days")
                         }
                     }
                     .disabled(coordinator.isSyncing)

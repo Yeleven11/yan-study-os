@@ -150,14 +150,7 @@ actor HealthKitService {
             return nil
         }
 
-        let deviceInfo = await MainActor.run {
-            MobileSyncPayload.DeviceInfo(
-                deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "ios-device",
-                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
-                osVersion: UIDevice.current.systemVersion,
-                timezone: TimeZone.current.identifier
-            )
-        }
+        let deviceInfo = await currentDeviceInfo()
 
         let payload = MobileSyncPayload(
             schemaVersion: 1,
@@ -176,6 +169,64 @@ actor HealthKitService {
 
         let snapshots = await anchorStore.encodeAnchors(nextAnchors)
         return HealthDeltaBatch(payload: payload, anchorSnapshots: snapshots)
+    }
+
+    func collectRange(from startDate: Date, to endDate: Date, intervalMinutes: Int) async throws -> MobileSyncPayload? {
+        let now = Date()
+        let rangeStart = min(startDate, endDate)
+        let rangeEnd = max(startDate, endDate)
+        let predicate = HKQuery.predicateForSamples(
+            withStart: rangeStart,
+            end: rangeEnd,
+            options: [.strictStartDate, .strictEndDate]
+        )
+
+        var changedByKey: [HealthSampleKey: [HKSample]] = [:]
+        var touchedDates = Set<String>()
+        var minDate: Date?
+        var maxDate: Date?
+
+        for key in HealthSampleKey.allCases {
+            guard let sampleType = sampleType(for: key) else {
+                continue
+            }
+
+            let samples: [HKSample] = try await runSampleQuery(
+                sampleType: sampleType,
+                predicate: predicate
+            )
+            changedByKey[key] = samples
+
+            for sample in samples {
+                touchedDates.insert(sample.startDate.dateKey)
+                touchedDates.insert(sample.endDate.dateKey)
+                minDate = minDate.map { min($0, sample.startDate) } ?? sample.startDate
+                maxDate = maxDate.map { max($0, sample.endDate) } ?? sample.endDate
+            }
+        }
+
+        let dailyHealth = try await buildDailyHealthPayload(for: touchedDates)
+        let workouts = try await buildWorkoutPayloads(changedByKey[.workouts] ?? [])
+        let hasMeaningfulPayload = !dailyHealth.isEmpty || !workouts.isEmpty
+        guard hasMeaningfulPayload else {
+            return nil
+        }
+
+        let deviceInfo = await currentDeviceInfo()
+        return MobileSyncPayload(
+            schemaVersion: 1,
+            batchId: UUID().uuidString.lowercased(),
+            generatedAt: now.isoTimestamp,
+            device: deviceInfo,
+            syncWindow: .init(
+                from: (minDate ?? rangeStart).isoTimestamp,
+                to: (maxDate ?? rangeEnd).isoTimestamp
+            ),
+            settings: .init(syncIntervalMinutes: intervalMinutes),
+            dailyHealth: dailyHealth,
+            workouts: workouts,
+            deletions: []
+        )
     }
 
     private func readTypes() -> Set<HKObjectType> {
@@ -574,6 +625,17 @@ actor HealthKitService {
             remSeconds > 0 ? remSeconds / 3600.0 : nil,
             awakeSeconds > 0 ? awakeSeconds / 3600.0 : nil
         )
+    }
+
+    private func currentDeviceInfo() async -> MobileSyncPayload.DeviceInfo {
+        await MainActor.run {
+            MobileSyncPayload.DeviceInfo(
+                deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "ios-device",
+                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
+                osVersion: UIDevice.current.systemVersion,
+                timezone: TimeZone.current.identifier
+            )
+        }
     }
 
     private func enableBackgroundDeliveryIfNeeded(for sampleType: HKSampleType) {

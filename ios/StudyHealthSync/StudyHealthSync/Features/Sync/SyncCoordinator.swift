@@ -88,6 +88,12 @@ final class SyncCoordinator: ObservableObject {
         }
     }
 
+    func triggerManualRangeUpload(days: Int) {
+        Task {
+            _ = await syncRange(days: days)
+        }
+    }
+
     func syncNow(trigger: SyncTrigger) async -> Bool {
         if isSyncing {
             return false
@@ -154,6 +160,73 @@ final class SyncCoordinator: ObservableObject {
         scheduleNextForegroundTick()
     }
 
+    private func syncRange(days: Int) async -> Bool {
+        let boundedDays = max(1, min(days, 365))
+
+        if isSyncing {
+            return false
+        }
+
+        if authorizationState != .authorized {
+            await updateAuthorizationState()
+            if authorizationState != .authorized {
+                lastErrorMessage = "Health permissions are required before syncing."
+                await queueStore.appendLog("Range upload skipped: authorization not granted")
+                await refreshQueueState()
+                return false
+            }
+        }
+
+        guard let baseURL = settings.resolvedBaseURL else {
+            lastErrorMessage = "Base URL is invalid."
+            await queueStore.appendLog("Range upload failed: invalid base URL")
+            await refreshQueueState()
+            return false
+        }
+
+        isSyncing = true
+        lastAttemptAt = Date()
+        lastErrorMessage = nil
+
+        do {
+            await startObserversIfNeeded()
+            try await flushPendingQueue(baseURL: baseURL)
+
+            let now = Date()
+            let startOfToday = Calendar.current.startOfDay(for: now)
+            let rangeStart = Calendar.current.date(byAdding: .day, value: -(boundedDays - 1), to: startOfToday) ?? now
+
+            if let payload = try await healthService.collectRange(
+                from: rangeStart,
+                to: now,
+                intervalMinutes: settings.syncIntervalMinutes
+            ) {
+                _ = try await uploadBatch(
+                    payload: payload,
+                    anchorSnapshots: [],
+                    baseURL: baseURL,
+                    trigger: .manualRange
+                )
+            } else {
+                await queueStore.appendLog("No health data found for manual range (\(boundedDays) days)")
+            }
+
+            await refreshLastSyncFromStore()
+            await refreshQueueState()
+            scheduleNextForegroundTick()
+            isSyncing = false
+            return true
+        } catch {
+            let message = error.localizedDescription
+            lastErrorMessage = message
+            await queueStore.appendLog("Range upload error (\(boundedDays)d): \(message)")
+            await refreshQueueState()
+            scheduleNextForegroundTick()
+            isSyncing = false
+            return false
+        }
+    }
+
     private func flushPendingQueue(baseURL: URL) async throws {
         while let batch = await queueStore.nextBatch() {
             do {
@@ -165,8 +238,7 @@ final class SyncCoordinator: ObservableObject {
                     timeoutSeconds: settings.timeoutSeconds
                 )
 
-                let map = Dictionary(uniqueKeysWithValues: batch.anchors.map { ($0.key, $0.encodedAnchor) })
-                await anchorStore.persistRawAnchorMap(map, lastSyncAt: Date())
+                await persistAnchorsAfterUpload(batch.anchors, at: Date())
                 await queueStore.removeBatch(id: batch.id)
             } catch {
                 await queueStore.incrementAttempts(for: batch.id, reason: error.localizedDescription)
@@ -189,15 +261,25 @@ final class SyncCoordinator: ObservableObject {
             timeoutSeconds: settings.timeoutSeconds
         )
 
-        let map = Dictionary(uniqueKeysWithValues: anchorSnapshots.map { ($0.key, $0.encodedAnchor) })
-        await anchorStore.persistRawAnchorMap(map, lastSyncAt: Date())
-        lastSyncAt = Date()
+        let syncDate = Date()
+        await persistAnchorsAfterUpload(anchorSnapshots, at: syncDate)
+        lastSyncAt = syncDate
 
         await queueStore.appendLog(
             "Sync ok (\(trigger.rawValue)): +\(response.importedHealthDays) days, +\(response.importedWorkouts) workouts, updated \(response.updatedWorkouts)"
         )
 
         return response
+    }
+
+    private func persistAnchorsAfterUpload(_ snapshots: [AnchorSnapshot], at syncDate: Date) async {
+        guard !snapshots.isEmpty else {
+            await anchorStore.persist(anchorSnapshots: [], lastSyncAt: syncDate)
+            return
+        }
+
+        let map = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.key, $0.encodedAnchor) })
+        await anchorStore.persistRawAnchorMap(map, lastSyncAt: syncDate)
     }
 
     private func updateAuthorizationState() async {
