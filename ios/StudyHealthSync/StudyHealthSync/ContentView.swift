@@ -4,8 +4,8 @@ struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
     @EnvironmentObject private var settings: AppSettingsStore
 
-    @State private var showTokenPlainText = false
     @State private var manualRangeDays = 30
+    @State private var showConnectionSettings = false
 
     private let manualRangeOptions = [7, 14, 30, 60, 90, 180, 365]
 
@@ -27,30 +27,12 @@ struct ContentView: View {
                 }
 
                 Section("Sync Configuration") {
-                    TextField("Server Base URL", text: $settings.baseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .keyboardType(.URL)
-                        .onSubmit {
-                            coordinator.applySettingsAndReschedule()
-                        }
-
-                    HStack {
-                        Group {
-                            if showTokenPlainText {
-                                TextField("Bearer Token", text: $settings.token)
-                            } else {
-                                SecureField("Bearer Token", text: $settings.token)
-                            }
-                        }
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-
-                        Button(showTokenPlainText ? "Hide" : "Show") {
-                            showTokenPlainText.toggle()
-                        }
-                        .font(.caption)
+                    Button {
+                        showConnectionSettings = true
+                    } label: {
+                        Label("Server and Token Settings", systemImage: "gearshape")
                     }
+                    .buttonStyle(.plain)
 
                     Toggle("Auto Sync", isOn: $settings.autoSyncEnabled)
                         .onChange(of: settings.autoSyncEnabled) { _, _ in
@@ -137,6 +119,15 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("StudyHealthSync")
+            .sheet(isPresented: $showConnectionSettings) {
+                ConnectionSettingsView(
+                    baseURL: $settings.baseURL,
+                    token: $settings.token,
+                    onSave: {
+                        coordinator.applySettingsAndReschedule()
+                    }
+                )
+            }
         }
     }
 
@@ -159,6 +150,61 @@ struct ContentView: View {
             return .red
         case .unknown:
             return .orange
+        }
+    }
+}
+
+private struct ConnectionSettingsView: View {
+    @Binding var baseURL: String
+    @Binding var token: String
+    let onSave: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var showTokenPlainText = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Server") {
+                    TextField("Server Base URL", text: $baseURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .keyboardType(.URL)
+                }
+
+                Section("Authentication") {
+                    HStack {
+                        Group {
+                            if showTokenPlainText {
+                                TextField("Bearer Token", text: $token)
+                            } else {
+                                SecureField("Bearer Token", text: $token)
+                            }
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+
+                        Button(showTokenPlainText ? "Hide" : "Show") {
+                            showTokenPlainText.toggle()
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("Connection Settings")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave()
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }

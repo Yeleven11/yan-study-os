@@ -26,10 +26,10 @@ import type { DashboardStore } from "./types";
 const SETTINGS_PK = "settings";
 const MAX_DAILY_HEALTH_DAYS = 180;
 const MAX_WORKOUTS = 240;
-const MAX_WORKOUT_DETAILS = 80;
+const MAX_WORKOUT_DETAILS = 60;
 const MAX_HEALTH_RAW_FILES = 1000;
 const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 0;
-const MAX_SERIES_POINTS = 0;
+const MAX_SERIES_POINTS = 180;
 const MAX_SETTINGS_ITEM_BYTES = 330_000;
 
 function takeTail<T>(items: T[], max: number): T[] {
@@ -309,9 +309,9 @@ function settingsItemSizeBytes(data: AppData): number {
 
 function compactForSettingsItem(data: AppData): AppData {
   const compactionPlans = [
-    { dailyHealth: 180, workouts: 240, workoutDetails: 80 },
-    { dailyHealth: 120, workouts: 160, workoutDetails: 50 },
-    { dailyHealth: 90, workouts: 120, workoutDetails: 35 },
+    { dailyHealth: 180, workouts: 240, workoutDetails: 60 },
+    { dailyHealth: 120, workouts: 160, workoutDetails: 40 },
+    { dailyHealth: 90, workouts: 120, workoutDetails: 30 },
     { dailyHealth: 60, workouts: 80, workoutDetails: 20 },
     { dailyHealth: 30, workouts: 50, workoutDetails: 10 },
     { dailyHealth: 0, workouts: 30, workoutDetails: 0 },

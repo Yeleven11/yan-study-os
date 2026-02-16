@@ -319,95 +319,6 @@ function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): Performan
   };
 }
 
-function stableNoise(seed: number): number {
-  const raw = Math.sin(seed * 12.9898) * 43758.5453;
-  return raw - Math.floor(raw);
-}
-
-function createSampleHealthDataset(
-  now: Date,
-  goals: PerformanceGoals,
-): {
-  dailyHealth: DailyHealthFact[];
-  workouts: WorkoutEntry[];
-} {
-  const todayKey = toDateKey(now);
-  const dates = buildDateWindow(todayKey, 42);
-  const dailyHealth: DailyHealthFact[] = [];
-  const workouts: WorkoutEntry[] = [];
-
-  for (let index = 0; index < dates.length; index += 1) {
-    const dateKey = dates[index];
-    const dayNoise = stableNoise(index + 17);
-    const weeklyWave = Math.sin(index / 3.8);
-
-    const sleepHours = clamp(
-      goals.sleepHoursTarget - 0.5 + weeklyWave * 0.6 + (dayNoise - 0.5) * 0.7,
-      6.2,
-      9.8,
-    );
-
-    const hrvMs = clamp(57 + weeklyWave * 9 + (dayNoise - 0.5) * 7, 34, 89);
-    const restingHrBpm = clamp(54 - weeklyWave * 3 + (dayNoise - 0.5) * 3, 47, 66);
-    const sleepMidpointHour = clamp(3.2 + (dayNoise - 0.5) * 0.8, 1.8, 4.8);
-
-    dailyHealth.push({
-      date: dateKey,
-      sleepHours: round(sleepHours, 2),
-      hrvMs: round(hrvMs, 1),
-      restingHrBpm: round(restingHrBpm, 1),
-      sleepMidpointHour: round(sleepMidpointHour, 2),
-      steps: Math.round(7600 + weeklyWave * 1700 + dayNoise * 1400),
-      source: "sample",
-      createdAt: now.toISOString(),
-    });
-
-    if (index % 2 === 0) {
-      const durationMin = Math.round(35 + dayNoise * 20);
-      const distanceKm = round(6 + dayNoise * 5, 2);
-      const avgHeartRate = Math.round(138 + dayNoise * 20);
-      const startMinutes = 17 * 60 + 20;
-      workouts.push({
-        id: `sample-run-${dateKey}-${index}`,
-        type: "cardio",
-        workoutNameRaw: "Outdoor Run",
-        workoutDisplayLabel: `${distanceKm.toFixed(1)} km Outdoor Run`,
-        startedAt: toIsoOnDate(dateKey, startMinutes),
-        endedAt: toIsoOnDate(dateKey, startMinutes + durationMin),
-        durationMin,
-        distanceKm,
-        avgHeartRate,
-        hrAvg: avgHeartRate,
-        activeKcal: Math.round(280 + dayNoise * 200),
-        source: "sample",
-        createdAt: now.toISOString(),
-      });
-    } else {
-      const durationMin = Math.round(30 + dayNoise * 25);
-      const distanceKm = round(2.5 + dayNoise * 2.5, 2);
-      const startMinutes = 18 * 60 + 10;
-      workouts.push({
-        id: `sample-walk-${dateKey}-${index}`,
-        type: "recovery",
-        workoutNameRaw: "Outdoor Walk",
-        workoutDisplayLabel: `${distanceKm.toFixed(1)} km Outdoor Walk`,
-        startedAt: toIsoOnDate(dateKey, startMinutes),
-        endedAt: toIsoOnDate(dateKey, startMinutes + durationMin),
-        durationMin,
-        distanceKm,
-        avgHeartRate: Math.round(96 + dayNoise * 12),
-        source: "sample",
-        createdAt: now.toISOString(),
-      });
-    }
-  }
-
-  return {
-    dailyHealth,
-    workouts,
-  };
-}
-
 function getSessionHoursByDate(studySessions: StudySession[]): Map<string, number> {
   const result = new Map<string, number>();
 
@@ -650,14 +561,13 @@ function toWorkoutSuggestion(prescription: TrainingPrescription): string {
 
 export function buildPerformanceInsights(data: AppData, now = new Date()): PerformanceInsights {
   const goals = normalizeGoals(data.goals);
-  const usingSampleData = data.dailyHealth.length === 0 && data.workouts.length === 0;
-  const sampled = usingSampleData ? createSampleHealthDataset(now, goals) : null;
+  const usingSampleData = false;
 
-  const healthDays = (usingSampleData ? sampled?.dailyHealth || [] : data.dailyHealth)
+  const healthDays = data.dailyHealth
     .slice()
     .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
 
-  const baseWorkouts = (usingSampleData ? sampled?.workouts || [] : data.workouts)
+  const baseWorkouts = data.workouts
     .slice()
     .sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),

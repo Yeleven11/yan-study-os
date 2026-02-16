@@ -417,9 +417,11 @@ actor HealthKitService {
                 predicate: rangePredicate
             )
 
-            let hrSeries = heartRateSamples
-                .map { TimeValuePoint(timestamp: $0.endDate.isoTimestamp, value: $0.quantity.doubleValue(for: .beatsPerMinute)) }
-                .sorted(by: { $0.timestamp < $1.timestamp })
+            let hrSeries = resampleHeartRateSeriesPerMinute(
+                from: heartRateSamples,
+                startDate: workout.startDate,
+                endDate: workout.endDate
+            )
             let distanceSeries = distanceSamples
                 .map { TimeValuePoint(timestamp: $0.endDate.isoTimestamp, value: $0.quantity.doubleValue(for: .meters) / 1000.0) }
                 .sorted(by: { $0.timestamp < $1.timestamp })
@@ -433,7 +435,8 @@ actor HealthKitService {
                 .map { TimeValuePoint(timestamp: $0.endDate.isoTimestamp, value: $0.quantity.doubleValue(for: .kilojoule)) }
                 .sorted(by: { $0.timestamp < $1.timestamp })
 
-            let hrValues = hrSeries.map { $0.value }
+            let rawHeartRates = heartRateSamples.map { $0.quantity.doubleValue(for: .beatsPerMinute) }
+            let hrValues = hrSeries.isEmpty ? rawHeartRates : hrSeries.map { $0.value }
             let avgHeartRate = hrValues.isEmpty ? nil : hrValues.reduce(0, +) / Double(hrValues.count)
             let hrMin = hrValues.min()
             let hrMax = hrValues.max()
@@ -474,6 +477,58 @@ actor HealthKitService {
         }
 
         return payloads
+    }
+
+    private func resampleHeartRateSeriesPerMinute(
+        from samples: [HKQuantitySample],
+        startDate: Date,
+        endDate: Date
+    ) -> [TimeValuePoint] {
+        guard !samples.isEmpty else {
+            return []
+        }
+
+        let sorted = samples.sorted(by: { $0.endDate < $1.endDate })
+        let firstSampleDate = sorted[0].endDate
+
+        let boundedStart = max(startDate, firstSampleDate)
+        let boundedEnd = max(boundedStart, endDate)
+        var cursor = floorToMinute(boundedStart)
+
+        var index = 0
+        var latestValue: Double?
+        var result: [TimeValuePoint] = []
+
+        while cursor <= boundedEnd {
+            let minuteEnd = min(cursor.addingTimeInterval(60), boundedEnd)
+
+            while index < sorted.count && sorted[index].endDate <= minuteEnd {
+                latestValue = sorted[index].quantity.doubleValue(for: .beatsPerMinute)
+                index += 1
+            }
+
+            if let latestValue {
+                result.append(TimeValuePoint(timestamp: minuteEnd.isoTimestamp, value: latestValue))
+            }
+
+            if minuteEnd >= boundedEnd {
+                break
+            }
+
+            cursor = minuteEnd
+        }
+
+        // Keep roughly the latest 12h worth of minute points if an outlier workout is very long.
+        if result.count > 720 {
+            return Array(result.suffix(720))
+        }
+
+        return result
+    }
+
+    private func floorToMinute(_ date: Date) -> Date {
+        let minuteSeconds = floor(date.timeIntervalSince1970 / 60.0) * 60.0
+        return Date(timeIntervalSince1970: minuteSeconds)
     }
 
     private func fetchQuantitySamples(
