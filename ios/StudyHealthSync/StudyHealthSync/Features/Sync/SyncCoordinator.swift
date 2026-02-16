@@ -22,6 +22,8 @@ final class SyncCoordinator: ObservableObject {
     private var autoSyncTask: Task<Void, Never>?
     private var observersStarted = false
     private var hasStarted = false
+    private var lastObserverSyncRequestAt: Date?
+    private let observerSyncCooldownSeconds: TimeInterval = 20
 
     init() {
         let settings = AppSettingsStore()
@@ -69,7 +71,7 @@ final class SyncCoordinator: ObservableObject {
                 try await healthService.requestAuthorization()
                 await updateAuthorizationState()
                 if authorizationState == .authorized {
-                    startObserversIfNeeded()
+                    await startObserversIfNeeded()
                 }
                 _ = await syncNow(trigger: .manual)
             } catch {
@@ -113,7 +115,7 @@ final class SyncCoordinator: ObservableObject {
         lastErrorMessage = nil
 
         do {
-            startObserversIfNeeded()
+            await startObserversIfNeeded()
 
             try await flushPendingQueue(baseURL: baseURL)
 
@@ -125,7 +127,9 @@ final class SyncCoordinator: ObservableObject {
                     trigger: trigger
                 )
             } else {
-                await queueStore.appendLog("No health changes detected for \(trigger.rawValue)")
+                if trigger == .manual || trigger == .appLaunch || trigger == .backgroundTask {
+                    await queueStore.appendLog("No health changes detected for \(trigger.rawValue)")
+                }
             }
 
             await refreshLastSyncFromStore()
@@ -200,7 +204,7 @@ final class SyncCoordinator: ObservableObject {
         authorizationState = await healthService.authorizationState()
     }
 
-    private func startObserversIfNeeded() {
+    private func startObserversIfNeeded() async {
         guard !observersStarted else {
             return
         }
@@ -208,16 +212,30 @@ final class SyncCoordinator: ObservableObject {
             return
         }
 
-        healthService.startBackgroundObservers { [weak self] in
-            Task {
-                guard let self else {
-                    return
-                }
-                _ = await self.syncNow(trigger: .healthObserver)
+        await healthService.startBackgroundObservers { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleObserverSignal()
             }
         }
 
         observersStarted = true
+    }
+
+    private func handleObserverSignal() {
+        let now = Date()
+
+        if let lastObserverSyncRequestAt,
+           now.timeIntervalSince(lastObserverSyncRequestAt) < observerSyncCooldownSeconds {
+            return
+        }
+
+        lastObserverSyncRequestAt = now
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            _ = await self.syncNow(trigger: .healthObserver)
+        }
     }
 
     private func restartForegroundAutoSyncLoop() {

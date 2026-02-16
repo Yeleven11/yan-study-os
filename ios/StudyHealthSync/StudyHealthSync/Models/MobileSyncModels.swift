@@ -112,7 +112,7 @@ enum HealthSampleKey: String, CaseIterable {
     case basalEnergy
     case respiratoryRate
 
-    var identifier: String {
+    nonisolated var identifier: String {
         switch self {
         case .workouts:
             return "HKWorkoutType"

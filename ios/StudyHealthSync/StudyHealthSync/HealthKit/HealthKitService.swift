@@ -7,7 +7,7 @@ struct HealthDeltaBatch {
     let anchorSnapshots: [AnchorSnapshot]
 }
 
-final class HealthKitService {
+actor HealthKitService {
     private enum Keys {
         static let requestedAuthorization = "sync.healthkit.requestedAuthorization"
     }
@@ -61,7 +61,7 @@ final class HealthKitService {
                 continue
             }
 
-            let query = HKObserverQuery(sampleType: sampleType, predicate: nil) { [weak self] _, completionHandler, error in
+            let query = HKObserverQuery(sampleType: sampleType, predicate: nil) { _, completionHandler, error in
                 defer { completionHandler() }
 
                 if let error {
@@ -70,7 +70,6 @@ final class HealthKitService {
                 }
 
                 onUpdate()
-                self?.enableBackgroundDeliveryIfNeeded(for: sampleType)
             }
 
             observerQueries.append(query)
@@ -151,16 +150,20 @@ final class HealthKitService {
             return nil
         }
 
-        let payload = MobileSyncPayload(
-            schemaVersion: 1,
-            batchId: UUID().uuidString.lowercased(),
-            generatedAt: now.isoTimestamp,
-            device: .init(
+        let deviceInfo = await MainActor.run {
+            MobileSyncPayload.DeviceInfo(
                 deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "ios-device",
                 appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
                 osVersion: UIDevice.current.systemVersion,
                 timezone: TimeZone.current.identifier
-            ),
+            )
+        }
+
+        let payload = MobileSyncPayload(
+            schemaVersion: 1,
+            batchId: UUID().uuidString.lowercased(),
+            generatedAt: now.isoTimestamp,
+            device: deviceInfo,
             syncWindow: .init(
                 from: minDate?.isoTimestamp,
                 to: maxDate?.isoTimestamp
@@ -612,14 +615,14 @@ final class HealthKitService {
 }
 
 private extension HKUnit {
-    static let beatsPerMinute = HKUnit.count().unitDivided(by: .minute())
-    static let milliseconds = HKUnit.secondUnit(with: .milli)
-    static let kilojoule = HKUnit.jouleUnit(with: .kilo)
-    static let meters = HKUnit.meter()
+    nonisolated static let beatsPerMinute = HKUnit.count().unitDivided(by: .minute())
+    nonisolated static let milliseconds = HKUnit.secondUnit(with: .milli)
+    nonisolated static let kilojoule = HKUnit.jouleUnit(with: .kilo)
+    nonisolated static let meters = HKUnit.meter()
 }
 
 private extension HKWorkoutActivityType {
-    var syncName: String {
+    nonisolated var syncName: String {
         switch self {
         case .running:
             return "Running"
@@ -648,33 +651,56 @@ private extension HKWorkoutActivityType {
 }
 
 private extension Date {
-    var isoTimestamp: String {
-        ISO8601DateFormatter().string(from: self)
+    nonisolated var isoTimestamp: String {
+        ISO8601DateFormatter.string(
+            from: self,
+            timeZone: TimeZone.current,
+            formatOptions: [.withInternetDateTime, .withFractionalSeconds]
+        )
     }
 
-    var dateKey: String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: self)
+    nonisolated var dateKey: String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+
+        let components = calendar.dateComponents([.year, .month, .day], from: self)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day else {
+            return ""
+        }
+
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
 
 private extension String {
-    var dayStart: Date? {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: self)
+    nonisolated var dayStart: Date? {
+        let parts = split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let year = Int(parts[0]),
+              let month = Int(parts[1]),
+              let day = Int(parts[2]) else {
+            return nil
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = 0
+        components.minute = 0
+        components.second = 0
+
+        return calendar.date(from: components)
     }
 }
 
 private extension Array where Element == Double {
-    var average: Double? {
+    nonisolated var average: Double? {
         guard !isEmpty else { return nil }
         return reduce(0, +) / Double(count)
     }
