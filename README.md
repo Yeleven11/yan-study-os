@@ -14,6 +14,7 @@ Private study operating system for IBDP finals with integrated health/performanc
 - Native iOS companion app (`ios/StudyHealthSync`) sends incremental HealthKit data to the server.
 - Backend persistence modes:
   - `local` (file store)
+  - `neon` (Postgres via Neon serverless driver)
   - `dynamodb` (AWS DynamoDB)
 - No synthetic sample health fallback is used in the analytics engine.
 
@@ -48,6 +49,7 @@ Private study operating system for IBDP finals with integrated health/performanc
 - Next.js 16 (App Router + Route Handlers)
 - TypeScript
 - Tailwind CSS
+- Optional Neon Postgres backend
 - Optional AWS DynamoDB backend
 - Native SwiftUI iOS companion app for HealthKit sync
 
@@ -104,12 +106,13 @@ Open [http://localhost:3000](http://localhost:3000).
 `DATA_BACKEND` (server persistence):
 
 - `local` (default) -> writes to `runtime-data/yan-study-os.json`
+- `neon` -> stores `AppData` as JSONB in a Neon Postgres table (`yan_study_state` by default)
 - `dynamodb` -> uses DynamoDB tables
 
 Notes:
 
 - `local` backend is not durable for serverless production hosting.
-- For production, use `dynamodb` (currently implemented) or add another durable backend.
+- For production, use `neon` or `dynamodb`.
 
 ## Environment Variables
 
@@ -121,7 +124,18 @@ Notes:
 ### Common
 
 - `NEXT_PUBLIC_DATA_MODE=api`
-- `DATA_BACKEND=local|dynamodb`
+- `DATA_BACKEND=local|neon|dynamodb`
+
+### Required for `DATA_BACKEND=neon`
+
+- One of:
+  - `NEON_DATABASE_URL`
+  - `DATABASE_URL`
+  - `STORAGE_URL` (Vercel Storage integration)
+  - `POSTGRES_URL`
+- Optional:
+  - `NEON_STATE_TABLE` (default: `yan_study_state`)
+- The state table is auto-created by the app on first access.
 
 ### Required for `DATA_BACKEND=dynamodb`
 
@@ -227,7 +241,7 @@ Main app behavior:
 
 - App deploys fine on Vercel.
 - Do not rely on local file persistence in serverless production.
-- Use a durable backend (DynamoDB currently supported in code, or add another DB backend before cutover).
+- Use a durable backend (`neon` and `dynamodb` are supported in code).
 
 ## Quality Checks
 
