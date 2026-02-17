@@ -39,6 +39,31 @@ actor HealthKitService {
         }
     }
 
+    func authorizationRequestStatus() async -> HKAuthorizationRequestStatus {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            return .unknown
+        }
+
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                healthStore.getRequestStatusForAuthorization(
+                    toShare: [],
+                    read: readTypes()
+                ) { status, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+
+                    continuation.resume(returning: status)
+                }
+            }
+        } catch {
+            print("Authorization request status failed: \(error.localizedDescription)")
+            return .unknown
+        }
+    }
+
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw NSError(
@@ -89,6 +114,17 @@ actor HealthKitService {
         var touchedDates = Set<String>()
         var minDate: Date?
         var maxDate: Date?
+        var workoutWindowStart: Date?
+        var workoutWindowEnd: Date?
+
+        let workoutRelatedKeys: Set<HealthSampleKey> = [
+            .workouts,
+            .heartRate,
+            .steps,
+            .distanceWalkingRunning,
+            .activeEnergy,
+            .basalEnergy,
+        ]
 
         for key in HealthSampleKey.allCases {
             guard let sampleType = sampleType(for: key) else {
@@ -121,6 +157,11 @@ actor HealthKitService {
                 touchedDates.insert(sample.endDate.dateKey)
                 minDate = minDate.map { min($0, sample.startDate) } ?? sample.startDate
                 maxDate = maxDate.map { max($0, sample.endDate) } ?? sample.endDate
+
+                if workoutRelatedKeys.contains(key) {
+                    workoutWindowStart = workoutWindowStart.map { min($0, sample.startDate) } ?? sample.startDate
+                    workoutWindowEnd = workoutWindowEnd.map { max($0, sample.endDate) } ?? sample.endDate
+                }
             }
 
             deletedPayloads.append(
@@ -143,7 +184,12 @@ actor HealthKitService {
         }
 
         let dailyHealth = try await buildDailyHealthPayload(for: touchedDates)
-        let workouts = try await buildWorkoutPayloads(changedByKey[.workouts] ?? [])
+        let deltaWorkouts = try await mergeWorkoutCandidatesForDelta(
+            changedWorkoutSamples: changedByKey[.workouts] ?? [],
+            windowStart: workoutWindowStart,
+            windowEnd: workoutWindowEnd
+        )
+        let workouts = try await buildWorkoutPayloads(deltaWorkouts)
 
         let hasMeaningfulPayload = !dailyHealth.isEmpty || !workouts.isEmpty || !deletedPayloads.isEmpty
         guard hasMeaningfulPayload else {
@@ -206,7 +252,9 @@ actor HealthKitService {
         }
 
         let dailyHealth = try await buildDailyHealthPayload(for: touchedDates)
-        let workouts = try await buildWorkoutPayloads(changedByKey[.workouts] ?? [])
+        let workouts = try await buildWorkoutPayloads(
+            (changedByKey[.workouts] ?? []).compactMap { $0 as? HKWorkout }
+        )
         let hasMeaningfulPayload = !dailyHealth.isEmpty || !workouts.isEmpty
         guard hasMeaningfulPayload else {
             return nil
@@ -279,6 +327,37 @@ actor HealthKitService {
         case .respiratoryRate:
             return HKObjectType.quantityType(forIdentifier: .respiratoryRate)
         }
+    }
+
+    private func mergeWorkoutCandidatesForDelta(
+        changedWorkoutSamples: [HKSample],
+        windowStart: Date?,
+        windowEnd: Date?
+    ) async throws -> [HKWorkout] {
+        var byId: [UUID: HKWorkout] = [:]
+        for sample in changedWorkoutSamples {
+            guard let workout = sample as? HKWorkout else {
+                continue
+            }
+            byId[workout.uuid] = workout
+        }
+
+        if let windowStart, let windowEnd {
+            let predicate = HKQuery.predicateForSamples(
+                withStart: windowStart,
+                end: windowEnd,
+                options: []
+            )
+            let overlapping: [HKWorkout] = try await runSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate
+            )
+            for workout in overlapping {
+                byId[workout.uuid] = workout
+            }
+        }
+
+        return byId.values.sorted(by: { $0.startDate < $1.startDate })
     }
 
     private func runAnchoredQuery(
@@ -381,8 +460,7 @@ actor HealthKitService {
         return result
     }
 
-    private func buildWorkoutPayloads(_ samples: [HKSample]) async throws -> [WorkoutPayload] {
-        let workouts = samples.compactMap { $0 as? HKWorkout }
+    private func buildWorkoutPayloads(_ workouts: [HKWorkout]) async throws -> [WorkoutPayload] {
         guard !workouts.isEmpty else {
             return []
         }
@@ -702,13 +780,26 @@ actor HealthKitService {
     }
 
     private func probeReadAuthorization() async throws -> Bool {
+        guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
+            return false
+        }
+
+        let workoutReadable = try await canReadSampleType(HKObjectType.workoutType())
+        guard workoutReadable else {
+            return false
+        }
+
+        return try await canReadSampleType(heartRateType)
+    }
+
+    private func canReadSampleType(_ sampleType: HKSampleType) async throws -> Bool {
         try await withCheckedThrowingContinuation { continuation in
             let end = Date()
             let start = Calendar.current.date(byAdding: .day, value: -1, to: end) ?? end
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
 
             let query = HKSampleQuery(
-                sampleType: HKObjectType.workoutType(),
+                sampleType: sampleType,
                 predicate: predicate,
                 limit: 1,
                 sortDescriptors: nil

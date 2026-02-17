@@ -21,8 +21,18 @@ struct ContentView: View {
                             .fontWeight(.semibold)
                     }
 
-                    Button("Grant or Refresh Permissions") {
+                    Button(permissionActionTitle) {
                         coordinator.requestPermissions()
+                    }
+
+                    if coordinator.authorizationState == .denied {
+                        Text("Enable access in Settings > Health > Data Access & Devices > StudyHealthSync, then allow Workouts and Heart Rate.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if coordinator.needsHealthPermissionsInSettings {
+                        Text("Health access currently requires an update in iOS Settings.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -150,6 +160,19 @@ struct ContentView: View {
             return .red
         case .unknown:
             return .orange
+        }
+    }
+
+    private var permissionActionTitle: String {
+        switch coordinator.authorizationState {
+        case .authorized:
+            return "Review Health Permissions"
+        case .denied:
+            return "Open Health Permissions in Settings"
+        case .unknown:
+            return coordinator.needsHealthPermissionsInSettings
+                ? "Open Health Permissions in Settings"
+                : "Grant Health Permissions"
         }
     }
 }

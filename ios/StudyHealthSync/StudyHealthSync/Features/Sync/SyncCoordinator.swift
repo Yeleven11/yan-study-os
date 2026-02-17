@@ -1,9 +1,12 @@
 import Foundation
 import Combine
+import HealthKit
+import UIKit
 
 @MainActor
 final class SyncCoordinator: ObservableObject {
     @Published private(set) var authorizationState: AuthorizationState = .unknown
+    @Published private(set) var needsHealthPermissionsInSettings = false
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var lastAttemptAt: Date?
@@ -24,6 +27,12 @@ final class SyncCoordinator: ObservableObject {
     private var hasStarted = false
     private var lastObserverSyncRequestAt: Date?
     private let observerSyncCooldownSeconds: TimeInterval = 20
+    private var isRepairBackfillRunning = false
+    private let repairBackfillDays = 90
+
+    private enum Keys {
+        static let repairBackfillCompleted = "sync.healthkit.repairBackfillCompleted"
+    }
 
     init() {
         let settings = AppSettingsStore()
@@ -45,7 +54,7 @@ final class SyncCoordinator: ObservableObject {
         hasStarted = true
 
         Task {
-            await updateAuthorizationState()
+            await refreshAuthorizationState(runRepairIfRecovered: true)
         }
 
         BackgroundSyncScheduler.shared.register { [weak self] trigger in
@@ -67,13 +76,32 @@ final class SyncCoordinator: ObservableObject {
 
     func requestPermissions() {
         Task {
+            let requestStatus = await healthService.authorizationRequestStatus()
+
             do {
-                try await healthService.requestAuthorization()
-                await updateAuthorizationState()
-                if authorizationState == .authorized {
-                    await startObserversIfNeeded()
+                if requestStatus == .shouldRequest || requestStatus == .unknown {
+                    try await healthService.requestAuthorization()
                 }
-                _ = await syncNow(trigger: .manual)
+
+                await refreshAuthorizationState(runRepairIfRecovered: true)
+                if authorizationState == .authorized {
+                    lastErrorMessage = nil
+                    await startObserversIfNeeded()
+                    await queueStore.appendLog("Health permissions are authorized.")
+                    await refreshQueueState()
+                    return
+                }
+
+                if requestStatus == .unnecessary {
+                    needsHealthPermissionsInSettings = true
+                    lastErrorMessage = "Health permissions are disabled. Open Settings to re-enable Health access."
+                    await queueStore.appendLog("Health permissions denied. Opening Settings.")
+                    openAppSettings()
+                } else {
+                    lastErrorMessage = "Health permissions are required before syncing."
+                    await queueStore.appendLog("Health permissions are not granted.")
+                }
+                await refreshQueueState()
             } catch {
                 lastErrorMessage = error.localizedDescription
                 await queueStore.appendLog("Authorization failed: \(error.localizedDescription)")
@@ -100,9 +128,11 @@ final class SyncCoordinator: ObservableObject {
         }
 
         if authorizationState != .authorized {
-            await updateAuthorizationState()
+            await refreshAuthorizationState(runRepairIfRecovered: true)
             if authorizationState != .authorized {
-                lastErrorMessage = "Health permissions are required before syncing."
+                lastErrorMessage = needsHealthPermissionsInSettings
+                    ? "Health permissions are disabled. Open iOS Settings and allow Health access."
+                    : "Health permissions are required before syncing."
                 await queueStore.appendLog("Sync skipped (\(trigger.rawValue)): authorization not granted")
                 await refreshQueueState()
                 return false
@@ -126,6 +156,7 @@ final class SyncCoordinator: ObservableObject {
             try await flushPendingQueue(baseURL: baseURL)
 
             if let deltaBatch = try await healthService.collectDelta(intervalMinutes: settings.syncIntervalMinutes) {
+                await queueStore.appendLog("Prepared payload (\(trigger.rawValue)): \(payloadDiagnostics(deltaBatch.payload))")
                 _ = try await uploadBatch(
                     payload: deltaBatch.payload,
                     anchorSnapshots: deltaBatch.anchorSnapshots,
@@ -168,9 +199,11 @@ final class SyncCoordinator: ObservableObject {
         }
 
         if authorizationState != .authorized {
-            await updateAuthorizationState()
+            await refreshAuthorizationState(runRepairIfRecovered: true)
             if authorizationState != .authorized {
-                lastErrorMessage = "Health permissions are required before syncing."
+                lastErrorMessage = needsHealthPermissionsInSettings
+                    ? "Health permissions are disabled. Open iOS Settings and allow Health access."
+                    : "Health permissions are required before syncing."
                 await queueStore.appendLog("Range upload skipped: authorization not granted")
                 await refreshQueueState()
                 return false
@@ -201,6 +234,7 @@ final class SyncCoordinator: ObservableObject {
                 to: now,
                 intervalMinutes: settings.syncIntervalMinutes
             ) {
+                await queueStore.appendLog("Prepared range payload (\(boundedDays)d): \(payloadDiagnostics(payload))")
                 _ = try await uploadBatch(
                     payload: payload,
                     anchorSnapshots: [],
@@ -282,8 +316,48 @@ final class SyncCoordinator: ObservableObject {
         await anchorStore.persistRawAnchorMap(map, lastSyncAt: syncDate)
     }
 
-    private func updateAuthorizationState() async {
+    private func refreshAuthorizationState(runRepairIfRecovered: Bool) async {
+        let previousState = authorizationState
         authorizationState = await healthService.authorizationState()
+
+        let requestStatus = await healthService.authorizationRequestStatus()
+        needsHealthPermissionsInSettings =
+            authorizationState != .authorized && requestStatus == .unnecessary
+
+        if runRepairIfRecovered {
+            await runRepairBackfillIfNeeded(previousState: previousState)
+        }
+    }
+
+    private func runRepairBackfillIfNeeded(previousState: AuthorizationState) async {
+        guard authorizationState == .authorized else {
+            return
+        }
+        guard previousState != .authorized else {
+            return
+        }
+        guard !isRepairBackfillRunning else {
+            return
+        }
+        guard !UserDefaults.standard.bool(forKey: Keys.repairBackfillCompleted) else {
+            return
+        }
+
+        isRepairBackfillRunning = true
+        defer { isRepairBackfillRunning = false }
+
+        await queueStore.appendLog("Running one-time repair backfill (\(repairBackfillDays)d)")
+        await refreshQueueState()
+
+        let success = await syncRange(days: repairBackfillDays)
+        if success {
+            UserDefaults.standard.set(true, forKey: Keys.repairBackfillCompleted)
+            await queueStore.appendLog("Repair backfill completed (\(repairBackfillDays)d)")
+        } else {
+            await queueStore.appendLog("Repair backfill failed; it will retry after next permission recovery")
+        }
+
+        await refreshQueueState()
     }
 
     private func startObserversIfNeeded() async {
@@ -367,5 +441,29 @@ final class SyncCoordinator: ObservableObject {
 
     private func refreshLastSyncFromStore() async {
         lastSyncAt = await anchorStore.lastSuccessfulSyncAt()
+    }
+
+    private func payloadDiagnostics(_ payload: MobileSyncPayload) -> String {
+        let workoutsWithHeartRate = payload.workouts.filter { workout in
+            let hasMetrics = workout.hrAvg != nil || workout.avgHeartRate != nil
+            let hasSeries = !(workout.streams?.heartRateSeries?.isEmpty ?? true)
+            return hasMetrics || hasSeries
+        }.count
+
+        let daysWithHeartRate = payload.dailyHealth.filter { day in
+            day.heartRateAvgBpm != nil ||
+                day.heartRateMinBpm != nil ||
+                day.heartRateMaxBpm != nil ||
+                day.restingHrBpm != nil
+        }.count
+
+        return "days \(payload.dailyHealth.count) (\(daysWithHeartRate) HR), workouts \(payload.workouts.count) (\(workoutsWithHeartRate) HR), deletions \(payload.deletions.count)"
+    }
+
+    private func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+            return
+        }
+        UIApplication.shared.open(url)
     }
 }
