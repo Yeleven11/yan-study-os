@@ -2126,6 +2126,7 @@ export default function StudyDashboard() {
                 todayScientific={todayScientific}
                 scientificSeries={scientificSeries}
                 sortedWorkouts={sortedWorkouts}
+                onExitScientificMode={() => setScientificMode(false)}
               />
             ) : (
               <>

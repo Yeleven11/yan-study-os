@@ -19,6 +19,7 @@ export interface Exam {
   title: string;
   paper: string;
   startsAt: string;
+  importance?: number;
 }
 
 export interface StudySession {
@@ -437,30 +438,104 @@ export interface DailyRecommendation {
   bedtimeRangeMinutes: number;
   studyTargetHoursLow?: number;
   studyTargetHoursHigh?: number;
+  studyTargetLow?: number;
+  studyTargetHigh?: number;
+  studyRationale?: string;
   recommendedFreshAirMinutes?: number;
   physicalTargetLow?: number;
   physicalTargetHigh?: number;
   mentalTargetLow?: number;
   mentalTargetHigh?: number;
+  physicalState?: PhysicalLoadState;
+  mentalState?: MentalLoadState;
   scientificSummary?: string;
+}
+
+export type PhysicalLoadState =
+  | "detraining"
+  | "maintaining"
+  | "productive"
+  | "peaking"
+  | "fatigued"
+  | "overtraining_risk";
+
+export type MentalLoadState =
+  | "underloaded"
+  | "maintaining"
+  | "productive"
+  | "peaking"
+  | "fatigued"
+  | "burnout_risk";
+
+export interface ScientificExplainabilityBlock {
+  reasonCodes: string[];
+  userMessages: string[];
+  contributionBreakdown: Record<string, number>;
+}
+
+export interface ScientificSleepExplainability extends ScientificExplainabilityBlock {
+  lowReasons: string[];
+  highReasons: string[];
+}
+
+export interface ScientificRecoveryExplainability extends ScientificExplainabilityBlock {
+  reasons: string[];
+}
+
+export interface ScientificTargetExplainability extends ScientificExplainabilityBlock {
+  physicalReasons: string[];
+  mentalReasons: string[];
+  studyRationale: string;
+}
+
+export interface ScientificChartPointPayload {
+  timestamp: string;
+  rawValue: number;
+  normalizedValue: number;
+  componentContributions: Record<string, number>;
+  confidence: number;
+}
+
+export interface ScientificCardioLoadState {
+  state: PhysicalLoadState;
+  stateScore: number;
+  stateThresholds: Record<string, number>;
+  stateRationale: string;
+}
+
+export interface ScientificMentalLoadState {
+  state: MentalLoadState;
+  stateScore: number;
+  stateThresholds: Record<string, number>;
+  stateRationale: string;
 }
 
 export interface ScientificMetricComponents {
   sleepDuration: number;
-  sleepEfficiency: number;
+  sleepContinuity: number;
   sleepRegularity: number;
-  sleepTiming: number;
-  sleepStage: number;
+  sleepStages: number;
   zLhrv: number;
   zRhr: number;
   zRr: number;
-  zSleep: number;
   zApl: number;
   zAml: number;
+  compHrv: number;
+  compRhr: number;
+  compRr: number;
   underload: number;
   gate: number;
   gUnder: number;
-  pressure: number;
+  ctl: number;
+  atl: number;
+  tsb: number;
+  mcl: number;
+  mal: number;
+  fi: number;
+  ai: number;
+  mfi: number;
+  mai: number;
+  examUrgency: number;
 }
 
 export interface ScientificTargetRange {
@@ -482,6 +557,9 @@ export interface ScientificDailyMetrics {
   date: string;
   sleepNeedHours: number;
   sleepHours: number;
+  sleepEfficiency: number;
+  sleepWasoMinutes: number;
+  sleepMidpointDeltaMinutes: number;
   sleepScore: number;
   recoveryScore: number;
   physicalStrain: number;
@@ -494,14 +572,31 @@ export interface ScientificDailyMetrics {
   physicalChronicLoad: number;
   mentalAcuteLoad: number;
   mentalChronicLoad: number;
-  physicalLoadRatio: number;
-  mentalLoadRatio: number;
+  physicalLoadRatio: number; // AI proxy relative to CTL_ref
+  mentalLoadRatio: number; // MAI proxy relative to MCL_ref
   physicalCap: number;
   mentalCap: number;
   physicalTarget: ScientificTargetRange;
   mentalTarget: ScientificTargetRange;
+  physicalState: PhysicalLoadState;
+  mentalState: MentalLoadState;
+  cardioLoad: ScientificCardioLoadState;
+  mentalLoadState: ScientificMentalLoadState;
+  studyTargetLow: number;
+  studyTargetHigh: number;
+  studyRationale: string;
   components: ScientificMetricComponents;
   confidence: ScientificMetricConfidence;
+  chartPayloads: {
+    physicalStrain: ScientificChartPointPayload;
+    mentalStrain: ScientificChartPointPayload;
+  };
+  explainability: {
+    sleep: ScientificSleepExplainability;
+    physicalRecovery: ScientificRecoveryExplainability;
+    mentalRecovery: ScientificRecoveryExplainability;
+    targetRange: ScientificTargetExplainability;
+  };
   fallbackFlags: string[];
   narrative: string;
 }

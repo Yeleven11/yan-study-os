@@ -11,39 +11,81 @@ import type {
   DailyReadiness,
   DailyRecommendation,
   Exam,
+  MentalLoadState,
   PerformanceGoals,
+  PhysicalLoadState,
   ScientificDailyMetrics,
   SleepDriverKey,
   StudySession,
   TodoItem,
   TrainingCategory,
+  WorkoutDetail,
   WorkoutEntry,
 } from "@/lib/types";
 
 const EPSILON = 1e-6;
-const ROBUST_Z_MAX = 4;
-const SLEEP_NEED_COLD_START_HOURS = 8.0;
-const SLEEP_NEED_MIN_HOURS = 7.0;
-const SLEEP_NEED_MAX_HOURS = 9.5;
-const SLEEP_DURATION_SIGMA_NEGATIVE = 1.0;
-const SLEEP_DURATION_SIGMA_POSITIVE = 1.5;
-const SLEEP_TIMING_SIGMA_HOURS = 1.5;
-const SLEEP_STAGE_SIGMA = 0.05;
-const SLEEP_WEIGHT_DURATION = 0.35;
-const SLEEP_WEIGHT_EFFICIENCY = 0.25;
-const SLEEP_WEIGHT_REGULARITY = 0.25;
-const SLEEP_WEIGHT_TIMING = 0.1;
-const SLEEP_WEIGHT_STAGE = 0.05;
-const PRESSURE_D0 = 14;
-const PRESSURE_SD = 3;
-const RAW_TO_STRAIN_MAX = 21;
-const DEBT_DECAY = 0.7;
-const STEPS_TO_LOAD = 0.003;
-const ENERGY_TO_LOAD = 0.02;
+const MIN_BASELINE_DAYS = 21;
+const SLEEP_NEED_ANCHOR_MIN = 480;
+const SLEEP_NEED_MIN = 420;
+const SLEEP_NEED_MAX = 600;
+const DURATION_DEFICIT_SCALE = 0.35;
+const OVERSLEEP_GRACE_MIN = 60;
+const OVERSLEEP_PENALTY_WINDOW_MIN = 240;
+const SLEEP_OVERSLEEP_MAX_PENALTY = 10;
 
-const DAYS_FOR_ACUTE = 7;
-const DAYS_FOR_CHRONIC = 28;
-const DAYS_FOR_BASELINE = 180;
+const CONTINUITY_EFF_MIN = 0.75;
+const CONTINUITY_EFF_SPAN = 0.15;
+const CONTINUITY_AWAKE_PENALTY_MAX = 20;
+const CONTINUITY_AWAKE_BASE_MIN = 20;
+const CONTINUITY_AWAKE_SPAN = 80;
+
+const REGULARITY_SCALE_MIN = 90;
+const STAGE_DEEP_FLOOR = 0.13;
+const STAGE_REM_FLOOR = 0.2;
+
+const SLEEP_WEIGHT_DURATION = 0.5;
+const SLEEP_WEIGHT_CONTINUITY = 0.25;
+const SLEEP_WEIGHT_REGULARITY = 0.15;
+const SLEEP_WEIGHT_STAGES = 0.1;
+
+const TAU_CTL_DAYS = 42;
+const TAU_ATL_DAYS = 7;
+const TAU_MCL_DAYS = 21;
+const TAU_MAL_DAYS = 3;
+
+const PHYSICAL_STRAIN_U0 = 30;
+const PHYSICAL_STRAIN_COLD_REF = 300;
+const PHYSICAL_STRAIN_MIN_REF = 150;
+
+const MENTAL_STRAIN_M0 = 60;
+const MENTAL_STRAIN_COLD_REF = 600;
+const MENTAL_STRAIN_MIN_REF = 200;
+
+const RECOVERY_SLEEP_WEIGHT = 0.25;
+const RECOVERY_HRV_WEIGHT = 0.35;
+const RECOVERY_RHR_WEIGHT = 0.25;
+const RECOVERY_RR_WEIGHT = 0.15;
+
+const EXAM_DECAY_DAYS = 10;
+
+const DAYS_10 = 10;
+const DAYS_14 = 14;
+const DAYS_21 = 21;
+const DAYS_28 = 28;
+const DAYS_30 = 30;
+const DAYS_42 = 42;
+const DAYS_56 = 56;
+const DAYS_90 = 90;
+const DAYS_180 = 180;
+const DAYS_365 = 365;
+
+const TRAINING_CATEGORY_RANK: Record<TrainingCategory, number> = {
+  rest_walk: 0,
+  recovery: 1,
+  easy_run: 2,
+  steady_run: 3,
+  quality_run: 4,
+};
 
 type TrainingPrescription = {
   category: TrainingCategory;
@@ -63,7 +105,7 @@ const TRAINING_PRESCRIPTIONS: Record<TrainingCategory, TrainingPrescription> = {
     label: "Rest + Walk",
     runMinutesMin: 0,
     runMinutesMax: 0,
-    walkMinutesMin: 35,
+    walkMinutesMin: 30,
     walkMinutesMax: 60,
     targetRpeMin: 1,
     targetRpeMax: 2,
@@ -115,66 +157,6 @@ const TRAINING_PRESCRIPTIONS: Record<TrainingCategory, TrainingPrescription> = {
   },
 };
 
-const TRAINING_CATEGORY_RANK: Record<TrainingCategory, number> = {
-  rest_walk: 0,
-  recovery: 1,
-  easy_run: 2,
-  steady_run: 3,
-  quality_run: 4,
-};
-
-type DailyComputation = {
-  date: string;
-  sleepNeedHours: number;
-  sleepHours: number;
-  sleepScore: number;
-  sleepDurationScore: number;
-  sleepEfficiencyScore: number;
-  sleepRegularityScore: number;
-  sleepTimingScore: number;
-  sleepStageScore: number;
-  sleepAwakeScore: number;
-  sleepDebtHours: number;
-  recoveryScore: number;
-  mentalRecovery: number;
-  physicalStrain: number;
-  mentalStrain: number;
-  physicalRawLoad: number;
-  mentalRawLoad: number;
-  physicalAcuteLoad: number;
-  physicalChronicLoad: number;
-  mentalAcuteLoad: number;
-  mentalChronicLoad: number;
-  physicalLoadRatio: number;
-  mentalLoadRatio: number;
-  pressure: number;
-  physicalCap: number;
-  mentalCap: number;
-  physicalTargetLow: number;
-  physicalTargetCenter: number;
-  physicalTargetHigh: number;
-  mentalTargetLow: number;
-  mentalTargetCenter: number;
-  mentalTargetHigh: number;
-  confidenceSleep: number;
-  confidenceRecovery: number;
-  confidencePhysical: number;
-  confidenceMentalRecovery: number;
-  confidenceMentalStrain: number;
-  confidenceOverall: number;
-  zLhrv: number;
-  zRhr: number;
-  zRr: number;
-  zSleep: number;
-  zApl: number;
-  zAml: number;
-  underload: number;
-  gate: number;
-  gUnder: number;
-  fallbackFlags: string[];
-  narrative: string;
-};
-
 export type PerformanceInsights = {
   usingSampleData: boolean;
   goals: PerformanceGoals;
@@ -191,6 +173,109 @@ export type PerformanceInsights = {
   daysSinceWorkout: number;
   daysSinceRun: number;
   trendDelta7d: number;
+};
+
+type DailyRow = {
+  date: string;
+  sleepNeedMin: number;
+  sleepAsleepMin?: number;
+  sleepInBedMin?: number;
+  sleepEfficiency?: number;
+  sleepWasoMin?: number;
+  sleepMidpointMin?: number;
+  sleepMidpointDeltaMin?: number;
+  sleepDurationScore?: number;
+  sleepContinuityScore?: number;
+  sleepRegularityScore?: number;
+  sleepStagesScore?: number;
+  sleepScore: number;
+  sleepReasonCodes: string[];
+  sleepLowReasons: string[];
+  sleepHighReasons: string[];
+  sleepContribution: Record<string, number>;
+  sleepMessages: string[];
+
+  hrvLn?: number;
+  zHrv?: number;
+  zRhr?: number;
+  zRr?: number;
+  compHrv?: number;
+  compRhr?: number;
+  compRr?: number;
+
+  examUrgency: number;
+  physicalImpulse: number;
+  physicalImpulseWorkout: number;
+  physicalImpulseFallback: number;
+  workoutMethod: "hr_series" | "avg_hr" | "pace" | "energy" | "none";
+  ctl: number;
+  atl: number;
+  tsb: number;
+  physicalRef: number;
+  physicalStrain: number;
+
+  mentalImpulse: number;
+  mentalSessionImpulse: number;
+  mcl: number;
+  mal: number;
+  mentalRef: number;
+  mentalStrain: number;
+
+  recoveryBase: number;
+  recoveryScore: number;
+  recoveryReasonCodes: string[];
+  recoveryReasons: string[];
+  recoveryMessages: string[];
+  recoveryContribution: Record<string, number>;
+
+  mentalRecovery: number;
+  mentalRecoveryReasonCodes: string[];
+  mentalRecoveryReasons: string[];
+  mentalRecoveryMessages: string[];
+  mentalRecoveryContribution: Record<string, number>;
+  underload: number;
+  gate: number;
+  gUnder: number;
+
+  fi: number;
+  ai: number;
+  mfi: number;
+  mai: number;
+  physicalState: PhysicalLoadState;
+  mentalState: MentalLoadState;
+
+  physicalTargetCenterRaw: number;
+  physicalTargetMinRaw: number;
+  physicalTargetMaxRaw: number;
+  physicalTargetCenter: number;
+  physicalTargetLow: number;
+  physicalTargetHigh: number;
+
+  mentalTargetCenterRaw: number;
+  mentalTargetMinRaw: number;
+  mentalTargetMaxRaw: number;
+  mentalTargetCenter: number;
+  mentalTargetLow: number;
+  mentalTargetHigh: number;
+
+  studyTargetLow: number;
+  studyTargetHigh: number;
+  studyRationale: string;
+
+  targetReasonCodes: string[];
+  targetPhysicalReasons: string[];
+  targetMentalReasons: string[];
+  targetMessages: string[];
+  targetContribution: Record<string, number>;
+
+  sleepConfidence: number;
+  recoveryConfidence: number;
+  physicalConfidence: number;
+  mentalConfidence: number;
+  overallConfidence: number;
+
+  fallbackFlags: string[];
+  narrative: string;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -211,14 +296,11 @@ function median(values: number[]): number {
     return 0;
   }
 
-  const sorted = [...values].sort((left, right) => left - right);
+  const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1] + sorted[mid]) / 2;
-  }
-
-  return sorted[mid];
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
 }
 
 function quantile(values: number[], q: number): number {
@@ -226,7 +308,7 @@ function quantile(values: number[], q: number): number {
     return 0;
   }
 
-  const sorted = [...values].sort((left, right) => left - right);
+  const sorted = [...values].sort((a, b) => a - b);
   if (sorted.length === 1) {
     return sorted[0];
   }
@@ -242,40 +324,63 @@ function quantile(values: number[], q: number): number {
   return sorted[lower] * (1 - weight) + sorted[upper] * weight;
 }
 
-function stdDev(values: number[]): number {
-  if (values.length <= 1) {
-    return 0;
-  }
-
-  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance =
-    values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / values.length;
-  return Math.sqrt(variance);
-}
-
-function robustScale(values: number[]): number {
+function mad(values: number[], center = median(values)): number {
   if (values.length === 0) {
     return 0;
   }
 
-  const center = median(values);
   const deviations = values.map((value) => Math.abs(value - center));
-  return 1.4826 * median(deviations);
+  return median(deviations);
 }
 
-function robustZ(value: number, history: number[]): number {
+function robustScale(values: number[]): number {
+  return 1.4826 * mad(values);
+}
+
+function robustZ(value: number, history: number[], invert = false): number {
   if (!Number.isFinite(value) || history.length < 7) {
     return 0;
   }
 
   const center = median(history);
   const scale = Math.max(robustScale(history), EPSILON);
-  return clamp((value - center) / scale, -ROBUST_Z_MAX, ROBUST_Z_MAX);
+  const raw = invert ? (center - value) / scale : (value - center) / scale;
+  return clamp(raw, -4, 4);
 }
 
-function ewmaHalfLife(previous: number, current: number, halfLifeDays: number): number {
-  const decay = Math.exp(-Math.log(2) / halfLifeDays);
-  return decay * previous + (1 - decay) * current;
+function circularDistanceMinutes(left: number, right: number): number {
+  const a = ((left % 1440) + 1440) % 1440;
+  const b = ((right % 1440) + 1440) % 1440;
+  const diff = Math.abs(a - b);
+  return Math.min(diff, 1440 - diff);
+}
+
+function circularMedianMinutes(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  let best = values[0];
+  let bestCost = Number.POSITIVE_INFINITY;
+
+  for (const candidate of values) {
+    const cost = values.reduce(
+      (sum, value) => sum + circularDistanceMinutes(candidate, value),
+      0,
+    );
+
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = candidate;
+    }
+  }
+
+  return ((best % 1440) + 1440) % 1440;
+}
+
+function ewmaTau(previous: number, current: number, tauDays: number): number {
+  const k = 1 - Math.exp(-1 / Math.max(tauDays, 1));
+  return previous + k * (current - previous);
 }
 
 function safeFinite(value: unknown): number | undefined {
@@ -291,16 +396,6 @@ function positiveFinite(value: unknown): number | undefined {
     return undefined;
   }
   return parsed;
-}
-
-function wrappedHour(hour: number): number {
-  const normalized = hour % 24;
-  return normalized < 0 ? normalized + 24 : normalized;
-}
-
-function wrappedHourDelta(left: number, right: number): number {
-  const diff = Math.abs(left - right);
-  return Math.min(diff, 24 - diff);
 }
 
 function shiftDate(dateKey: string, days: number): string {
@@ -366,16 +461,6 @@ function toIsoOnDate(dateKey: string, minutesFromMidnight: number): string {
   return date.toISOString();
 }
 
-function windowCenterMinutes(startMinutes: number, endMinutes: number): number {
-  if (endMinutes >= startMinutes) {
-    return Math.round((startMinutes + endMinutes) / 2);
-  }
-
-  const wrappedEnd = endMinutes + 1440;
-  const centerWrapped = Math.round((startMinutes + wrappedEnd) / 2);
-  return centerWrapped % 1440;
-}
-
 function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
   const defaults = createDefaultPerformanceGoals();
 
@@ -417,98 +502,52 @@ function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): Performan
   };
 }
 
+function windowCenterMinutes(startMinutes: number, endMinutes: number): number {
+  if (endMinutes >= startMinutes) {
+    return Math.round((startMinutes + endMinutes) / 2);
+  }
+
+  const wrappedEnd = endMinutes + 1440;
+  const centerWrapped = Math.round((startMinutes + wrappedEnd) / 2);
+  return centerWrapped % 1440;
+}
+
 function sentenceForDriver(mode: "negative" | "positive", key: SleepDriverKey): string {
   if (mode === "negative") {
-    if (key === "debt") {
-      return "Your score is mainly held down by accumulated sleep debt from recent nights.";
-    }
     if (key === "duration") {
-      return "Your score is mainly held down by sleep duration falling short of your target.";
+      return "Sleep score is mainly limited by sleep duration relative to your current need.";
     }
     if (key === "regularity") {
-      return "Your score is mainly held down by inconsistent sleep timing across recent nights.";
+      return "Sleep score is mainly limited by irregular sleep midpoint timing.";
     }
     if (key === "stage") {
-      return "Your score is mainly held down by less favorable deep and REM sleep balance.";
+      return "Sleep score is mainly limited by low deep/REM stage composition.";
     }
     if (key === "awake") {
-      return "Your score is mainly held down by too much awake time during your sleep window.";
+      return "Sleep score is mainly limited by fragmentation and awake time.";
     }
-
-    return "Your score is mainly held down by mismatch with your target sleep schedule timing.";
+    if (key === "schedule") {
+      return "Sleep score is mainly limited by midpoint shifts from your baseline.";
+    }
+    return "Sleep score is mainly limited by accumulated sleep debt.";
   }
 
-  if (key === "debt") {
-    return "Your score is mainly boosted by low accumulated sleep debt from recent nights.";
-  }
   if (key === "duration") {
-    return "Your score is mainly boosted by strong sleep duration relative to your target.";
+    return "Sleep score is mainly supported by strong duration relative to your current need.";
   }
   if (key === "regularity") {
-    return "Your score is mainly boosted by consistent sleep timing across recent nights.";
+    return "Sleep score is mainly supported by consistent midpoint timing.";
   }
   if (key === "stage") {
-    return "Your score is mainly boosted by favorable deep and REM sleep balance.";
+    return "Sleep score is mainly supported by healthy deep/REM composition.";
   }
   if (key === "awake") {
-    return "Your score is mainly boosted by low awake time during your sleep window.";
+    return "Sleep score is mainly supported by good continuity and low awake time.";
   }
-
-  return "Your score is mainly boosted by good alignment with your target sleep schedule timing.";
-}
-
-function isWalkSession(workout: WorkoutEntry): boolean {
-  const label = `${workout.workoutNameRaw || ""} ${workout.workoutDisplayLabel || ""}`.toLowerCase();
-  return workout.type === "recovery" || label.includes("walk");
-}
-
-function isRunSession(workout: WorkoutEntry): boolean {
-  return workout.type === "cardio" && !isWalkSession(workout);
-}
-
-function getWorkoutAverageHeartRate(workout: WorkoutEntry): number | undefined {
-  if (typeof workout.hrAvg === "number" && Number.isFinite(workout.hrAvg)) {
-    return workout.hrAvg;
+  if (key === "schedule") {
+    return "Sleep score is mainly supported by stable circadian timing.";
   }
-  if (typeof workout.avgHeartRate === "number" && Number.isFinite(workout.avgHeartRate)) {
-    return workout.avgHeartRate;
-  }
-  return undefined;
-}
-
-function computeWorkoutDifficultyAuto(
-  workout: WorkoutEntry,
-  goals: PerformanceGoals,
-  restingHr: number,
-): number {
-  const durationNorm = clamp((workout.durationMin || 0) / 70, 0, 1);
-  const distanceNorm = clamp((workout.distanceKm || 0) / 12, 0, 1);
-
-  const avgHr = getWorkoutAverageHeartRate(workout);
-  const hrMax = 208 - 0.7 * goals.ageYears;
-  const hrr =
-    typeof avgHr === "number" && hrMax - restingHr > 1
-      ? clamp((avgHr - restingHr) / (hrMax - restingHr), 0, 1)
-      : undefined;
-
-  let intensityNorm = hrr;
-  if (typeof intensityNorm !== "number") {
-    if (typeof workout.avgSpeedKmh === "number" && Number.isFinite(workout.avgSpeedKmh)) {
-      intensityNorm = clamp(workout.avgSpeedKmh / 15, 0, 1);
-    } else if (distanceNorm > 0 && durationNorm > 0) {
-      intensityNorm = clamp(0.55 * durationNorm + 0.45 * distanceNorm, 0, 1);
-    } else {
-      intensityNorm = durationNorm;
-    }
-  }
-
-  if (isWalkSession(workout)) {
-    const walkIndex = clamp(0.65 * durationNorm + 0.35 * distanceNorm * 0.7, 0, 1);
-    return clamp(Math.round(1 + 9 * walkIndex), 1, 10);
-  }
-
-  const loadIndex = clamp(0.55 * intensityNorm + 0.25 * durationNorm + 0.2 * distanceNorm, 0, 1);
-  return clamp(Math.round(1 + 9 * loadIndex), 1, 10);
+  return "Sleep score is mainly supported by low sleep debt.";
 }
 
 function zoneForScore(score: number): DailyReadiness["zone"] {
@@ -532,22 +571,92 @@ function getWeekStartDate(dateKey: string): string {
   return toDateKey(date);
 }
 
+function isWalkSession(workout: WorkoutEntry): boolean {
+  const label = `${workout.workoutNameRaw || ""} ${workout.workoutDisplayLabel || ""}`.toLowerCase();
+  return workout.type === "recovery" || label.includes("walk");
+}
+
+function isRunSession(workout: WorkoutEntry): boolean {
+  const label = `${workout.workoutNameRaw || ""} ${workout.workoutDisplayLabel || ""}`.toLowerCase();
+  if (label.includes("run") || label.includes("jog")) {
+    return true;
+  }
+  return workout.type === "cardio" && !isWalkSession(workout);
+}
+
+function classifyWorkoutMode(workout: WorkoutEntry): "walk" | "run" | "cycle" | "swim" | "other" {
+  const label = `${workout.workoutNameRaw || ""} ${workout.workoutDisplayLabel || ""}`.toLowerCase();
+  if (label.includes("walk") || workout.type === "recovery") {
+    return "walk";
+  }
+  if (label.includes("run") || label.includes("jog")) {
+    return "run";
+  }
+  if (label.includes("cycle") || label.includes("bike") || label.includes("cycling")) {
+    return "cycle";
+  }
+  if (label.includes("swim")) {
+    return "swim";
+  }
+  return "other";
+}
+
+function workoutAverageHeartRate(workout: WorkoutEntry): number | undefined {
+  if (typeof workout.hrAvg === "number" && Number.isFinite(workout.hrAvg)) {
+    return workout.hrAvg;
+  }
+  if (typeof workout.avgHeartRate === "number" && Number.isFinite(workout.avgHeartRate)) {
+    return workout.avgHeartRate;
+  }
+  return undefined;
+}
+
+function computeWorkoutDifficultyAuto(
+  workout: WorkoutEntry,
+  goals: PerformanceGoals,
+  restingHr: number,
+): number {
+  const durationNorm = clamp((workout.durationMin || 0) / 70, 0, 1);
+  const distanceNorm = clamp((workout.distanceKm || 0) / 12, 0, 1);
+  const avgHr = workoutAverageHeartRate(workout);
+  const hrMax = 208 - 0.7 * goals.ageYears;
+
+  const hrr =
+    typeof avgHr === "number" && hrMax - restingHr > 1
+      ? clamp((avgHr - restingHr) / (hrMax - restingHr), 0, 1)
+      : undefined;
+
+  const intensityNorm =
+    typeof hrr === "number"
+      ? hrr
+      : typeof workout.avgSpeedKmh === "number" && Number.isFinite(workout.avgSpeedKmh)
+      ? clamp(workout.avgSpeedKmh / 15, 0, 1)
+      : clamp(0.55 * durationNorm + 0.45 * distanceNorm, 0, 1);
+
+  const loadIndex = clamp(0.55 * intensityNorm + 0.25 * durationNorm + 0.2 * distanceNorm, 0, 1);
+  return clamp(Math.round(1 + 9 * loadIndex), 1, 10);
+}
+
 function examImportance(exam: Exam): number {
+  if (typeof exam.importance === "number" && Number.isFinite(exam.importance)) {
+    return clamp(exam.importance, 1, 5);
+  }
+
   const text = `${exam.title} ${exam.paper}`.toLowerCase();
   if (text.includes("internal") || text.includes("oral") || text.includes("ia")) {
-    return 0.75;
+    return 3;
   }
   if (text.includes("paper 3")) {
-    return 0.95;
+    return 5;
   }
-  return 0.9;
+  return 4;
 }
 
 function todoImportance(todo: TodoItem): number {
   if (todo.ultraPriority) {
-    return 0.5;
+    return 3;
   }
-  return 0.25;
+  return 2;
 }
 
 function daysUntil(dateFromMs: number, eventIso: string): number {
@@ -558,27 +667,23 @@ function daysUntil(dateFromMs: number, eventIso: string): number {
   return Math.floor((eventMs - dateFromMs) / 86_400_000);
 }
 
-function computePressure(dateKey: string, exams: Exam[], todos: TodoItem[]): {
-  pressure: number;
-  hasContext: boolean;
-} {
+function computeExamUrgency(dateKey: string, exams: Exam[], todos: TodoItem[]): number {
   const dateStartMs = new Date(`${dateKey}T00:00:00`).getTime();
   if (!Number.isFinite(dateStartMs)) {
-    return { pressure: 0, hasContext: false };
+    return 0;
   }
 
-  const events: Array<{ daysRemaining: number; importance: number }> = [];
+  let urgency = 0;
 
   for (const exam of exams) {
-    const delta = daysUntil(dateStartMs, exam.startsAt);
-    if (delta < 0 || delta > 120) {
+    const daysRemaining = daysUntil(dateStartMs, exam.startsAt);
+    if (daysRemaining < 0) {
       continue;
     }
 
-    events.push({
-      daysRemaining: delta,
-      importance: examImportance(exam),
-    });
+    const u =
+      clamp(examImportance(exam) / 5, 0, 1) * Math.exp(-daysRemaining / EXAM_DECAY_DAYS);
+    urgency = Math.max(urgency, u);
   }
 
   for (const todo of todos) {
@@ -586,91 +691,126 @@ function computePressure(dateKey: string, exams: Exam[], todos: TodoItem[]): {
       continue;
     }
 
-    const delta = daysUntil(dateStartMs, todo.deadline);
-    if (delta < 0 || delta > 45) {
+    const daysRemaining = daysUntil(dateStartMs, todo.deadline);
+    if (daysRemaining < 0) {
       continue;
     }
 
-    events.push({
-      daysRemaining: delta,
-      importance: todoImportance(todo),
-    });
+    const u =
+      clamp(todoImportance(todo) / 5, 0, 1) * Math.exp(-daysRemaining / EXAM_DECAY_DAYS);
+    urgency = Math.max(urgency, u);
   }
 
-  if (events.length === 0) {
-    return { pressure: 0, hasContext: false };
-  }
-
-  let survival = 1;
-  for (const event of events) {
-    const eventPressure = event.importance * sigmoid((PRESSURE_D0 - event.daysRemaining) / PRESSURE_SD);
-    survival *= 1 - clamp(eventPressure, 0, 1);
-  }
-
-  return {
-    pressure: clamp(1 - survival, 0, 1),
-    hasContext: true,
-  };
+  return clamp(urgency, 0, 1);
 }
 
-function mapRawToStrain(raw: number, cap: number): number {
-  const safeCap = Math.max(cap, 1);
-  const ratio = Math.log(1 + Math.max(0, raw)) / Math.log(1 + safeCap);
-  return RAW_TO_STRAIN_MAX * clamp(ratio, 0, 1);
+function physicalStrainFromImpulse(impulse: number, impulseRef: number): number {
+  const safeRef = Math.max(impulseRef, PHYSICAL_STRAIN_MIN_REF);
+  const numerator = Math.log(1 + Math.max(impulse, 0) / PHYSICAL_STRAIN_U0);
+  const denominator = Math.log(1 + safeRef / PHYSICAL_STRAIN_U0);
+  return clamp(100 * (numerator / Math.max(denominator, EPSILON)), 0, 100);
 }
 
-function buildTrainingCategory({
-  recoveryScore,
-  physicalTargetCenter,
-  physicalTargetHigh,
-  daysSinceRun,
-}: {
-  recoveryScore: number;
-  physicalTargetCenter: number;
-  physicalTargetHigh: number;
-  daysSinceRun: number;
-}): TrainingCategory {
-  let category: TrainingCategory;
-
-  if (recoveryScore < 45 || physicalTargetHigh < 6) {
-    category = "rest_walk";
-  } else if (recoveryScore < 60 || physicalTargetCenter < 8) {
-    category = "recovery";
-  } else if (recoveryScore < 72 || physicalTargetCenter < 11) {
-    category = "easy_run";
-  } else if (recoveryScore < 84 || physicalTargetCenter < 15) {
-    category = "steady_run";
-  } else {
-    category = "quality_run";
-  }
-
-  if (daysSinceRun >= 14) {
-    category = TRAINING_CATEGORY_RANK[category] <= TRAINING_CATEGORY_RANK.recovery ? category : "recovery";
-  } else if (daysSinceRun >= 7) {
-    category = TRAINING_CATEGORY_RANK[category] <= TRAINING_CATEGORY_RANK.easy_run ? category : "easy_run";
-  }
-
-  return category;
+function mentalStrainFromImpulse(impulse: number, impulseRef: number): number {
+  const safeRef = Math.max(impulseRef, MENTAL_STRAIN_MIN_REF);
+  const numerator = Math.log(1 + Math.max(impulse, 0) / MENTAL_STRAIN_M0);
+  const denominator = Math.log(1 + safeRef / MENTAL_STRAIN_M0);
+  return clamp(100 * (numerator / Math.max(denominator, EPSILON)), 0, 100);
 }
 
-function computeDaysSinceRun(dateKey: string, workoutsByDate: Map<string, WorkoutEntry[]>): number {
-  for (let daysBack = 0; daysBack <= 120; daysBack += 1) {
-    const candidate = shiftDate(dateKey, -daysBack);
-    const sessions = workoutsByDate.get(candidate) || [];
-    if (sessions.some((session) => isRunSession(session))) {
-      return daysBack;
-    }
+function rollingP95(values: number[], fallback: number, floor: number): number {
+  if (values.length === 0) {
+    return fallback;
   }
 
-  return 121;
+  return Math.max(quantile(values, 0.95), floor);
 }
 
-function trimHistory(values: number[], days = DAYS_FOR_BASELINE): number[] {
-  if (values.length <= days) {
-    return values;
+function sleepReasonText(code: string): string {
+  if (code === "SLEEP_UNDERSLEPT") {
+    return "Sleep duration was below your personalized need.";
   }
+  if (code === "SLEEP_FRAGMENTED") {
+    return "Continuity was reduced by low efficiency or high awake time.";
+  }
+  if (code === "SLEEP_IRREGULAR_TIMING") {
+    return "Sleep midpoint shifted significantly from your 21-day baseline.";
+  }
+  if (code === "SLEEP_STAGE_LOW_CONFIDENCE") {
+    return "Stage data is incomplete or low-confidence, so stage effects are conservative.";
+  }
+  if (code === "SLEEP_OVERSLEPT_NEUTRAL") {
+    return "Sleep exceeded need, but the model treats this mostly neutral when continuity is good.";
+  }
+  if (code === "SLEEP_LONG_IN_BED_LOW_EFF") {
+    return "Time in bed was much longer than time asleep, which can indicate fragmentation.";
+  }
+  return code;
+}
 
-  return values.slice(values.length - days);
+function recoveryReasonText(code: string): string {
+  if (code === "RECOVERY_HRV_LOW") {
+    return "HRV is below your recent baseline.";
+  }
+  if (code === "RECOVERY_RHR_HIGH") {
+    return "Resting HR is above your recent baseline.";
+  }
+  if (code === "RECOVERY_RR_HIGH") {
+    return "Respiratory rate is above your recent baseline.";
+  }
+  if (code === "RECOVERY_SLEEP_LOW") {
+    return "Sleep score is currently low.";
+  }
+  if (code === "RECOVERY_LOAD_PENALTY") {
+    return "Yesterday’s physical or mental strain applied a recovery penalty.";
+  }
+  if (code === "RECOVERY_DATA_SPARSE") {
+    return "Missing physiology channels reduced certainty in recovery scoring.";
+  }
+  return code;
+}
+
+function targetReasonText(code: string): string {
+  if (code === "TARGET_PHYSICAL_DETRAINING") {
+    return "Cardio load is below your reference, so targets bias upward to rebuild.";
+  }
+  if (code === "TARGET_PHYSICAL_MAINTAINING") {
+    return "Cardio load is in a maintenance band, so targets stay moderate.";
+  }
+  if (code === "TARGET_PHYSICAL_PRODUCTIVE") {
+    return "Cardio load is in the productive band, so targets support progressive work.";
+  }
+  if (code === "TARGET_PHYSICAL_PEAKING") {
+    return "Cardio load is high and stable, so targets taper volume while preserving readiness.";
+  }
+  if (code === "TARGET_PHYSICAL_FATIGUED") {
+    return "Acute overload or low recovery was detected, so physical targets were reduced.";
+  }
+  if (code === "TARGET_PHYSICAL_OVERTRAINING_RISK") {
+    return "Sustained overload risk was detected, so physical targets were strongly reduced.";
+  }
+  if (code === "TARGET_MENTAL_UNDERLOADED") {
+    return "Mental load is below your reference, so study targets are raised to re-enter productive range.";
+  }
+  if (code === "TARGET_MENTAL_PRODUCTIVE") {
+    return "Mental load is in a productive band, so targets support steady distributed practice.";
+  }
+  if (code === "TARGET_MENTAL_PEAKING") {
+    return "Exam-linked peaking conditions are present, so study targets are intentionally elevated.";
+  }
+  if (code === "TARGET_MENTAL_FATIGUED") {
+    return "Mental fatigue signals are elevated, so study targets are reduced today.";
+  }
+  if (code === "TARGET_MENTAL_BURNOUT_RISK") {
+    return "Burnout-risk persistence was detected, so study targets were cut and recovery is prioritized.";
+  }
+  if (code === "TARGET_EXAM_URGENCY_HIGH") {
+    return "High exam urgency shifted targets toward strategic, focused workload.";
+  }
+  if (code === "TARGET_EXAM_URGENCY_MODERATE") {
+    return "Moderate exam urgency slightly adjusted today’s targets.";
+  }
+  return code;
 }
 
 function sanitizeHealthDay(raw: DailyHealthFact): DailyHealthFact {
@@ -688,10 +828,8 @@ function sanitizeHealthDay(raw: DailyHealthFact): DailyHealthFact {
 
   const hrv = safeFinite(raw.hrvMs);
   if (typeof hrv === "number") {
-    if (hrv <= 0) {
+    if (hrv < 5 || hrv > 400) {
       next.hrvMs = undefined;
-    } else if (hrv > 500) {
-      next.hrvMs = 500;
     }
   }
 
@@ -702,314 +840,516 @@ function sanitizeHealthDay(raw: DailyHealthFact): DailyHealthFact {
   }
 
   if (typeof raw.sleepMidpointHour === "number" && Number.isFinite(raw.sleepMidpointHour)) {
-    next.sleepMidpointHour = wrappedHour(raw.sleepMidpointHour);
+    const normalized = ((raw.sleepMidpointHour % 24) + 24) % 24;
+    next.sleepMidpointHour = normalized;
   }
 
   if (typeof raw.sleepBedtimeHour === "number" && Number.isFinite(raw.sleepBedtimeHour)) {
-    next.sleepBedtimeHour = wrappedHour(raw.sleepBedtimeHour);
-  }
-
-  if (typeof raw.sleepRegularitySRI === "number" && Number.isFinite(raw.sleepRegularitySRI)) {
-    next.sleepRegularitySRI = clamp(raw.sleepRegularitySRI, 0, 100);
+    const normalized = ((raw.sleepBedtimeHour % 24) + 24) % 24;
+    next.sleepBedtimeHour = normalized;
   }
 
   return next;
 }
 
-function estimateNeedMap(dateWindow: string[], rows: DailyComputation[]): Record<string, number> {
-  const result: Record<string, number> = {};
-
-  for (let index = 0; index < dateWindow.length; index += 1) {
-    const dateKey = dateWindow[index];
-    const lookbackRows = rows
-      .slice(Math.max(0, index - DAYS_FOR_BASELINE), index)
-      .filter((row) => row.sleepHours > 0);
-
-    if (lookbackRows.length < 30) {
-      result[dateKey] = SLEEP_NEED_COLD_START_HOURS;
-      continue;
-    }
-
-    const recoveryScores = lookbackRows.map((row) => row.recoveryScore);
-    const threshold = quantile(recoveryScores, 0.8);
-    const goodDays = lookbackRows.filter(
-      (row) => row.recoveryScore >= threshold && Math.max(row.physicalStrain, row.mentalStrain) <= 19,
-    );
-
-    if (goodDays.length < 5) {
-      result[dateKey] = SLEEP_NEED_COLD_START_HOURS;
-      continue;
-    }
-
-    result[dateKey] = clamp(
-      median(goodDays.map((row) => row.sleepHours)),
-      SLEEP_NEED_MIN_HOURS,
-      SLEEP_NEED_MAX_HOURS,
-    );
+function sleepNeedForDay(index: number, rows: DailyRow[]): number {
+  if (index < MIN_BASELINE_DAYS || rows.length < MIN_BASELINE_DAYS) {
+    return SLEEP_NEED_ANCHOR_MIN;
   }
 
-  return result;
+  const start = Math.max(0, rows.length - DAYS_56);
+  const goodDayDurations: number[] = [];
+
+  for (let i = start; i < rows.length; i += 1) {
+    const row = rows[i];
+    const prev = i > 0 ? rows[i - 1] : undefined;
+
+    if (
+      typeof row.sleepAsleepMin === "number" &&
+      typeof row.sleepEfficiency === "number" &&
+      row.recoveryScore >= 60 &&
+      row.sleepEfficiency >= 0.85 &&
+      (prev?.physicalStrain ?? 0) <= 70
+    ) {
+      goodDayDurations.push(row.sleepAsleepMin);
+    }
+  }
+
+  if (goodDayDurations.length < 7) {
+    return SLEEP_NEED_ANCHOR_MIN;
+  }
+
+  return clamp(median(goodDayDurations), SLEEP_NEED_MIN, SLEEP_NEED_MAX);
 }
 
-function buildNarrative({
-  sleepScore,
-  recoveryScore,
-  mentalRecovery,
-  physicalStrain,
-  mentalStrain,
-  studyLow,
-  studyHigh,
-  workoutSuggestion,
-  freshAirMinutes,
-}: {
-  sleepScore: number;
-  recoveryScore: number;
-  mentalRecovery: number;
-  physicalStrain: number;
-  mentalStrain: number;
-  studyLow: number;
-  studyHigh: number;
-  workoutSuggestion: string;
-  freshAirMinutes: number;
-}): string {
-  const sleepLabel =
-    sleepScore >= 75 ? "slept well" : sleepScore >= 60 ? "had acceptable sleep" : "had limited sleep";
-  const physicalLabel =
-    recoveryScore >= 70 ? "strong" : recoveryScore >= 55 ? "moderate" : "constrained";
-  const mentalLabel =
-    mentalRecovery >= 70 ? "strong" : mentalRecovery >= 55 ? "moderate" : "fatigued";
-
-  return `Last night you ${sleepLabel} (Sleep ${Math.round(sleepScore)}). Physical recovery is ${physicalLabel} (Recovery ${Math.round(recoveryScore)}/100, strain ${physicalStrain.toFixed(1)}/21). Mental recovery is ${mentalLabel} (${Math.round(mentalRecovery)}/100, mental strain ${mentalStrain.toFixed(1)}/21). Today aim for roughly ${studyLow.toFixed(1)}-${studyHigh.toFixed(1)}h focused study, at least ${freshAirMinutes} minutes outside, and ${workoutSuggestion}`;
+function physicalStateRationale(state: PhysicalLoadState, fi: number, ai: number, recovery: number): string {
+  return `Physical state ${state} (FI ${fi.toFixed(2)}, AI ${ai.toFixed(2)}, Recovery ${Math.round(recovery)}).`;
 }
 
-function runComputationModel({
+function mentalStateRationale(state: MentalLoadState, mfi: number, mai: number, mentalRecovery: number): string {
+  return `Mental state ${state} (MFI ${mfi.toFixed(2)}, MAI ${mai.toFixed(2)}, Mental recovery ${Math.round(mentalRecovery)}).`;
+}
+
+function buildTrainingCategory(
+  physicalState: PhysicalLoadState,
+  recoveryScore: number,
+  targetCenter: number,
+  daysSinceRun: number,
+): TrainingCategory {
+  let category: TrainingCategory;
+
+  if (physicalState === "overtraining_risk" || physicalState === "fatigued") {
+    category = "rest_walk";
+  } else if (physicalState === "detraining") {
+    category = recoveryScore >= 60 ? "steady_run" : "easy_run";
+  } else if (physicalState === "peaking") {
+    category = recoveryScore >= 70 ? "easy_run" : "recovery";
+  } else if (targetCenter >= 70 && recoveryScore >= 70) {
+    category = "quality_run";
+  } else if (targetCenter >= 55) {
+    category = "steady_run";
+  } else if (targetCenter >= 35) {
+    category = "easy_run";
+  } else {
+    category = "recovery";
+  }
+
+  if (daysSinceRun >= 14) {
+    category = TRAINING_CATEGORY_RANK[category] < TRAINING_CATEGORY_RANK.easy_run ? "easy_run" : category;
+  } else if (daysSinceRun >= 7) {
+    category = TRAINING_CATEGORY_RANK[category] < TRAINING_CATEGORY_RANK.recovery ? "recovery" : category;
+  }
+
+  return category;
+}
+
+function computeDaysSinceRun(dateKey: string, workoutsByDate: Map<string, WorkoutEntry[]>): number {
+  for (let daysBack = 0; daysBack <= 180; daysBack += 1) {
+    const candidate = shiftDate(dateKey, -daysBack);
+    const sessions = workoutsByDate.get(candidate) || [];
+    if (sessions.some((session) => isRunSession(session))) {
+      return daysBack;
+    }
+  }
+
+  return 181;
+}
+
+function recentValues(values: number[], count: number): number[] {
+  if (values.length <= count) {
+    return values;
+  }
+  return values.slice(values.length - count);
+}
+
+function extractSeriesHr(detail: WorkoutDetail | undefined): number[] {
+  if (!detail?.heartRateSeries || detail.heartRateSeries.length === 0) {
+    return [];
+  }
+
+  return detail.heartRateSeries
+    .map((point) => {
+      if (typeof point.value === "number" && Number.isFinite(point.value)) {
+        return point.value;
+      }
+      if (typeof point.avg === "number" && Number.isFinite(point.avg)) {
+        return point.avg;
+      }
+      return undefined;
+    })
+    .filter((value): value is number => typeof value === "number");
+}
+
+function workoutDayKey(workout: WorkoutEntry): string {
+  return toDateKey(workout.startedAt);
+}
+
+function runModel({
   dateWindow,
   healthByDate,
   workoutsByDate,
   sessionsByDate,
+  workoutDetailsByWorkoutId,
   goals,
   exams,
   todos,
-  sleepNeedOverride,
 }: {
   dateWindow: string[];
   healthByDate: Map<string, DailyHealthFact>;
   workoutsByDate: Map<string, WorkoutEntry[]>;
   sessionsByDate: Map<string, StudySession[]>;
+  workoutDetailsByWorkoutId: Map<string, WorkoutDetail>;
   goals: PerformanceGoals;
   exams: Exam[];
   todos: TodoItem[];
-  sleepNeedOverride?: Record<string, number>;
-}): DailyComputation[] {
-  const results: DailyComputation[] = [];
+}): DailyRow[] {
+  const rows: DailyRow[] = [];
 
-  let physicalAcute = 0;
-  let physicalChronic = 0;
-  let mentalAcute = 0;
-  let mentalChronic = 0;
-  let sleepDebt = 0;
+  let ctl = 0;
+  let atl = 0;
+  let mcl = 0;
+  let mal = 0;
 
-  let previousRecovery = 50;
-  let previousPhysicalTargetCenter = 9;
+  let sleepDebtHours = 0;
 
-  const validSleepHoursHistory: number[] = [];
-  const sleepScoreHistory: number[] = [];
-  const midpointHistory: number[] = [];
-  const bedtimeHistory: number[] = [];
-  const stageIndexHistory: number[] = [];
-
-  const lhrvHistory: number[] = [];
+  const sleepMidpointHistory: number[] = [];
+  const hrvLnHistory: number[] = [];
   const rhrHistory: number[] = [];
   const rrHistory: number[] = [];
-  const physicalAcuteHistory: number[] = [];
-  const mentalAcuteHistory: number[] = [];
-  const physicalRawHistory: number[] = [];
-  const mentalRawHistory: number[] = [];
+  const impulseHistory: number[] = [];
+  const mentalImpulseHistory: number[] = [];
+  const ctlHistory: number[] = [];
+  const atlHistory: number[] = [];
+  const mclHistory: number[] = [];
+  const malHistory: number[] = [];
+  const physicalStrainHistory: number[] = [];
   const mentalStrainHistory: number[] = [];
-  const workoutMaxHrHistory: number[] = [];
+  const aiHistory: number[] = [];
+  const maiHistory: number[] = [];
+  const recoveryHistory: number[] = [];
+  const mentalRecoveryHistory: number[] = [];
 
-  let validHistoryDays = 0;
+  const hrMaxCandidates: Array<{ date: string; value: number }> = [];
 
-  const preferredBedtimeStartMinutes = parseClockToMinutes(goals.preferredBedtimeStart, 21 * 60);
-  const preferredBedtimeEndMinutes = parseClockToMinutes(goals.preferredBedtimeEnd, 22 * 60);
-  const preferredBedtimeCenterMinutes = windowCenterMinutes(
-    preferredBedtimeStartMinutes,
-    preferredBedtimeEndMinutes,
-  );
-  const preferredBedtimeCenterHour = preferredBedtimeCenterMinutes / 60;
+  const energyRateByMode = new Map<string, number[]>();
 
-  for (let index = 0; index < dateWindow.length; index += 1) {
-    const dateKey = dateWindow[index];
-    const health = healthByDate.get(dateKey);
-    const workouts = workoutsByDate.get(dateKey) || [];
-    const sessions = sessionsByDate.get(dateKey) || [];
-
+  for (let dayIndex = 0; dayIndex < dateWindow.length; dayIndex += 1) {
+    const date = dateWindow[dayIndex];
+    const health = healthByDate.get(date);
+    const workouts = workoutsByDate.get(date) || [];
+    const sessions = sessionsByDate.get(date) || [];
     const fallbackFlags: string[] = [];
 
-    const sleepNeedHours = clamp(
-      sleepNeedOverride?.[dateKey] ?? SLEEP_NEED_COLD_START_HOURS,
-      SLEEP_NEED_MIN_HOURS,
-      SLEEP_NEED_MAX_HOURS,
-    );
+    const sleepNeedMin = sleepNeedForDay(dayIndex, rows);
 
-    const sleepInBed = positiveFinite(health?.sleepInBedHours);
-    let sleepHours =
-      positiveFinite(health?.sleepAsleepHours) ??
-      positiveFinite(health?.sleepHours) ??
-      undefined;
+    let sleepAsleepMin =
+      positiveFinite(health?.sleepAsleepHours) !== undefined
+        ? (positiveFinite(health?.sleepAsleepHours) as number) * 60
+        : positiveFinite(health?.sleepHours) !== undefined
+        ? (positiveFinite(health?.sleepHours) as number) * 60
+        : undefined;
 
-    if (typeof sleepHours !== "number" && typeof sleepInBed === "number") {
-      sleepHours = 0.85 * sleepInBed;
+    const sleepInBedMin =
+      positiveFinite(health?.sleepInBedHours) !== undefined
+        ? (positiveFinite(health?.sleepInBedHours) as number) * 60
+        : undefined;
+
+    if (typeof sleepAsleepMin !== "number" && typeof sleepInBedMin === "number") {
+      sleepAsleepMin = 0.85 * sleepInBedMin;
       fallbackFlags.push("sleep_tst_from_tib");
     }
 
-    if (typeof sleepHours === "number" && sleepHours > 16) {
-      sleepHours = undefined;
-      fallbackFlags.push("sleep_hours_invalid");
+    if (typeof sleepAsleepMin === "number" && sleepAsleepMin > 16 * 60) {
+      sleepAsleepMin = undefined;
+      fallbackFlags.push("sleep_invalid_duration");
     }
 
-    const deepHours = positiveFinite(health?.sleepDeepHours);
-    const remHours = positiveFinite(health?.sleepRemHours);
-    const coreHours = positiveFinite(health?.sleepCoreHours);
-    const awakeHours = positiveFinite(health?.sleepAwakeHours);
+    let sleepMidpointMin =
+      typeof health?.sleepMidpointHour === "number" && Number.isFinite(health.sleepMidpointHour)
+        ? ((health.sleepMidpointHour % 24) + 24) % 24 * 60
+        : undefined;
 
-    const durationDelta = typeof sleepHours === "number" ? sleepHours - sleepNeedHours : 0;
-    const sigma = durationDelta < 0 ? SLEEP_DURATION_SIGMA_NEGATIVE : SLEEP_DURATION_SIGMA_POSITIVE;
-    const sleepDurationScore =
-      typeof sleepHours === "number"
-        ? 100 * Math.exp(-(durationDelta ** 2) / (2 * sigma ** 2))
-        : 50;
+    const sleepBedtimeMin =
+      typeof health?.sleepBedtimeHour === "number" && Number.isFinite(health.sleepBedtimeHour)
+        ? ((health.sleepBedtimeHour % 24) + 24) % 24 * 60
+        : undefined;
+
+    if (
+      typeof sleepMidpointMin !== "number" &&
+      typeof sleepBedtimeMin === "number" &&
+      typeof sleepAsleepMin === "number"
+    ) {
+      sleepMidpointMin = (sleepBedtimeMin + sleepAsleepMin / 2) % 1440;
+    }
+
+    const wasoMin =
+      positiveFinite(health?.sleepAwakeHours) !== undefined
+        ? (positiveFinite(health?.sleepAwakeHours) as number) * 60
+        : typeof sleepInBedMin === "number" && typeof sleepAsleepMin === "number"
+        ? Math.max(0, sleepInBedMin - sleepAsleepMin)
+        : undefined;
 
     const sleepEfficiency =
-      typeof sleepHours === "number" && typeof sleepInBed === "number"
-        ? sleepHours / Math.max(sleepInBed, 0.1)
+      typeof sleepAsleepMin === "number" && typeof sleepInBedMin === "number"
+        ? clamp(sleepAsleepMin / Math.max(sleepInBedMin, 1), 0, 1.5)
         : undefined;
-    const sleepEfficiencyScore =
-      typeof sleepEfficiency === "number"
-        ? 100 * clamp((sleepEfficiency - 0.7) / (0.95 - 0.7), 0, 1)
-        : 50;
 
-    let bedtimeHour = safeFinite(health?.sleepBedtimeHour);
-    let midpointHour = safeFinite(health?.sleepMidpointHour);
+    const durationScore = (() => {
+      if (typeof sleepAsleepMin !== "number") {
+        return undefined;
+      }
 
-    if (typeof midpointHour !== "number" && typeof bedtimeHour === "number" && typeof sleepHours === "number") {
-      midpointHour = wrappedHour(bedtimeHour + sleepHours / 2);
-    }
+      const deficit = Math.max(0, sleepNeedMin - sleepAsleepMin);
+      if (deficit > 0) {
+        const ratio = deficit / Math.max(DURATION_DEFICIT_SCALE * sleepNeedMin, 1);
+        return clamp(100 * Math.max(0, 1 - ratio ** 2), 0, 100);
+      }
 
-    if (typeof bedtimeHour !== "number" && typeof midpointHour === "number" && typeof sleepHours === "number") {
-      bedtimeHour = wrappedHour(midpointHour - sleepHours / 2);
-    }
+      const excess = Math.max(0, sleepAsleepMin - sleepNeedMin);
+      const ratio = Math.max(0, excess - OVERSLEEP_GRACE_MIN) / OVERSLEEP_PENALTY_WINDOW_MIN;
+      return clamp(100 - SLEEP_OVERSLEEP_MAX_PENALTY * ratio ** 2, 0, 100);
+    })();
 
-    if (typeof bedtimeHour !== "number") {
-      bedtimeHour = preferredBedtimeCenterHour;
-      fallbackFlags.push("sleep_bedtime_default");
-    }
+    const continuityScore = (() => {
+      if (typeof sleepEfficiency !== "number") {
+        return undefined;
+      }
 
-    const regularitySRI = safeFinite(health?.sleepRegularitySRI);
-    let sleepRegularityScore = 65;
-
-    if (typeof regularitySRI === "number") {
-      sleepRegularityScore = clamp(regularitySRI, 0, 100);
-    } else {
-      const midpointWindow = trimHistory([
-        ...midpointHistory,
-        ...(typeof midpointHour === "number" ? [midpointHour] : []),
-      ], 7);
-      const bedtimeWindow = trimHistory([
-        ...bedtimeHistory,
-        ...(typeof bedtimeHour === "number" ? [bedtimeHour] : []),
-      ], 7);
-      const sleepWindow = trimHistory(
-        [
-          ...validSleepHoursHistory,
-          ...(typeof sleepHours === "number" ? [sleepHours] : []),
-        ],
-        7,
+      const scoreEff = clamp(
+        (100 * (sleepEfficiency - CONTINUITY_EFF_MIN)) / CONTINUITY_EFF_SPAN,
+        0,
+        100,
       );
+      const penaltyAwake =
+        typeof wasoMin === "number"
+          ? CONTINUITY_AWAKE_PENALTY_MAX *
+            clamp(
+              (wasoMin - CONTINUITY_AWAKE_BASE_MIN) / CONTINUITY_AWAKE_SPAN,
+              0,
+              1,
+            )
+          : 0;
+      return clamp(scoreEff - penaltyAwake, 0, 100);
+    })();
 
-      if (midpointWindow.length >= 4 && bedtimeWindow.length >= 4) {
-        sleepRegularityScore = clamp(
-          100 - 16 * stdDev(midpointWindow) - 10 * stdDev(bedtimeWindow),
-          35,
-          100,
-        );
-      } else if (sleepWindow.length >= 4) {
-        sleepRegularityScore = clamp(100 - 12 * stdDev(sleepWindow), 30, 96);
-      } else {
-        sleepRegularityScore = 65;
-      }
-      fallbackFlags.push("sleep_regularity_proxy");
+    const midpointBaseline = circularMedianMinutes(
+      recentValues(sleepMidpointHistory, DAYS_21),
+    );
+
+    const midpointDelta =
+      typeof sleepMidpointMin === "number" && typeof midpointBaseline === "number"
+        ? circularDistanceMinutes(sleepMidpointMin, midpointBaseline)
+        : undefined;
+
+    const regularityScore =
+      typeof midpointDelta === "number"
+        ? clamp(100 / (1 + (midpointDelta / REGULARITY_SCALE_MIN) ** 2), 0, 100)
+        : undefined;
+
+    const deepMin =
+      positiveFinite(health?.sleepDeepHours) !== undefined
+        ? (positiveFinite(health?.sleepDeepHours) as number) * 60
+        : undefined;
+    const remMin =
+      positiveFinite(health?.sleepRemHours) !== undefined
+        ? (positiveFinite(health?.sleepRemHours) as number) * 60
+        : undefined;
+
+    const stagesScore =
+      typeof sleepAsleepMin === "number" &&
+      sleepAsleepMin > 0 &&
+      typeof deepMin === "number" &&
+      typeof remMin === "number"
+        ? clamp(
+            100 -
+              400 * Math.max(0, STAGE_DEEP_FLOOR - deepMin / sleepAsleepMin) -
+              250 * Math.max(0, STAGE_REM_FLOOR - remMin / sleepAsleepMin),
+            0,
+            100,
+          )
+        : undefined;
+
+    const sleepComponents: Array<{ key: string; value: number; weight: number }> = [];
+
+    if (typeof durationScore === "number") {
+      sleepComponents.push({
+        key: "duration",
+        value: durationScore,
+        weight: SLEEP_WEIGHT_DURATION,
+      });
     }
-
-    const midpointBaseline = midpointHistory.length > 0 ? median(trimHistory(midpointHistory, DAYS_FOR_CHRONIC)) : undefined;
-    const sleepTimingScore =
-      typeof midpointHour === "number" && typeof midpointBaseline === "number"
-        ? 100 * Math.exp(-(wrappedHourDelta(midpointHour, midpointBaseline) ** 2) / (2 * SLEEP_TIMING_SIGMA_HOURS ** 2))
-        : 60;
-
-    if (typeof midpointBaseline !== "number") {
-      fallbackFlags.push("sleep_timing_proxy");
+    if (typeof continuityScore === "number") {
+      sleepComponents.push({
+        key: "continuity",
+        value: continuityScore,
+        weight: SLEEP_WEIGHT_CONTINUITY,
+      });
     }
-
-    let sleepStageScore = 50;
-    let stageIndex: number | undefined;
-    if (typeof sleepHours === "number" && sleepHours > 0 && (typeof deepHours === "number" || typeof remHours === "number")) {
-      stageIndex = ((deepHours || 0) + (remHours || 0)) / Math.max(sleepHours, 0.1);
-      const stageBaseline = stageIndexHistory.length > 0 ? median(trimHistory(stageIndexHistory, DAYS_FOR_BASELINE)) : undefined;
-      if (typeof stageBaseline === "number") {
-        sleepStageScore =
-          100 * Math.exp(-((stageIndex - stageBaseline) ** 2) / (2 * SLEEP_STAGE_SIGMA ** 2));
-      } else {
-        sleepStageScore = 75;
-      }
+    if (typeof regularityScore === "number") {
+      sleepComponents.push({
+        key: "regularity",
+        value: regularityScore,
+        weight: SLEEP_WEIGHT_REGULARITY,
+      });
+    }
+    if (typeof stagesScore === "number") {
+      sleepComponents.push({
+        key: "stages",
+        value: stagesScore,
+        weight: SLEEP_WEIGHT_STAGES,
+      });
     } else {
+      fallbackFlags.push("sleep_stage_missing");
       fallbackFlags.push("sleep_stage_neutral");
     }
 
-    const sleepAwakeScore =
-      typeof awakeHours === "number" && typeof sleepInBed === "number"
-        ? clamp(100 - (awakeHours / Math.max(sleepInBed, 0.1)) * 220, 30, 100)
-        : sleepEfficiencyScore;
-
-    const sleepScore = clamp(
-      SLEEP_WEIGHT_DURATION * sleepDurationScore +
-        SLEEP_WEIGHT_EFFICIENCY * sleepEfficiencyScore +
-        SLEEP_WEIGHT_REGULARITY * sleepRegularityScore +
-        SLEEP_WEIGHT_TIMING * sleepTimingScore +
-        SLEEP_WEIGHT_STAGE * sleepStageScore,
-      0,
-      100,
-    );
-
-    const dailyDebt = typeof sleepHours === "number" ? Math.max(0, sleepNeedHours - sleepHours) : 0;
-    sleepDebt = sleepDebt * DEBT_DECAY + dailyDebt;
-
-    const restingHr = safeFinite(health?.restingHrBpm);
-    const respiratoryRate = safeFinite(health?.respiratoryRateBpm);
-    const hrvMs = safeFinite(health?.hrvMs);
-
-    const hrRestBase =
-      rhrHistory.length > 0 ? median(trimHistory(rhrHistory, DAYS_FOR_BASELINE)) : 60;
-
-    const healthHrMax = safeFinite(health?.heartRateMaxBpm);
-    if (typeof healthHrMax === "number" && healthHrMax > 0) {
-      workoutMaxHrHistory.push(healthHrMax);
+    if (typeof sleepMidpointMin !== "number") {
+      fallbackFlags.push("sleep_midpoint_missing");
     }
 
+    const sleepWeightSum = sleepComponents.reduce((sum, item) => sum + item.weight, 0);
+    const sleepScore =
+      sleepWeightSum > 0
+        ? clamp(
+            sleepComponents.reduce(
+              (sum, item) => sum + item.value * (item.weight / sleepWeightSum),
+              0,
+            ),
+            0,
+            100,
+          )
+        : 50;
+
+    const sleepContribution: Record<string, number> = {
+      duration: 0,
+      continuity: 0,
+      regularity: 0,
+      stages: 0,
+    };
+
+    for (const item of sleepComponents) {
+      sleepContribution[item.key] = round(item.value * (item.weight / Math.max(sleepWeightSum, EPSILON)), 2);
+    }
+
+    const sleepReasonCodes: string[] = [];
+
+    if (typeof sleepAsleepMin === "number" && sleepAsleepMin < sleepNeedMin - 30) {
+      sleepReasonCodes.push("SLEEP_UNDERSLEPT");
+    }
+    if (
+      (typeof sleepEfficiency === "number" && sleepEfficiency < 0.85) ||
+      (typeof wasoMin === "number" && wasoMin > 30)
+    ) {
+      sleepReasonCodes.push("SLEEP_FRAGMENTED");
+    }
+    if (typeof midpointDelta === "number" && midpointDelta > 60) {
+      sleepReasonCodes.push("SLEEP_IRREGULAR_TIMING");
+    }
+    if (typeof stagesScore !== "number") {
+      sleepReasonCodes.push("SLEEP_STAGE_LOW_CONFIDENCE");
+    }
+    if (
+      typeof sleepAsleepMin === "number" &&
+      sleepAsleepMin > sleepNeedMin + 60 &&
+      (sleepEfficiency || 0) >= 0.85
+    ) {
+      sleepReasonCodes.push("SLEEP_OVERSLEPT_NEUTRAL");
+    }
+    if (
+      typeof sleepInBedMin === "number" &&
+      typeof sleepAsleepMin === "number" &&
+      sleepInBedMin - sleepAsleepMin > 90
+    ) {
+      sleepReasonCodes.push("SLEEP_LONG_IN_BED_LOW_EFF");
+    }
+
+    const sleepLowReasons = sleepReasonCodes
+      .filter((code) => code !== "SLEEP_OVERSLEPT_NEUTRAL")
+      .map(sleepReasonText);
+
+    const sleepHighReasons: string[] = [];
+    if ((durationScore || 0) >= 85) {
+      sleepHighReasons.push("Sleep duration was close to your personalized need.");
+    }
+    if ((continuityScore || 0) >= 80) {
+      sleepHighReasons.push("Sleep continuity was strong with limited awake time.");
+    }
+    if ((regularityScore || 0) >= 75) {
+      sleepHighReasons.push("Sleep midpoint remained stable versus baseline.");
+    }
+
+    const sleepMessages = [
+      `You slept ${(sleepAsleepMin || 0) / 60 >= 0 ? ((sleepAsleepMin || 0) / 60).toFixed(1) : "0.0"}h vs need ${(sleepNeedMin / 60).toFixed(1)}h.`,
+      ...sleepReasonCodes.slice(0, 3).map(sleepReasonText),
+    ];
+
+    const restingHr = safeFinite(health?.restingHrBpm);
+    const respRate = safeFinite(health?.respiratoryRateBpm);
+    const hrvMs = safeFinite(health?.hrvMs);
+
+    if (typeof restingHr === "number") {
+      rhrHistory.push(restingHr);
+    }
+    if (typeof respRate === "number") {
+      rrHistory.push(respRate);
+    }
+
+    if (typeof hrvMs === "number") {
+      hrvLnHistory.push(Math.log(Math.max(hrvMs, EPSILON)));
+    }
+
+    const hrvLn = typeof hrvMs === "number" ? Math.log(Math.max(hrvMs, EPSILON)) : undefined;
+
+    const zHrv =
+      typeof hrvLn === "number"
+        ? robustZ(
+            hrvLn,
+            recentValues(hrvLnHistory.slice(0, Math.max(0, hrvLnHistory.length - 1)), DAYS_28),
+          )
+        : undefined;
+
+    const zRhr =
+      typeof restingHr === "number"
+        ? robustZ(
+            restingHr,
+            recentValues(rhrHistory.slice(0, Math.max(0, rhrHistory.length - 1)), DAYS_28),
+            true,
+          )
+        : undefined;
+
+    const zRr =
+      typeof respRate === "number"
+        ? robustZ(
+            respRate,
+            recentValues(rrHistory.slice(0, Math.max(0, rrHistory.length - 1)), DAYS_28),
+            true,
+          )
+        : undefined;
+
+    const compHrv = typeof zHrv === "number" ? clamp(50 + 20 * zHrv, 0, 100) : undefined;
+    const compRhr = typeof zRhr === "number" ? clamp(50 + 20 * zRhr, 0, 100) : undefined;
+    const compRr = typeof zRr === "number" ? clamp(50 + 15 * zRr, 0, 100) : undefined;
+
+    const hrMaxCandidatesBefore = hrMaxCandidates.filter(
+      (item) =>
+        new Date(`${date}T00:00:00`).getTime() - new Date(`${item.date}T00:00:00`).getTime() <=
+        DAYS_365 * 86_400_000,
+    );
+
+    hrMaxCandidates.length = 0;
+    hrMaxCandidates.push(...hrMaxCandidatesBefore);
+
     for (const workout of workouts) {
-      if (typeof workout.hrMax === "number" && Number.isFinite(workout.hrMax) && workout.hrMax > 0) {
-        workoutMaxHrHistory.push(workout.hrMax);
+      if (
+        typeof workout.hrMax === "number" &&
+        Number.isFinite(workout.hrMax) &&
+        workout.hrMax >= 140 &&
+        workout.durationMin >= 5
+      ) {
+        hrMaxCandidates.push({ date, value: workout.hrMax });
       }
     }
 
-    const hrMaxEstimate =
-      workoutMaxHrHistory.length > 0
-        ? Math.max(quantile(trimHistory(workoutMaxHrHistory, DAYS_FOR_BASELINE), 0.99), 170)
-        : 190;
+    const hrMaxEst =
+      hrMaxCandidates.length > 0
+        ? Math.max(...hrMaxCandidates.map((item) => item.value))
+        : 200;
 
-    let physicalRawLoad = 0;
-    let hadHrWorkout = false;
-    let hadWorkoutWithoutHr = false;
+    const rhrBaseline = (() => {
+      const candidates = recentValues(rhrHistory, DAYS_14);
+      if (candidates.length > 0) {
+        return median(candidates);
+      }
+      if (typeof restingHr === "number") {
+        return restingHr;
+      }
+      return 55;
+    })();
+
+    let physicalImpulse = 0;
+    let physicalImpulseWorkout = 0;
+    let physicalImpulseFallback = 0;
+    let methodUsed: DailyRow["workoutMethod"] = "none";
 
     for (const workout of workouts) {
       const durationMin = Math.max(0, workout.durationMin || 0);
@@ -1017,542 +1357,666 @@ function runComputationModel({
         continue;
       }
 
-      const avgHr = getWorkoutAverageHeartRate(workout);
-      let hrr: number | undefined;
+      const detail = workoutDetailsByWorkoutId.get(workout.id);
+      const hrSeries = extractSeriesHr(detail);
 
-      if (typeof avgHr === "number" && hrMaxEstimate - hrRestBase > 5) {
-        hrr = clamp((avgHr - hrRestBase) / (hrMaxEstimate - hrRestBase), 0, 1);
-        hadHrWorkout = true;
+      let sessionTrimp = 0;
+      let sessionMethod: DailyRow["workoutMethod"] = "none";
+
+      if (hrSeries.length > 0 && hrMaxEst - rhrBaseline > 1) {
+        const avgContribution =
+          hrSeries.reduce((sum, hr) => {
+            const hrr = clamp((hr - rhrBaseline) / Math.max(hrMaxEst - rhrBaseline, 1), 0, 1);
+            return sum + hrr * Math.exp(1.8 * hrr);
+          }, 0) / hrSeries.length;
+        sessionTrimp = durationMin * avgContribution;
+        sessionMethod = "hr_series";
       } else {
-        const energyKj = safeFinite(workout.activeEnergyKj);
-        if (typeof energyKj === "number" && energyKj > 0) {
-          const energyRate = energyKj / durationMin;
-          hrr = clamp((energyRate - 5) / 20, 0.25, 0.78);
-          hadWorkoutWithoutHr = true;
-          fallbackFlags.push("workout_hrr_from_energy");
-        } else if (typeof workout.avgSpeedKmh === "number" && Number.isFinite(workout.avgSpeedKmh)) {
-          hrr = clamp((workout.avgSpeedKmh - 6) / 10, 0.2, 0.8);
-          hadWorkoutWithoutHr = true;
-          fallbackFlags.push("workout_hrr_from_speed");
+        const avgHr = workoutAverageHeartRate(workout);
+        if (typeof avgHr === "number" && hrMaxEst - rhrBaseline > 1) {
+          const hrr = clamp((avgHr - rhrBaseline) / Math.max(hrMaxEst - rhrBaseline, 1), 0, 1);
+          sessionTrimp = durationMin * hrr * Math.exp(1.8 * hrr);
+          sessionMethod = "avg_hr";
+        } else {
+          const mode = classifyWorkoutMode(workout);
+          if (
+            (mode === "walk" || mode === "run") &&
+            typeof workout.distanceKm === "number" &&
+            Number.isFinite(workout.distanceKm) &&
+            workout.distanceKm > 0
+          ) {
+            const speedMPerMin = (workout.distanceKm * 1000) / durationMin;
+            const vo2 = mode === "walk" ? 0.1 * speedMPerMin + 3.5 : 0.2 * speedMPerMin + 3.5;
+            const met = Math.max(1, vo2 / 3.5);
+            const hrrProxy = clamp((met - 1.5) / 10, 0.2, 0.95);
+            sessionTrimp = durationMin * hrrProxy * Math.exp(1.8 * hrrProxy);
+            sessionMethod = "pace";
+          } else {
+            const activeKcal =
+              typeof workout.activeKcal === "number" && Number.isFinite(workout.activeKcal)
+                ? workout.activeKcal
+                : typeof workout.activeEnergyKj === "number" && Number.isFinite(workout.activeEnergyKj)
+                ? workout.activeEnergyKj / 4.184
+                : undefined;
+
+            if (typeof activeKcal === "number" && activeKcal > 0) {
+              const modeKey = classifyWorkoutMode(workout);
+              const historyKey = `energy:${modeKey}`;
+              const history = energyRateByMode.get(historyKey) || [];
+              const kcalPerMin = activeKcal / Math.max(durationMin, 1);
+              const baselineRate = history.length >= 3 ? median(recentValues(history, DAYS_42)) : kcalPerMin;
+              const norm = kcalPerMin / Math.max(baselineRate, 0.1);
+              const hrrProxy = clamp(0.35 + 0.25 * (norm - 1), 0.2, 0.9);
+              sessionTrimp = durationMin * hrrProxy * Math.exp(1.8 * hrrProxy);
+              sessionMethod = "energy";
+
+              history.push(kcalPerMin);
+              energyRateByMode.set(historyKey, recentValues(history, DAYS_42));
+            }
+          }
         }
       }
 
-      if (typeof hrr !== "number") {
-        continue;
+      physicalImpulse += sessionTrimp;
+      if (sessionMethod === "hr_series" || sessionMethod === "avg_hr") {
+        physicalImpulseWorkout += sessionTrimp;
+      } else {
+        physicalImpulseFallback += sessionTrimp;
       }
 
-      const trimp = durationMin * hrr * 0.75 * Math.exp(1.8 * hrr);
-      physicalRawLoad += trimp;
-    }
-
-    const steps = safeFinite(health?.steps) || 0;
-    const activeEnergyKj = safeFinite(health?.activeEnergyKj) || 0;
-
-    if (!hadHrWorkout) {
-      const nonWorkoutLoad = STEPS_TO_LOAD * steps + ENERGY_TO_LOAD * activeEnergyKj;
-      if (nonWorkoutLoad > 0) {
-        physicalRawLoad += nonWorkoutLoad;
-        fallbackFlags.push("physical_nonworkout_load");
+      if (sessionMethod === "hr_series") {
+        methodUsed = "hr_series";
+      } else if (sessionMethod === "avg_hr" && methodUsed !== "hr_series") {
+        methodUsed = "avg_hr";
+      } else if (sessionMethod === "pace" && methodUsed === "none") {
+        methodUsed = "pace";
+      } else if (sessionMethod === "energy" && methodUsed === "none") {
+        methodUsed = "energy";
       }
     }
 
-    if (workouts.length === 0 && physicalRawLoad === 0) {
-      fallbackFlags.push("physical_no_activity_data");
+    if (physicalImpulse === 0 && workouts.length > 0) {
+      fallbackFlags.push("physical_unscored_workouts");
     }
 
-    const { pressure, hasContext: hasPressureContext } = computePressure(dateKey, exams, todos);
+    const examUrgency = computeExamUrgency(date, exams, todos);
 
-    const switchFactor = clamp((sessions.length - 1) / 5, 0, 1);
-    const bed28 =
-      bedtimeHistory.length > 0
-        ? median(trimHistory(bedtimeHistory, DAYS_FOR_CHRONIC))
-        : preferredBedtimeCenterHour;
-
-    let sessionImpulse = 0;
-
-    for (const session of sessions) {
+    const sessionImpulseBase = sessions.reduce((sum, session) => {
       const durationMin = Math.max(0, session.durationSec / 60);
-      if (durationMin <= 0) {
-        continue;
+      if (!Number.isFinite(durationMin) || durationMin <= 0) {
+        return sum;
       }
 
-      const sessionDate = new Date(session.startedAt);
-      const startHour = Number.isFinite(sessionDate.getTime())
-        ? sessionDate.getHours() + sessionDate.getMinutes() / 60
-        : 12;
+      return sum + durationMin * (1 + 0.003 * Math.max(0, durationMin - 60));
+    }, 0);
 
-      const lateFactor = sigmoid((startHour - (bed28 - 2)) / 0.5);
-      const intensity = (1 + 0.5 * pressure) * (1 + 0.3 * lateFactor) * (1 + 0.2 * switchFactor);
-      sessionImpulse += durationMin * intensity;
-    }
-
-    const mentalBackground = 30 * pressure;
-    const mentalRawLoad = sessionImpulse + mentalBackground;
-
+    let mentalImpulse = sessionImpulseBase * (1 + 0.5 * examUrgency);
     if (sessions.length === 0) {
-      fallbackFlags.push("mental_background_only");
-    }
-    if (!hasPressureContext) {
-      fallbackFlags.push("pressure_context_missing");
-    }
-
-    physicalAcute = ewmaHalfLife(physicalAcute, physicalRawLoad, DAYS_FOR_ACUTE);
-    physicalChronic = ewmaHalfLife(physicalChronic, physicalRawLoad, DAYS_FOR_CHRONIC);
-    mentalAcute = ewmaHalfLife(mentalAcute, mentalRawLoad, DAYS_FOR_ACUTE);
-    mentalChronic = ewmaHalfLife(mentalChronic, mentalRawLoad, DAYS_FOR_CHRONIC);
-
-    const zSleep = robustZ(sleepScore, trimHistory(sleepScoreHistory, DAYS_FOR_BASELINE));
-    const zApl = robustZ(physicalAcute, trimHistory(physicalAcuteHistory, DAYS_FOR_BASELINE));
-    const zAml = robustZ(mentalAcute, trimHistory(mentalAcuteHistory, DAYS_FOR_BASELINE));
-    const zRhr =
-      typeof restingHr === "number"
-        ? robustZ(restingHr, trimHistory(rhrHistory, DAYS_FOR_BASELINE))
-        : 0;
-    const zRr =
-      typeof respiratoryRate === "number"
-        ? robustZ(respiratoryRate, trimHistory(rrHistory, DAYS_FOR_BASELINE))
-        : 0;
-
-    let lhrv: number | undefined;
-    if (typeof hrvMs === "number") {
-      const ibi = 60000 / Math.max(restingHr || hrRestBase, 1);
-      const normalizedHrv = hrvMs / ibi;
-      lhrv = Math.log(Math.max(normalizedHrv, EPSILON));
+      mentalImpulse = MENTAL_STRAIN_COLD_REF * examUrgency;
+      if (examUrgency > 0) {
+        fallbackFlags.push("mental_from_exam_urgency");
+      }
     }
 
-    const zLhrv =
-      typeof lhrv === "number"
-        ? robustZ(lhrv, trimHistory(lhrvHistory, DAYS_FOR_BASELINE))
-        : 0;
+    ctl = ewmaTau(ctl, physicalImpulse, TAU_CTL_DAYS);
+    atl = ewmaTau(atl, physicalImpulse, TAU_ATL_DAYS);
+    mcl = ewmaTau(mcl, mentalImpulse, TAU_MCL_DAYS);
+    mal = ewmaTau(mal, mentalImpulse, TAU_MAL_DAYS);
 
-    let recoveryLogit = 0.6 * zSleep - 0.5 * zApl - 0.4 * zAml;
+    const physicalRef =
+      impulseHistory.length >= 14
+        ? rollingP95(recentValues(impulseHistory, DAYS_180), PHYSICAL_STRAIN_COLD_REF, PHYSICAL_STRAIN_MIN_REF)
+        : PHYSICAL_STRAIN_COLD_REF;
 
-    if (typeof lhrv === "number") {
-      recoveryLogit += 0.9 * zLhrv;
-    } else {
-      fallbackFlags.push("recovery_missing_hrv");
+    const mentalRef =
+      mentalImpulseHistory.length >= 14
+        ? rollingP95(recentValues(mentalImpulseHistory, DAYS_180), MENTAL_STRAIN_COLD_REF, MENTAL_STRAIN_MIN_REF)
+        : MENTAL_STRAIN_COLD_REF;
+
+    const physicalStrain = physicalStrainFromImpulse(physicalImpulse, physicalRef);
+    const mentalStrain = mentalStrainFromImpulse(mentalImpulse, mentalRef);
+
+    const prevPhysicalStrain = physicalStrainHistory.length > 0 ? physicalStrainHistory[physicalStrainHistory.length - 1] : 0;
+    const prevMentalStrain = mentalStrainHistory.length > 0 ? mentalStrainHistory[mentalStrainHistory.length - 1] : 0;
+
+    const recoveryComponents: Array<{ key: string; value: number; weight: number }> = [
+      { key: "sleep", value: sleepScore, weight: RECOVERY_SLEEP_WEIGHT },
+    ];
+    if (typeof compHrv === "number") {
+      recoveryComponents.push({ key: "hrv", value: compHrv, weight: RECOVERY_HRV_WEIGHT });
+    }
+    if (typeof compRhr === "number") {
+      recoveryComponents.push({ key: "rhr", value: compRhr, weight: RECOVERY_RHR_WEIGHT });
+    }
+    if (typeof compRr === "number") {
+      recoveryComponents.push({ key: "rr", value: compRr, weight: RECOVERY_RR_WEIGHT });
     }
 
-    if (typeof restingHr === "number") {
-      recoveryLogit -= 0.7 * zRhr;
-    } else {
-      fallbackFlags.push("recovery_missing_rhr");
-    }
+    const recoveryWeightSum = recoveryComponents.reduce((sum, item) => sum + item.weight, 0);
+    const recoveryBase =
+      recoveryWeightSum > 0
+        ? recoveryComponents.reduce(
+            (sum, item) => sum + item.value * (item.weight / recoveryWeightSum),
+            0,
+          )
+        : sleepScore;
 
-    if (typeof respiratoryRate === "number") {
-      recoveryLogit -= 0.5 * zRr;
-    } else {
-      fallbackFlags.push("recovery_missing_rr");
-    }
-
-    let recoveryScore = 100 * sigmoid(recoveryLogit);
-    const illnessLikeSpike =
-      (typeof restingHr === "number" && zRhr > 1.5) ||
-      (typeof respiratoryRate === "number" && zRr > 1.5);
-    const maxRecoveryDelta = illnessLikeSpike ? 35 : 25;
-    recoveryScore = clamp(recoveryScore, previousRecovery - maxRecoveryDelta, previousRecovery + maxRecoveryDelta);
-
-    let mentalRecoveryLogit = 0.9 * zSleep - 0.7 * zAml - 0.4 * pressure;
-    if (typeof lhrv === "number") {
-      mentalRecoveryLogit += 0.6 * zLhrv;
-    }
-    if (typeof restingHr === "number") {
-      mentalRecoveryLogit -= 0.5 * zRhr;
-    }
-    if (typeof respiratoryRate === "number") {
-      mentalRecoveryLogit -= 0.4 * zRr;
-    }
-    const mentalRecovery = 100 * sigmoid(mentalRecoveryLogit);
-
-    const physicalCapHistory = trimHistory([...physicalRawHistory, physicalRawLoad], DAYS_FOR_BASELINE).filter(
-      (value) => Number.isFinite(value) && value >= 0,
-    );
-    const mentalCapHistory = trimHistory([...mentalRawHistory, mentalRawLoad], DAYS_FOR_BASELINE).filter(
-      (value) => Number.isFinite(value) && value >= 0,
-    );
-
-    const p95Phys = quantile(physicalCapHistory, 0.95);
-    const p95Mental = quantile(mentalCapHistory, 0.95);
-
-    const physicalCap =
-      physicalCapHistory.length < 30 ? Math.max(p95Phys, 200) : Math.max(p95Phys, 150);
-    const mentalCap =
-      mentalCapHistory.length < 30 ? Math.max(p95Mental, 180) : Math.max(p95Mental, 120);
-
-    const physicalStrain = mapRawToStrain(physicalRawLoad, physicalCap);
-    const mentalStrain = mapRawToStrain(mentalRawLoad, mentalCap);
-
-    const hasSleepPresence = typeof sleepHours === "number";
-    const hasStagePresence =
-      typeof deepHours === "number" || typeof remHours === "number" || typeof coreHours === "number";
-
-    const confHist = clamp(validHistoryDays / DAYS_FOR_BASELINE, 0.2, 1);
-
-    const sleepAvail = clamp(
-      (hasSleepPresence ? 0.4 : 0) +
-        (typeof sleepInBed === "number" ? 0.2 : 0) +
-        (typeof midpointHour === "number" ? 0.2 : 0) +
-        (typeof regularitySRI === "number" ? 0.15 : 0.05) +
-        (hasStagePresence ? 0.05 : 0),
+    const recoveryScore = clamp(
+      recoveryBase - 0.1 * prevPhysicalStrain - 0.05 * prevMentalStrain,
       0,
+      100,
+    );
+
+    const mentalRecoveryWeightSleep = 0.6;
+    const mentalRecoveryWeightRegularity = 0.2;
+    const mentalRecoveryWeightHrv = typeof compHrv === "number" ? 0.2 : 0;
+    const mentalRecoveryDen =
+      mentalRecoveryWeightSleep + mentalRecoveryWeightRegularity + mentalRecoveryWeightHrv;
+
+    const mentalRecoveryBase =
+      (mentalRecoveryWeightSleep * sleepScore +
+        mentalRecoveryWeightRegularity * (regularityScore || 50) +
+        mentalRecoveryWeightHrv * (compHrv || 0)) /
+      Math.max(mentalRecoveryDen, EPSILON);
+
+    const mentalRecovery = clamp(mentalRecoveryBase - 0.05 * prevMentalStrain, 0, 100);
+
+    const recoveryReasonCodes: string[] = [];
+    if ((zHrv || 0) <= -1) {
+      recoveryReasonCodes.push("RECOVERY_HRV_LOW");
+    }
+    if ((zRhr || 0) <= -1) {
+      recoveryReasonCodes.push("RECOVERY_RHR_HIGH");
+    }
+    if ((zRr || 0) <= -1) {
+      recoveryReasonCodes.push("RECOVERY_RR_HIGH");
+    }
+    if (sleepScore < 60) {
+      recoveryReasonCodes.push("RECOVERY_SLEEP_LOW");
+    }
+    if (prevPhysicalStrain > 70 || prevMentalStrain > 70) {
+      recoveryReasonCodes.push("RECOVERY_LOAD_PENALTY");
+    }
+    if (typeof compHrv !== "number" || typeof compRr !== "number") {
+      recoveryReasonCodes.push("RECOVERY_DATA_SPARSE");
+    }
+
+    const recoveryReasons = recoveryReasonCodes.map(recoveryReasonText);
+
+    const recoveryContribution: Record<string, number> = {
+      sleep: round((RECOVERY_SLEEP_WEIGHT / recoveryWeightSum) * sleepScore, 2),
+      hrv:
+        typeof compHrv === "number"
+          ? round((RECOVERY_HRV_WEIGHT / recoveryWeightSum) * compHrv, 2)
+          : 0,
+      rhr:
+        typeof compRhr === "number"
+          ? round((RECOVERY_RHR_WEIGHT / recoveryWeightSum) * compRhr, 2)
+          : 0,
+      rr:
+        typeof compRr === "number"
+          ? round((RECOVERY_RR_WEIGHT / recoveryWeightSum) * compRr, 2)
+          : 0,
+      loadPenalty: round(-0.1 * prevPhysicalStrain - 0.05 * prevMentalStrain, 2),
+    };
+
+    const recoveryMessages = [
+      `Recovery score ${Math.round(recoveryScore)} from baseline physiology + sleep inputs.`,
+      ...recoveryReasonCodes.slice(0, 3).map(recoveryReasonText),
+    ];
+
+    const mentalRecoveryReasonCodes: string[] = [];
+    if (sleepScore < 60) {
+      mentalRecoveryReasonCodes.push("RECOVERY_SLEEP_LOW");
+    }
+    if ((regularityScore || 50) < 60) {
+      mentalRecoveryReasonCodes.push("SLEEP_IRREGULAR_TIMING");
+    }
+    if (prevMentalStrain > 70) {
+      mentalRecoveryReasonCodes.push("RECOVERY_LOAD_PENALTY");
+    }
+
+    const mentalRecoveryReasons = mentalRecoveryReasonCodes.map((code) =>
+      code.startsWith("SLEEP") ? sleepReasonText(code) : recoveryReasonText(code),
+    );
+
+    const mentalRecoveryContribution: Record<string, number> = {
+      sleep: round((mentalRecoveryWeightSleep / mentalRecoveryDen) * sleepScore, 2),
+      regularity: round(
+        (mentalRecoveryWeightRegularity / mentalRecoveryDen) * (regularityScore || 50),
+        2,
+      ),
+      hrv:
+        typeof compHrv === "number"
+          ? round((mentalRecoveryWeightHrv / mentalRecoveryDen) * compHrv, 2)
+          : 0,
+      strainPenalty: round(-0.05 * prevMentalStrain, 2),
+    };
+
+    const mentalRecoveryMessages = [
+      `Mental recovery ${Math.round(mentalRecovery)} combines sleep quality, regularity, HRV, and prior mental strain.`,
+      ...mentalRecoveryReasons.slice(0, 3),
+    ];
+
+    const recentMentalStrainHistory = recentValues(mentalStrainHistory, DAYS_180);
+    const recentMentalStrain2d = recentValues(mentalStrainHistory, 2);
+    const mentalStrain2d =
+      recentMentalStrain2d.length === 0
+        ? mentalStrain
+        : recentMentalStrain2d.length === 1
+        ? recentMentalStrain2d[0]
+        : (recentMentalStrain2d[0] + recentMentalStrain2d[1]) / 2;
+
+    const q25Mental =
+      recentMentalStrainHistory.length >= 7
+        ? quantile(recentMentalStrainHistory, 0.25)
+        : quantile([...recentMentalStrainHistory, mentalStrain], 0.25);
+
+    const underload = clamp(sigmoid((q25Mental - mentalStrain2d) / 8), 0, 1);
+    const gate = clamp(sigmoid((mentalRecovery - 70) / 10), 0, 1);
+    const gUnder = 1 + 0.25 * underload * gate;
+
+    const ctlRefCandidates90 = recentValues(ctlHistory, DAYS_90).filter((value) => value > 0);
+    const ctlRefCandidates30 = recentValues(ctlHistory, DAYS_30).filter((value) => value > 0);
+    const ctlRef =
+      ctlRefCandidates90.length > 0
+        ? median(ctlRefCandidates90)
+        : ctlRefCandidates30.length > 0
+        ? median(ctlRefCandidates30)
+        : 50;
+
+    const mclRefCandidates90 = recentValues(mclHistory, DAYS_90).filter((value) => value > 0);
+    const mclRefCandidates30 = recentValues(mclHistory, DAYS_30).filter((value) => value > 0);
+    const mclRef =
+      mclRefCandidates90.length > 0
+        ? median(mclRefCandidates90)
+        : mclRefCandidates30.length > 0
+        ? median(mclRefCandidates30)
+        : 50;
+
+    const fi = ctl / Math.max(ctlRef, EPSILON);
+    const ai = (atl - ctl) / Math.max(ctlRef, EPSILON);
+    const mfi = mcl / Math.max(mclRef, EPSILON);
+    const mai = (mal - mcl) / Math.max(mclRef, EPSILON);
+
+    aiHistory.push(ai);
+    maiHistory.push(mai);
+    recoveryHistory.push(recoveryScore);
+    mentalRecoveryHistory.push(mentalRecovery);
+
+    const overtrainPersist =
+      recentValues(aiHistory, DAYS_10).filter((value) => value >= 0.35).length >= 7;
+
+    const recoveryLow3 =
+      recentValues(recoveryHistory, 3).length >= 3 &&
+      recentValues(recoveryHistory, 3).every((value) => value <= 45);
+
+    let physicalState: PhysicalLoadState;
+    if (overtrainPersist && recoveryLow3) {
+      physicalState = "overtraining_risk";
+    } else if (ai >= 0.25 || (ai >= 0.15 && recoveryScore < 45)) {
+      physicalState = "fatigued";
+    } else if (fi >= 1.15 && ai >= -0.1 && ai <= 0.15 && recoveryScore >= 55) {
+      physicalState = "peaking";
+    } else if (fi >= 0.9 && fi <= 1.15 && ai >= 0.05 && ai <= 0.25 && recoveryScore >= 45) {
+      physicalState = "productive";
+    } else if (fi >= 0.75 && fi < 0.95 && ai >= -0.05 && ai < 0.15) {
+      physicalState = "maintaining";
+    } else if (fi < 0.75) {
+      physicalState = "detraining";
+    } else {
+      physicalState = "maintaining";
+    }
+
+    const burnoutPersist =
+      recentValues(maiHistory, DAYS_10).filter((value) => value >= 0.25).length +
+        recentValues(mentalRecoveryHistory, DAYS_10).filter((value) => value < 50).length >=
+      7;
+
+    let mentalState: MentalLoadState;
+    if (burnoutPersist && (mentalRecovery < 50 || mai >= 0.25)) {
+      mentalState = "burnout_risk";
+    } else if (
+      (mentalRecovery < 40 && mfi >= 0.75) ||
+      mai >= 0.25 ||
+      (mai >= 0.15 && mentalRecovery < 50)
+    ) {
+      mentalState = "fatigued";
+    } else if (
+      mfi >= 1.15 &&
+      mai >= -0.1 &&
+      mai <= 0.15 &&
+      mentalRecovery >= 60 &&
+      examUrgency >= 0.4
+    ) {
+      mentalState = "peaking";
+    } else if (
+      mfi >= 0.9 &&
+      mfi <= 1.15 &&
+      mai >= 0.05 &&
+      mai <= 0.25 &&
+      mentalRecovery >= 55
+    ) {
+      mentalState = "productive";
+    } else if (mfi >= 0.75 && mfi < 0.95 && mai >= -0.05 && mai < 0.15) {
+      mentalState = "maintaining";
+    } else if (mfi < 0.75 && examUrgency < 0.4) {
+      mentalState = "underloaded";
+    } else {
+      mentalState = "maintaining";
+    }
+
+    const physicalBaseMult: Record<PhysicalLoadState, number> = {
+      detraining: 1.25,
+      maintaining: 1,
+      productive: 1.35,
+      peaking: 0.6,
+      fatigued: 0.3,
+      overtraining_risk: 0.1,
+    };
+
+    const mentalBaseMult: Record<MentalLoadState, number> = {
+      underloaded: 1.2,
+      maintaining: 1,
+      productive: 1.1,
+      peaking: 1.25,
+      fatigued: 0.7,
+      burnout_risk: 0.5,
+    };
+
+    const physicalMultRecovery = 0.5 + recoveryScore / 200;
+    const physicalMultExam = examUrgency >= 0.7 ? 0.85 : examUrgency >= 0.4 ? 0.95 : 1;
+
+    const physicalTargetCenterRaw =
+      ctl * physicalBaseMult[physicalState] * physicalMultRecovery * physicalMultExam;
+
+    let physicalTargetMinRaw: number;
+    let physicalTargetMaxRaw: number;
+
+    if (physicalState === "fatigued" || physicalState === "overtraining_risk") {
+      physicalTargetMinRaw = 0;
+      physicalTargetMaxRaw = physicalTargetCenterRaw;
+    } else {
+      physicalTargetMinRaw = 0.8 * physicalTargetCenterRaw;
+      physicalTargetMaxRaw = 1.2 * physicalTargetCenterRaw;
+    }
+
+    const buildState =
+      physicalState === "detraining" ||
+      physicalState === "maintaining" ||
+      physicalState === "productive";
+
+    const physicalHardCap = buildState ? 1.6 * ctl : 1.3 * ctl;
+    if (physicalHardCap > 0) {
+      physicalTargetMaxRaw = Math.min(physicalTargetMaxRaw, physicalHardCap);
+    }
+    physicalTargetMinRaw = clamp(physicalTargetMinRaw, 0, Math.max(physicalTargetMaxRaw, 0));
+
+    const physicalTargetLow = physicalStrainFromImpulse(physicalTargetMinRaw, physicalRef);
+    const physicalTargetCenter = physicalStrainFromImpulse(physicalTargetCenterRaw, physicalRef);
+    const physicalTargetHigh = physicalStrainFromImpulse(physicalTargetMaxRaw, physicalRef);
+
+    const mentalMultRecovery = 0.5 + mentalRecovery / 200;
+    const mentalMultExam = examUrgency >= 0.7 ? 1.25 : examUrgency >= 0.4 ? 1.1 : 1;
+    const mentalMultPhysical =
+      physicalState === "fatigued" || physicalState === "overtraining_risk" ? 0.9 : 1;
+
+    const mentalTargetCenterRaw =
+      mcl *
+      mentalBaseMult[mentalState] *
+      mentalMultRecovery *
+      mentalMultExam *
+      mentalMultPhysical;
+
+    let mentalTargetMinRaw: number;
+    let mentalTargetMaxRaw: number;
+
+    if (mentalState === "fatigued" || mentalState === "burnout_risk") {
+      mentalTargetMinRaw = 0;
+      mentalTargetMaxRaw = mentalTargetCenterRaw;
+    } else {
+      mentalTargetMinRaw = 0.8 * mentalTargetCenterRaw;
+      mentalTargetMaxRaw = 1.2 * mentalTargetCenterRaw;
+    }
+
+    if (mcl > 0) {
+      mentalTargetMaxRaw = Math.min(mentalTargetMaxRaw, 1.6 * mcl);
+    }
+    mentalTargetMinRaw = clamp(mentalTargetMinRaw, 0, Math.max(mentalTargetMaxRaw, 0));
+
+    const mentalTargetLow = mentalStrainFromImpulse(mentalTargetMinRaw, mentalRef);
+    const mentalTargetCenter = mentalStrainFromImpulse(mentalTargetCenterRaw, mentalRef);
+    const mentalTargetHigh = mentalStrainFromImpulse(mentalTargetMaxRaw, mentalRef);
+
+    const studyCenterHours = clamp(
+      goals.baselineStudyHours * (0.65 + 0.9 * (mentalTargetCenter / 100)),
+      0.5,
+      11,
+    );
+    const studyHalfWidth = Math.max(0.4, ((mentalTargetHigh - mentalTargetLow) / 100) * 2.2);
+    const studyTargetLow = round(clamp(studyCenterHours - studyHalfWidth, 0.5, 12), 1);
+    const studyTargetHigh = round(
+      clamp(studyCenterHours + studyHalfWidth, studyTargetLow + 0.3, 12),
       1,
     );
 
-    const recoveryAvail =
-      0.4 * (typeof lhrv === "number" ? 1 : 0) +
-      0.3 * (typeof restingHr === "number" ? 1 : 0) +
-      0.2 * (typeof respiratoryRate === "number" ? 1 : 0) +
-      0.1 * (hasSleepPresence ? 1 : 0);
+    const studyRationale =
+      mentalState === "burnout_risk" || mentalState === "fatigued"
+        ? "Mental load is elevated relative to recovery; keep study focused and shorter today."
+        : mentalState === "underloaded"
+        ? "Mental load is below your productive range; increase distributed study volume today."
+        : examUrgency >= 0.7
+        ? "Exam urgency is high and recovery is adequate, so study targets are elevated strategically."
+        : "Study range is set to keep you in the productive mental load zone.";
 
-    const physicalAvail = hadHrWorkout
-      ? 1
-      : hadWorkoutWithoutHr
-      ? 0.75
-      : steps > 0 || activeEnergyKj > 0
-      ? 0.6
-      : 0.35;
+    const targetReasonCodes = [
+      `TARGET_PHYSICAL_${physicalState.toUpperCase()}`,
+      `TARGET_MENTAL_${mentalState.toUpperCase()}`,
+    ];
 
-    const mentalStrainAvail =
-      sessions.length > 0 && hasPressureContext
-        ? 1
-        : sessions.length > 0
-        ? 0.8
-        : hasPressureContext
+    if (examUrgency >= 0.7) {
+      targetReasonCodes.push("TARGET_EXAM_URGENCY_HIGH");
+    } else if (examUrgency >= 0.4) {
+      targetReasonCodes.push("TARGET_EXAM_URGENCY_MODERATE");
+    }
+
+    const targetPhysicalReasons = targetReasonCodes
+      .filter((code) => code.startsWith("TARGET_PHYSICAL") || code.startsWith("TARGET_EXAM"))
+      .map(targetReasonText);
+
+    const targetMentalReasons = targetReasonCodes
+      .filter((code) => code.startsWith("TARGET_MENTAL") || code.startsWith("TARGET_EXAM"))
+      .map(targetReasonText);
+
+    const targetMessages = [
+      `Today’s cardio target is ${physicalTargetLow.toFixed(1)}-${physicalTargetHigh.toFixed(1)} strain (${physicalState}).`,
+      `Today’s study target is ${studyTargetLow.toFixed(1)}-${studyTargetHigh.toFixed(1)}h (${mentalState}).`,
+      ...targetReasonCodes.slice(0, 2).map(targetReasonText),
+    ];
+
+    const targetContribution: Record<string, number> = {
+      physicalBaseMult: round(physicalBaseMult[physicalState], 3),
+      physicalRecoveryMult: round(physicalMultRecovery, 3),
+      physicalExamMult: round(physicalMultExam, 3),
+      mentalBaseMult: round(mentalBaseMult[mentalState], 3),
+      mentalRecoveryMult: round(mentalMultRecovery, 3),
+      mentalExamMult: round(mentalMultExam, 3),
+      mentalPhysicalMult: round(mentalMultPhysical, 3),
+    };
+
+    const historyFactor = rows.length < 7 ? 0.3 : rows.length < 14 ? 0.7 : 1;
+
+    let consistencyFactor = 1;
+    if (typeof hrvMs === "number" && (hrvMs < 5 || hrvMs > 400)) {
+      consistencyFactor *= 0.75;
+      fallbackFlags.push("hrv_outlier");
+    }
+
+    const prevRhr = rhrHistory.length > 1 ? rhrHistory[rhrHistory.length - 2] : undefined;
+    if (typeof restingHr === "number" && typeof prevRhr === "number" && Math.abs(restingHr - prevRhr) > 25) {
+      consistencyFactor *= 0.85;
+      fallbackFlags.push("rhr_jump");
+    }
+
+    const sleepConfBase =
+      1 *
+      (typeof sleepMidpointMin === "number" ? 1 : 0.9) *
+      (typeof stagesScore === "number" ? 1 : 0.85);
+
+    const recoveryConfBase = clamp(recoveryWeightSum / 1, 0, 1);
+
+    const physicalConfBase =
+      methodUsed === "hr_series" || methodUsed === "avg_hr"
+        ? 0.9
+        : methodUsed === "pace" || methodUsed === "energy"
         ? 0.65
         : 0.45;
 
-    const mentalRecoveryAvail = clamp(0.6 * recoveryAvail + 0.4 * mentalStrainAvail, 0, 1);
+    const mentalConfBase = sessions.length > 0 ? 0.9 : 0.7;
 
-    const sourceCount = [
-      typeof lhrv === "number",
-      typeof restingHr === "number",
-      typeof respiratoryRate === "number",
-      hasSleepPresence,
-    ].filter(Boolean).length;
-
-    const extremeCount = [zLhrv, zRhr, zRr, zSleep]
-      .map((value) => Math.abs(value))
-      .filter((value) => value > 3).length;
-
-    let confNoise = 1 - 0.1 * extremeCount;
-    if (extremeCount > 0 && sourceCount <= 2) {
-      confNoise -= 0.2;
-    }
-    confNoise = clamp(confNoise, 0.45, 1);
-
-    const confidenceSleep = clamp(sleepAvail * confNoise * confHist, 0, 1);
-    const confidenceRecovery = clamp(recoveryAvail * confNoise * confHist, 0, 1);
-    const confidencePhysical = clamp(physicalAvail * confNoise * confHist, 0, 1);
-    const confidenceMentalStrain = clamp(mentalStrainAvail * confNoise * confHist, 0, 1);
-    const confidenceMentalRecovery = clamp(mentalRecoveryAvail * confNoise * confHist, 0, 1);
-    const confidenceOverall =
-      (confidenceSleep + confidenceRecovery + confidencePhysical + confidenceMentalStrain + confidenceMentalRecovery) / 5;
-
-    const physicalLoadRatio = (physicalAcute + 1) / (physicalChronic + 1);
-    const physicalRecoveryFactor = 0.7 + 0.9 * (recoveryScore / 100);
-    const physicalOverreach = Math.exp(-0.35 * Math.max(physicalLoadRatio - 1.2, 0));
-
-    const physicalTargetCenterRaw = physicalChronic * physicalRecoveryFactor * physicalOverreach;
-    const widthPhysicalRaw =
-      0.35 * physicalChronic * (1 + 0.5 * (1 - confidencePhysical));
-
-    let physicalTargetCenter = mapRawToStrain(physicalTargetCenterRaw, physicalCap);
-    let physicalTargetLow = mapRawToStrain(
-      Math.max(physicalTargetCenterRaw - 0.5 * widthPhysicalRaw, 0),
-      physicalCap,
-    );
-    let physicalTargetHigh = mapRawToStrain(
-      physicalTargetCenterRaw + 0.5 * widthPhysicalRaw,
-      physicalCap,
-    );
-
-    const clampedCenter = clamp(
-      physicalTargetCenter,
-      previousPhysicalTargetCenter - 3,
-      previousPhysicalTargetCenter + 3,
-    );
-    if (Math.abs(clampedCenter - physicalTargetCenter) > EPSILON) {
-      const shift = clampedCenter - physicalTargetCenter;
-      physicalTargetCenter = clampedCenter;
-      physicalTargetLow = clamp(physicalTargetLow + shift, 0, RAW_TO_STRAIN_MAX);
-      physicalTargetHigh = clamp(physicalTargetHigh + shift, 0, RAW_TO_STRAIN_MAX);
-      fallbackFlags.push("physical_target_guardrail");
-    }
-
-    const mentalLoadRatio = (mentalAcute + 1) / (mentalChronic + 1);
-    const mentalRecoveryFactor = 0.7 + 0.9 * (mentalRecovery / 100);
-    const mentalOverreach = Math.exp(-0.35 * Math.max(mentalLoadRatio - 1.2, 0));
-
-    const recentMentalStrains = trimHistory(mentalStrainHistory, 2);
-    const mentalStrain2d =
-      recentMentalStrains.length >= 2
-        ? (recentMentalStrains[recentMentalStrains.length - 1] + recentMentalStrains[recentMentalStrains.length - 2]) / 2
-        : recentMentalStrains.length === 1
-        ? recentMentalStrains[0]
-        : mentalStrain;
-
-    const recentMentalHistory = trimHistory(mentalStrainHistory, DAYS_FOR_BASELINE);
-    const recentPositiveMentalHistory = recentMentalHistory.filter((value) => value > 0.1);
-    const q25Mental =
-      recentPositiveMentalHistory.length >= 7
-        ? quantile(recentPositiveMentalHistory, 0.25)
-        : quantile(recentMentalHistory, 0.25);
-    const underload = sigmoid((q25Mental - mentalStrain2d) / 1.0);
-    const gate = sigmoid((mentalRecovery - 70) / 10);
-
-    const gUnder = mentalStrainHistory.length >= 14 ? 1 + 0.25 * underload * gate : 1;
-
-    const mentalTargetCenterRaw =
-      mentalChronic * mentalRecoveryFactor * mentalOverreach * gUnder;
-    const widthMentalRaw =
-      0.4 * mentalChronic * (1 + 0.5 * (1 - confidenceMentalStrain));
-
-    const mentalTargetCenter = mapRawToStrain(mentalTargetCenterRaw, mentalCap);
-    const mentalTargetLow = mapRawToStrain(
-      Math.max(mentalTargetCenterRaw - 0.5 * widthMentalRaw, 0),
-      mentalCap,
-    );
-    const mentalTargetHigh = mapRawToStrain(
-      mentalTargetCenterRaw + 0.5 * widthMentalRaw,
-      mentalCap,
-    );
-
-    const daysSinceRun = computeDaysSinceRun(dateKey, workoutsByDate);
-    const trainingCategory = buildTrainingCategory({
-      recoveryScore,
-      physicalTargetCenter,
-      physicalTargetHigh,
-      daysSinceRun,
-    });
-
-    const prescription = TRAINING_PRESCRIPTIONS[trainingCategory];
-    const workoutSuggestion = prescription.isRunRecommended
-      ? `${prescription.label.toLowerCase()} (${prescription.runMinutesMin}-${prescription.runMinutesMax}m run, RPE ${prescription.targetRpeMin}-${prescription.targetRpeMax})`
-      : `active recovery walk (${prescription.walkMinutesMin}-${prescription.walkMinutesMax}m)`;
-
-    const studyTargetCenterHours = clamp(
-      goals.baselineStudyHours * (0.55 + 0.9 * (mentalTargetCenter / RAW_TO_STRAIN_MAX)),
-      0.5,
-      9,
-    );
-
-    const studyHalfWidth = Math.max(
-      0.5,
-      ((mentalTargetHigh - mentalTargetLow) / RAW_TO_STRAIN_MAX) * 2.8,
-    );
-    const studyTargetHoursLow = round(clamp(studyTargetCenterHours - studyHalfWidth, 0.5, 10), 1);
-    const studyTargetHoursHigh = round(
-      clamp(studyTargetCenterHours + studyHalfWidth, studyTargetHoursLow + 0.3, 10),
+    const sleepConfidence = clamp(sleepConfBase * historyFactor * consistencyFactor, 0, 1);
+    const recoveryConfidence = clamp(recoveryConfBase * historyFactor * consistencyFactor, 0, 1);
+    const physicalConfidence = clamp(physicalConfBase * historyFactor * consistencyFactor, 0, 1);
+    const mentalConfidence = clamp(mentalConfBase * historyFactor * consistencyFactor, 0, 1);
+    const overallConfidence = clamp(
+      0.25 * sleepConfidence +
+        0.35 * recoveryConfidence +
+        0.25 * physicalConfidence +
+        0.15 * mentalConfidence,
+      0,
       1,
     );
 
-    const freshAirMinutes =
-      mentalRecovery < 45 ? 60 : mentalRecovery < 55 || pressure > 0.55 ? 45 : mentalRecovery < 70 ? 30 : 20;
+    sleepDebtHours =
+      0.7 * sleepDebtHours +
+      (typeof sleepAsleepMin === "number" ? Math.max(0, (sleepNeedMin - sleepAsleepMin) / 60) : 0);
 
-    const narrative = buildNarrative({
+    const narrative =
+      `Sleep ${Math.round(sleepScore)}/100 (${((sleepAsleepMin || 0) / 60).toFixed(1)}h vs need ${(sleepNeedMin / 60).toFixed(1)}h). ` +
+      `Recovery ${Math.round(recoveryScore)}/100, mental recovery ${Math.round(mentalRecovery)}/100. ` +
+      `Physical state ${physicalState}, mental state ${mentalState}. ` +
+      `Study target ${studyTargetLow.toFixed(1)}-${studyTargetHigh.toFixed(1)}h.`;
+
+    const row: DailyRow = {
+      date,
+      sleepNeedMin,
+      sleepAsleepMin,
+      sleepInBedMin,
+      sleepEfficiency,
+      sleepWasoMin: wasoMin,
+      sleepMidpointMin,
+      sleepMidpointDeltaMin: midpointDelta,
+      sleepDurationScore: durationScore,
+      sleepContinuityScore: continuityScore,
+      sleepRegularityScore: regularityScore,
+      sleepStagesScore: stagesScore,
       sleepScore,
-      recoveryScore,
-      mentalRecovery,
+      sleepReasonCodes,
+      sleepLowReasons,
+      sleepHighReasons,
+      sleepContribution,
+      sleepMessages,
+
+      hrvLn,
+      zHrv,
+      zRhr,
+      zRr,
+      compHrv,
+      compRhr,
+      compRr,
+
+      examUrgency,
+      physicalImpulse,
+      physicalImpulseWorkout,
+      physicalImpulseFallback,
+      workoutMethod: methodUsed,
+      ctl,
+      atl,
+      tsb: ctl - atl,
+      physicalRef,
       physicalStrain,
+
+      mentalImpulse,
+      mentalSessionImpulse: sessionImpulseBase,
+      mcl,
+      mal,
+      mentalRef,
       mentalStrain,
-      studyLow: studyTargetHoursLow,
-      studyHigh: studyTargetHoursHigh,
-      workoutSuggestion,
-      freshAirMinutes,
-    });
 
-    const sleepNegativeDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
-      { key: "debt", impact: sleepDebt * 4 },
-      { key: "duration", impact: (100 - sleepDurationScore) * SLEEP_WEIGHT_DURATION },
-      { key: "regularity", impact: (100 - sleepRegularityScore) * SLEEP_WEIGHT_REGULARITY },
-      { key: "stage", impact: (100 - sleepStageScore) * SLEEP_WEIGHT_STAGE },
-      { key: "awake", impact: (100 - sleepAwakeScore) * 0.1 },
-      { key: "schedule", impact: (100 - sleepTimingScore) * SLEEP_WEIGHT_TIMING },
-    ];
+      recoveryBase,
+      recoveryScore,
+      recoveryReasonCodes,
+      recoveryReasons,
+      recoveryMessages,
+      recoveryContribution,
 
-    const sleepPositiveDrivers: Array<{ key: SleepDriverKey; impact: number }> = [
-      { key: "duration", impact: sleepDurationScore * SLEEP_WEIGHT_DURATION },
-      { key: "regularity", impact: sleepRegularityScore * SLEEP_WEIGHT_REGULARITY },
-      { key: "stage", impact: sleepStageScore * SLEEP_WEIGHT_STAGE },
-      { key: "awake", impact: sleepAwakeScore * 0.1 },
-      { key: "schedule", impact: sleepTimingScore * SLEEP_WEIGHT_TIMING },
-    ];
+      mentalRecovery,
+      mentalRecoveryReasonCodes,
+      mentalRecoveryReasons,
+      mentalRecoveryMessages,
+      mentalRecoveryContribution,
+      underload,
+      gate,
+      gUnder,
 
-    const sleepDriverMode: "negative" | "positive" = sleepScore < 65 ? "negative" : "positive";
-    const dominantSleepDriver =
-      sleepDriverMode === "negative"
-        ? sleepNegativeDrivers.slice().sort((left, right) => right.impact - left.impact)[0]
-        : sleepPositiveDrivers.slice().sort((left, right) => right.impact - left.impact)[0];
-    const sleepDriverKey = dominantSleepDriver?.key || "duration";
-    const sleepDriverImpact = dominantSleepDriver?.impact || 0;
+      fi,
+      ai,
+      mfi,
+      mai,
+      physicalState,
+      mentalState,
 
-    const readinessScore = clamp(0.65 * recoveryScore + 0.35 * mentalRecovery, 0, 100);
-    const autonomicComponent = clamp(50 + 18 * zLhrv - 12 * zRhr - 8 * zRr, 0, 100);
-    const loadComponent = clamp(
-      100 - 70 * Math.max(physicalLoadRatio - 1, 0) - 45 * Math.max(mentalLoadRatio - 1, 0),
-      0,
-      100,
-    );
-    const cognitiveComponent = clamp(
-      0.55 * mentalRecovery + 0.45 * (100 - (mentalStrain / RAW_TO_STRAIN_MAX) * 100),
-      0,
-      100,
-    );
+      physicalTargetCenterRaw,
+      physicalTargetMinRaw,
+      physicalTargetMaxRaw,
+      physicalTargetCenter,
+      physicalTargetLow,
+      physicalTargetHigh,
 
-    let bedtimeMinutes = preferredBedtimeCenterMinutes;
-    bedtimeMinutes -= clamp(sleepDebt, 0, 3) * 10;
-    bedtimeMinutes -= clamp((65 - recoveryScore) / 20, 0, 1) * 15;
-    bedtimeMinutes -= clamp((70 - mentalRecovery) / 25, 0, 1) * 8;
-    bedtimeMinutes += clamp((recoveryScore - 85) / 20, 0, 1) * 8;
+      mentalTargetCenterRaw,
+      mentalTargetMinRaw,
+      mentalTargetMaxRaw,
+      mentalTargetCenter,
+      mentalTargetLow,
+      mentalTargetHigh,
 
-    const bedtimeHalfRangeMinutes = Math.round(10 + (1 - confidenceOverall) * 16);
+      studyTargetLow,
+      studyTargetHigh,
+      studyRationale,
 
-    const result: DailyComputation = {
-      date: dateKey,
-      sleepNeedHours,
-      sleepHours: round(sleepHours || 0, 2),
-      sleepScore: round(sleepScore, 1),
-      sleepDurationScore: round(sleepDurationScore, 1),
-      sleepEfficiencyScore: round(sleepEfficiencyScore, 1),
-      sleepRegularityScore: round(sleepRegularityScore, 1),
-      sleepTimingScore: round(sleepTimingScore, 1),
-      sleepStageScore: round(sleepStageScore, 1),
-      sleepAwakeScore: round(sleepAwakeScore, 1),
-      sleepDebtHours: round(sleepDebt, 2),
-      recoveryScore: round(recoveryScore, 1),
-      mentalRecovery: round(mentalRecovery, 1),
-      physicalStrain: round(physicalStrain, 2),
-      mentalStrain: round(mentalStrain, 2),
-      physicalRawLoad: round(physicalRawLoad, 2),
-      mentalRawLoad: round(mentalRawLoad, 2),
-      physicalAcuteLoad: round(physicalAcute, 2),
-      physicalChronicLoad: round(physicalChronic, 2),
-      mentalAcuteLoad: round(mentalAcute, 2),
-      mentalChronicLoad: round(mentalChronic, 2),
-      physicalLoadRatio: round(physicalLoadRatio, 3),
-      mentalLoadRatio: round(mentalLoadRatio, 3),
-      pressure: round(pressure, 3),
-      physicalCap: round(physicalCap, 2),
-      mentalCap: round(mentalCap, 2),
-      physicalTargetLow: round(physicalTargetLow, 2),
-      physicalTargetCenter: round(physicalTargetCenter, 2),
-      physicalTargetHigh: round(physicalTargetHigh, 2),
-      mentalTargetLow: round(mentalTargetLow, 2),
-      mentalTargetCenter: round(mentalTargetCenter, 2),
-      mentalTargetHigh: round(mentalTargetHigh, 2),
-      confidenceSleep: round(confidenceSleep, 3),
-      confidenceRecovery: round(confidenceRecovery, 3),
-      confidencePhysical: round(confidencePhysical, 3),
-      confidenceMentalRecovery: round(confidenceMentalRecovery, 3),
-      confidenceMentalStrain: round(confidenceMentalStrain, 3),
-      confidenceOverall: round(confidenceOverall, 3),
-      zLhrv: round(zLhrv, 3),
-      zRhr: round(zRhr, 3),
-      zRr: round(zRr, 3),
-      zSleep: round(zSleep, 3),
-      zApl: round(zApl, 3),
-      zAml: round(zAml, 3),
-      underload: round(underload, 3),
-      gate: round(gate, 3),
-      gUnder: round(gUnder, 3),
-      fallbackFlags: [...new Set(fallbackFlags)],
+      targetReasonCodes,
+      targetPhysicalReasons,
+      targetMentalReasons,
+      targetMessages,
+      targetContribution,
+
+      sleepConfidence,
+      recoveryConfidence,
+      physicalConfidence,
+      mentalConfidence,
+      overallConfidence,
+
+      fallbackFlags,
       narrative,
     };
 
-    const hasAnyDailyData =
-      hasSleepPresence ||
-      typeof restingHr === "number" ||
-      typeof respiratoryRate === "number" ||
-      typeof hrvMs === "number" ||
-      workouts.length > 0 ||
-      sessions.length > 0;
+    rows.push(row);
 
-    if (hasAnyDailyData) {
-      validHistoryDays += 1;
+    if (typeof sleepMidpointMin === "number") {
+      sleepMidpointHistory.push(sleepMidpointMin);
     }
 
-    if (typeof sleepHours === "number") {
-      validSleepHoursHistory.push(sleepHours);
-    }
-
-    if (typeof midpointHour === "number") {
-      midpointHistory.push(midpointHour);
-    }
-
-    if (typeof bedtimeHour === "number") {
-      bedtimeHistory.push(bedtimeHour);
-    }
-
-    if (typeof stageIndex === "number") {
-      stageIndexHistory.push(stageIndex);
-    }
-
-    if (typeof lhrv === "number") {
-      lhrvHistory.push(lhrv);
-    }
-
-    if (typeof restingHr === "number") {
-      rhrHistory.push(restingHr);
-    }
-
-    if (typeof respiratoryRate === "number") {
-      rrHistory.push(respiratoryRate);
-    }
-
-    sleepScoreHistory.push(sleepScore);
-    physicalAcuteHistory.push(physicalAcute);
-    mentalAcuteHistory.push(mentalAcute);
-    physicalRawHistory.push(physicalRawLoad);
-    mentalRawHistory.push(mentalRawLoad);
+    impulseHistory.push(physicalImpulse);
+    mentalImpulseHistory.push(mentalImpulse);
+    ctlHistory.push(ctl);
+    atlHistory.push(atl);
+    mclHistory.push(mcl);
+    malHistory.push(mal);
+    physicalStrainHistory.push(physicalStrain);
     mentalStrainHistory.push(mentalStrain);
-
-    previousRecovery = recoveryScore;
-    previousPhysicalTargetCenter = physicalTargetCenter;
-
-    // Attach recommendation fields to avoid recomputing below.
-    (result as DailyComputation & {
-      __trainingCategory?: TrainingCategory;
-      __studyTargetHoursLow?: number;
-      __studyTargetHoursHigh?: number;
-      __workoutSuggestion?: string;
-      __bedtimeMinutes?: number;
-      __bedtimeHalfRange?: number;
-      __freshAirMinutes?: number;
-      __sleepDriverMode?: "negative" | "positive";
-      __sleepDriverKey?: SleepDriverKey;
-      __sleepDriverImpact?: number;
-      __readinessScore?: number;
-      __autonomicComponent?: number;
-      __loadComponent?: number;
-      __cognitiveComponent?: number;
-    }).__trainingCategory = trainingCategory;
-    (result as DailyComputation & { __studyTargetHoursLow?: number }).__studyTargetHoursLow =
-      studyTargetHoursLow;
-    (result as DailyComputation & { __studyTargetHoursHigh?: number }).__studyTargetHoursHigh =
-      studyTargetHoursHigh;
-    (result as DailyComputation & { __workoutSuggestion?: string }).__workoutSuggestion =
-      workoutSuggestion;
-    (result as DailyComputation & { __bedtimeMinutes?: number }).__bedtimeMinutes = bedtimeMinutes;
-    (result as DailyComputation & { __bedtimeHalfRange?: number }).__bedtimeHalfRange =
-      bedtimeHalfRangeMinutes;
-    (result as DailyComputation & { __freshAirMinutes?: number }).__freshAirMinutes = freshAirMinutes;
-    (result as DailyComputation & { __sleepDriverMode?: "negative" | "positive" }).__sleepDriverMode =
-      sleepDriverMode;
-    (result as DailyComputation & { __sleepDriverKey?: SleepDriverKey }).__sleepDriverKey =
-      sleepDriverKey;
-    (result as DailyComputation & { __sleepDriverImpact?: number }).__sleepDriverImpact =
-      sleepDriverImpact;
-    (result as DailyComputation & { __readinessScore?: number }).__readinessScore = readinessScore;
-    (result as DailyComputation & { __autonomicComponent?: number }).__autonomicComponent =
-      autonomicComponent;
-    (result as DailyComputation & { __loadComponent?: number }).__loadComponent = loadComponent;
-    (result as DailyComputation & { __cognitiveComponent?: number }).__cognitiveComponent =
-      cognitiveComponent;
-
-    results.push(result);
   }
 
-  return results;
+  return rows;
 }
 
 function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
@@ -1560,6 +2024,9 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
     date: todayKey,
     sleepNeedHours: 8,
     sleepHours: 0,
+    sleepEfficiency: 0,
+    sleepWasoMinutes: 0,
+    sleepMidpointDeltaMinutes: 0,
     sleepScore: 50,
     recoveryScore: 50,
     physicalStrain: 0,
@@ -1572,28 +2039,66 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
     physicalChronicLoad: 0,
     mentalAcuteLoad: 0,
     mentalChronicLoad: 0,
-    physicalLoadRatio: 1,
-    mentalLoadRatio: 1,
-    physicalCap: 200,
-    mentalCap: 180,
-    physicalTarget: { low: 0, center: 0, high: 3 },
-    mentalTarget: { low: 0, center: 0, high: 3 },
+    physicalLoadRatio: 0,
+    mentalLoadRatio: 0,
+    physicalCap: PHYSICAL_STRAIN_COLD_REF,
+    mentalCap: MENTAL_STRAIN_COLD_REF,
+    physicalTarget: { low: 0, center: 0, high: 0 },
+    mentalTarget: { low: 0, center: 0, high: 0 },
+    physicalState: "maintaining",
+    mentalState: "maintaining",
+    cardioLoad: {
+      state: "maintaining",
+      stateScore: 50,
+      stateThresholds: {
+        fi_detraining: 0.75,
+        fi_productive_low: 0.9,
+        fi_productive_high: 1.15,
+        ai_fatigued: 0.25,
+        ai_overtraining: 0.35,
+      },
+      stateRationale: "Insufficient data for stable physical state classification.",
+    },
+    mentalLoadState: {
+      state: "maintaining",
+      stateScore: 50,
+      stateThresholds: {
+        mfi_underloaded: 0.75,
+        mfi_productive_low: 0.9,
+        mfi_productive_high: 1.15,
+        mai_fatigued: 0.25,
+      },
+      stateRationale: "Insufficient data for stable mental state classification.",
+    },
+    studyTargetLow: DEFAULT_BASELINE_STUDY_HOURS - 0.8,
+    studyTargetHigh: DEFAULT_BASELINE_STUDY_HOURS + 0.8,
+    studyRationale: "Default study guidance used while model confidence is low.",
     components: {
       sleepDuration: 50,
-      sleepEfficiency: 50,
+      sleepContinuity: 50,
       sleepRegularity: 50,
-      sleepTiming: 50,
-      sleepStage: 50,
+      sleepStages: 50,
       zLhrv: 0,
       zRhr: 0,
       zRr: 0,
-      zSleep: 0,
       zApl: 0,
       zAml: 0,
+      compHrv: 50,
+      compRhr: 50,
+      compRr: 50,
       underload: 0.5,
       gate: 0.5,
       gUnder: 1,
-      pressure: 0,
+      ctl: 0,
+      atl: 0,
+      tsb: 0,
+      mcl: 0,
+      mal: 0,
+      fi: 1,
+      ai: 0,
+      mfi: 1,
+      mai: 0,
+      examUrgency: 0,
     },
     confidence: {
       sleep: 0.2,
@@ -1602,6 +2107,81 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
       mentalRecovery: 0.2,
       mentalStrain: 0.2,
       overall: 0.2,
+    },
+    chartPayloads: {
+      physicalStrain: {
+        timestamp: `${todayKey}T00:00:00.000Z`,
+        rawValue: 0,
+        normalizedValue: 0,
+        componentContributions: {
+          workoutLoad: 0,
+          fallbackLoad: 0,
+        },
+        confidence: 0.2,
+      },
+      mentalStrain: {
+        timestamp: `${todayKey}T00:00:00.000Z`,
+        rawValue: 0,
+        normalizedValue: 0,
+        componentContributions: {
+          studyLoad: 0,
+          examUrgencyAmplifier: 0,
+        },
+        confidence: 0.2,
+      },
+    },
+    explainability: {
+      sleep: {
+        reasonCodes: ["NO_DATA"],
+        userMessages: ["Sleep data is not sufficient yet for personalized scoring."],
+        contributionBreakdown: {
+          duration: 0,
+          continuity: 0,
+          regularity: 0,
+          stages: 0,
+        },
+        lowReasons: ["Need more sleep and timing data for model certainty."],
+        highReasons: [],
+      },
+      physicalRecovery: {
+        reasonCodes: ["NO_DATA"],
+        userMessages: ["Recovery physiology data is sparse."],
+        contributionBreakdown: {
+          sleep: 0,
+          hrv: 0,
+          rhr: 0,
+          rr: 0,
+          loadPenalty: 0,
+        },
+        reasons: ["Need HRV/RHR/RR history for robust baseline-relative recovery."],
+      },
+      mentalRecovery: {
+        reasonCodes: ["NO_DATA"],
+        userMessages: ["Mental recovery uses sleep + load history and is currently low-confidence."],
+        contributionBreakdown: {
+          sleep: 0,
+          regularity: 0,
+          hrv: 0,
+          strainPenalty: 0,
+        },
+        reasons: ["Need more study and sleep history for stable mental-recovery scoring."],
+      },
+      targetRange: {
+        reasonCodes: ["NO_DATA"],
+        userMessages: ["Targets are conservative until enough history is available."],
+        contributionBreakdown: {
+          physicalBaseMult: 1,
+          physicalRecoveryMult: 1,
+          physicalExamMult: 1,
+          mentalBaseMult: 1,
+          mentalRecoveryMult: 1,
+          mentalExamMult: 1,
+          mentalPhysicalMult: 1,
+        },
+        physicalReasons: ["No physical state signal yet."],
+        mentalReasons: ["No mental state signal yet."],
+        studyRationale: "Default study guidance while calibration builds.",
+      },
     },
     fallbackFlags: ["no_data"],
     narrative:
@@ -1624,7 +2204,7 @@ function defaultReadiness(todayKey: string): DailyReadiness {
     sleepDriverMode: "negative",
     sleepDriverKey: "duration",
     sleepDriverImpact: 0,
-    sleepDriverSentence: "Your score is mainly held down by sleep duration falling short of your target.",
+    sleepDriverSentence: "Sleep score is mainly limited by sleep duration relative to your current need.",
     sleepComponent: 50,
     autonomicComponent: 50,
     loadComponent: 50,
@@ -1632,9 +2212,22 @@ function defaultReadiness(todayKey: string): DailyReadiness {
     penalty: 0,
     sleepDebtHours: 0,
     sleepHours: 0,
-    loadRatio: 1,
+    loadRatio: 0,
     zHrv: 0,
     zRhr: 0,
+    recoveryScore: 50,
+    mentalRecoveryScore: 50,
+    physicalStrain: 0,
+    mentalStrain: 0,
+    physicalTargetLow: 0,
+    physicalTargetHigh: 0,
+    mentalTargetLow: 0,
+    mentalTargetHigh: 0,
+    pressure: 0,
+    confidenceSleep: 0.2,
+    confidenceRecovery: 0.2,
+    confidencePhysical: 0.2,
+    confidenceMental: 0.2,
   };
 }
 
@@ -1670,14 +2263,32 @@ function defaultRecommendation(todayKey: string): DailyRecommendation {
     bedtimeRangeMinutes: halfRange * 2,
     studyTargetHoursLow: DEFAULT_BASELINE_STUDY_HOURS - 0.8,
     studyTargetHoursHigh: DEFAULT_BASELINE_STUDY_HOURS + 0.8,
+    studyTargetLow: DEFAULT_BASELINE_STUDY_HOURS - 0.8,
+    studyTargetHigh: DEFAULT_BASELINE_STUDY_HOURS + 0.8,
+    studyRationale: "Default study guidance while model confidence is low.",
     recommendedFreshAirMinutes: 30,
-    physicalTargetLow: 3,
-    physicalTargetHigh: 8,
-    mentalTargetLow: 3,
-    mentalTargetHigh: 8,
+    physicalTargetLow: 0,
+    physicalTargetHigh: 0,
+    mentalTargetLow: 0,
+    mentalTargetHigh: 0,
+    physicalState: "maintaining",
+    mentalState: "maintaining",
     scientificSummary:
       "Model confidence is low today. Keep study and training moderate while collecting more consistent health data.",
   };
+}
+
+function freshnessMinutes(mentalRecovery: number): number {
+  if (mentalRecovery < 40) {
+    return 60;
+  }
+  if (mentalRecovery < 55) {
+    return 45;
+  }
+  if (mentalRecovery < 70) {
+    return 30;
+  }
+  return 20;
 }
 
 export function buildPerformanceInsights(data: AppData, now = new Date()): PerformanceInsights {
@@ -1692,13 +2303,20 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
   const healthByDate = new Map(healthDays.map((day) => [day.date, day]));
 
+  const workoutDetailsByWorkoutId = new Map<string, WorkoutDetail>();
+  for (const detail of data.workoutDetails || []) {
+    if (detail.workoutId) {
+      workoutDetailsByWorkoutId.set(detail.workoutId, detail);
+    }
+  }
+
   const enrichedWorkouts = data.workouts
     .slice()
     .sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     )
     .map((workout) => {
-      const workoutDate = toDateKey(workout.startedAt);
+      const workoutDate = workoutDayKey(workout);
       const restingHr = healthByDate.get(workoutDate)?.restingHrBpm ?? 55;
       const difficultyAuto = computeWorkoutDifficultyAuto(workout, goals, restingHr);
       const difficultyUser =
@@ -1722,7 +2340,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
   const workoutsByDate = new Map<string, WorkoutEntry[]>();
   for (const workout of enrichedWorkouts) {
-    const dateKey = toDateKey(workout.startedAt);
+    const dateKey = workoutDayKey(workout);
     if (!workoutsByDate.has(dateKey)) {
       workoutsByDate.set(dateKey, []);
     }
@@ -1739,7 +2357,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
   }
 
   const todayKey = toDateKey(now);
-  const minimumStart = shiftDate(todayKey, -240);
+  const minimumStart = shiftDate(todayKey, -365);
 
   const dataDateCandidates: string[] = [minimumStart];
   if (healthDays.length > 0) {
@@ -1756,110 +2374,126 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
   const startKey = dataDateCandidates[0] || minimumStart;
   const dateWindow = buildDateRange(startKey, todayKey);
 
-  const pass1 = runComputationModel({
+  const rows = runModel({
     dateWindow,
     healthByDate,
     workoutsByDate,
     sessionsByDate,
+    workoutDetailsByWorkoutId,
     goals,
     exams: data.exams,
     todos: data.todos,
-  });
-
-  const personalizedNeedMap = estimateNeedMap(dateWindow, pass1);
-
-  const rows = runComputationModel({
-    dateWindow,
-    healthByDate,
-    workoutsByDate,
-    sessionsByDate,
-    goals,
-    exams: data.exams,
-    todos: data.todos,
-    sleepNeedOverride: personalizedNeedMap,
   });
 
   const readinessByDate: Record<string, DailyReadiness> = {};
   const recommendationsByDate: Record<string, DailyRecommendation> = {};
   const scientificByDate: Record<string, ScientificDailyMetrics> = {};
 
+  const preferredBedtimeStartMinutes = parseClockToMinutes(goals.preferredBedtimeStart, 21 * 60);
+  const preferredBedtimeEndMinutes = parseClockToMinutes(goals.preferredBedtimeEnd, 22 * 60);
+  const preferredBedtimeCenterMinutes = windowCenterMinutes(
+    preferredBedtimeStartMinutes,
+    preferredBedtimeEndMinutes,
+  );
+
+  let runningSleepDebt = 0;
+
   for (const row of rows) {
-    const anyRow = row as DailyComputation & {
-      __trainingCategory?: TrainingCategory;
-      __studyTargetHoursLow?: number;
-      __studyTargetHoursHigh?: number;
-      __workoutSuggestion?: string;
-      __bedtimeMinutes?: number;
-      __bedtimeHalfRange?: number;
-      __freshAirMinutes?: number;
-      __sleepDriverMode?: "negative" | "positive";
-      __sleepDriverKey?: SleepDriverKey;
-      __sleepDriverImpact?: number;
-      __readinessScore?: number;
-      __autonomicComponent?: number;
-      __loadComponent?: number;
-      __cognitiveComponent?: number;
-    };
+    const daysSinceRun = computeDaysSinceRun(row.date, workoutsByDate);
 
-    const trainingCategory = anyRow.__trainingCategory || "easy_run";
+    const trainingCategory = buildTrainingCategory(
+      row.physicalState,
+      row.recoveryScore,
+      row.physicalTargetCenter,
+      daysSinceRun,
+    );
+
     const prescription = TRAINING_PRESCRIPTIONS[trainingCategory];
-    const studyTargetHoursLow = anyRow.__studyTargetHoursLow ?? Math.max(0.5, goals.baselineStudyHours - 0.8);
-    const studyTargetHoursHigh = anyRow.__studyTargetHoursHigh ?? goals.baselineStudyHours + 0.8;
-    const studyTargetHours = round((studyTargetHoursLow + studyTargetHoursHigh) / 2, 2);
 
-    const bedtimeMinutes = anyRow.__bedtimeMinutes ?? 21 * 60 + 30;
-    const bedtimeHalfRange = anyRow.__bedtimeHalfRange ?? 20;
-    const bedtimeRangeStart = bedtimeMinutes - bedtimeHalfRange;
-    const bedtimeRangeEnd = bedtimeMinutes + bedtimeHalfRange;
+    runningSleepDebt =
+      0.7 * runningSleepDebt +
+      Math.max(0, (row.sleepNeedMin - (row.sleepAsleepMin || 0)) / 60);
 
-    const readinessScore = clamp(anyRow.__readinessScore ?? 50, 0, 100);
-    const sleepDriverMode = anyRow.__sleepDriverMode || "negative";
-    const sleepDriverKey = anyRow.__sleepDriverKey || "duration";
-    const sleepDriverImpact = anyRow.__sleepDriverImpact || 0;
+    const sleepDriverMode: "negative" | "positive" = row.sleepScore < 65 ? "negative" : "positive";
+    const sleepDriverKey =
+      row.sleepContribution.duration >= row.sleepContribution.continuity &&
+      row.sleepContribution.duration >= row.sleepContribution.regularity
+        ? "duration"
+        : row.sleepContribution.regularity >= row.sleepContribution.continuity
+        ? "regularity"
+        : "awake";
+
+    const autonomicComponent = clamp(
+      ((row.compHrv || 50) * 0.45 + (row.compRhr || 50) * 0.35 + (row.compRr || 50) * 0.2),
+      0,
+      100,
+    );
+
+    const loadComponent = clamp(100 - 0.65 * row.physicalStrain - 0.35 * row.mentalStrain, 0, 100);
+    const cognitiveComponent = clamp(0.6 * row.mentalRecovery + 0.4 * row.sleepScore, 0, 100);
+
+    const readinessScore = clamp(
+      0.5 * row.recoveryScore + 0.3 * row.mentalRecovery + 0.2 * row.sleepScore,
+      0,
+      100,
+    );
 
     const readiness: DailyReadiness = {
       date: row.date,
       score: round(readinessScore, 1),
       zone: zoneForScore(readinessScore),
-      confidence: round(row.confidenceOverall, 2),
-      sleepScore: row.sleepScore,
-      sleepDurationScore: row.sleepDurationScore,
-      sleepRegularityScore: row.sleepRegularityScore,
-      sleepStageScore: row.sleepStageScore,
-      sleepAwakeScore: row.sleepAwakeScore,
-      sleepScheduleScore: row.sleepTimingScore,
+      confidence: round(row.overallConfidence, 2),
+      sleepScore: round(row.sleepScore, 1),
+      sleepDurationScore: round(row.sleepDurationScore || 50, 1),
+      sleepRegularityScore: round(row.sleepRegularityScore || 50, 1),
+      sleepStageScore: round(row.sleepStagesScore || 50, 1),
+      sleepAwakeScore: round(row.sleepContinuityScore || 50, 1),
+      sleepScheduleScore: round(row.sleepRegularityScore || 50, 1),
       sleepDriverMode,
       sleepDriverKey,
-      sleepDriverImpact: round(sleepDriverImpact, 1),
+      sleepDriverImpact: round(
+        row.sleepContribution.duration + row.sleepContribution.continuity + row.sleepContribution.regularity,
+        1,
+      ),
       sleepDriverSentence: sentenceForDriver(sleepDriverMode, sleepDriverKey),
-      sleepComponent: row.sleepScore,
-      autonomicComponent: round(anyRow.__autonomicComponent ?? 50, 1),
-      loadComponent: round(anyRow.__loadComponent ?? 50, 1),
-      cognitiveComponent: round(anyRow.__cognitiveComponent ?? 50, 1),
-      penalty: 0,
-      sleepDebtHours: row.sleepDebtHours,
-      sleepHours: row.sleepHours,
-      loadRatio: row.physicalLoadRatio,
-      zHrv: row.zLhrv,
-      zRhr: row.zRhr,
-      recoveryScore: row.recoveryScore,
-      mentalRecoveryScore: row.mentalRecovery,
-      physicalStrain: row.physicalStrain,
-      mentalStrain: row.mentalStrain,
-      physicalTargetLow: row.physicalTargetLow,
-      physicalTargetHigh: row.physicalTargetHigh,
-      mentalTargetLow: row.mentalTargetLow,
-      mentalTargetHigh: row.mentalTargetHigh,
-      pressure: row.pressure,
-      confidenceSleep: row.confidenceSleep,
-      confidenceRecovery: row.confidenceRecovery,
-      confidencePhysical: row.confidencePhysical,
-      confidenceMental: row.confidenceMentalRecovery,
+      sleepComponent: round(row.sleepScore, 1),
+      autonomicComponent: round(autonomicComponent, 1),
+      loadComponent: round(loadComponent, 1),
+      cognitiveComponent: round(cognitiveComponent, 1),
+      penalty: round(0.1 * row.physicalStrain + 0.05 * row.mentalStrain, 1),
+      sleepDebtHours: round(runningSleepDebt, 2),
+      sleepHours: round((row.sleepAsleepMin || 0) / 60, 2),
+      loadRatio: round(row.ai, 3),
+      zHrv: round(row.zHrv || 0, 3),
+      zRhr: round(row.zRhr || 0, 3),
+      recoveryScore: round(row.recoveryScore, 1),
+      mentalRecoveryScore: round(row.mentalRecovery, 1),
+      physicalStrain: round(row.physicalStrain, 2),
+      mentalStrain: round(row.mentalStrain, 2),
+      physicalTargetLow: round(row.physicalTargetLow, 2),
+      physicalTargetHigh: round(row.physicalTargetHigh, 2),
+      mentalTargetLow: round(row.mentalTargetLow, 2),
+      mentalTargetHigh: round(row.mentalTargetHigh, 2),
+      pressure: round(row.examUrgency, 3),
+      confidenceSleep: round(row.sleepConfidence, 3),
+      confidenceRecovery: round(row.recoveryConfidence, 3),
+      confidencePhysical: round(row.physicalConfidence, 3),
+      confidenceMental: round(row.mentalConfidence, 3),
     };
+
+    const bedtimeCenter = preferredBedtimeCenterMinutes;
+    const bedtimeAdjustMinutes = Math.round(
+      clamp((60 - row.recoveryScore) / 2, -15, 20) +
+        clamp((55 - row.mentalRecovery) / 2, -10, 15) +
+        clamp(runningSleepDebt * 8, 0, 25),
+    );
+
+    const bedtimeMinutes = bedtimeCenter - bedtimeAdjustMinutes;
+    const bedtimeHalfRange = Math.round(10 + (1 - row.overallConfidence) * 20);
 
     const recommendation: DailyRecommendation = {
       date: row.date,
-      studyTargetHours,
+      studyTargetHours: round((row.studyTargetLow + row.studyTargetHigh) / 2, 2),
       trainingCategory,
       trainingLabel: prescription.label,
       runMinutesMin: prescription.runMinutesMin,
@@ -1868,89 +2502,210 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       walkMinutesMax: prescription.walkMinutesMax,
       targetRpeMin: prescription.targetRpeMin,
       targetRpeMax: prescription.targetRpeMax,
-      trainingRationale: `Targets and recovery indicate ${prescription.label.toLowerCase()} is appropriate today (physical target ${row.physicalTargetLow.toFixed(1)}-${row.physicalTargetHigh.toFixed(1)} / 21).`,
+      trainingRationale: physicalStateRationale(row.physicalState, row.fi, row.ai, row.recoveryScore),
       isRunRecommended: prescription.isRunRecommended,
       workoutType: prescription.isRunRecommended ? "cardio" : "recovery",
       workoutDurationMin: prescription.isRunRecommended ? prescription.runMinutesMax : 0,
-      workoutSuggestion:
-        anyRow.__workoutSuggestion ||
-        (prescription.isRunRecommended
-          ? `${prescription.label}: run ${prescription.runMinutesMin}-${prescription.runMinutesMax}m`
-          : `Walk ${prescription.walkMinutesMin}-${prescription.walkMinutesMax}m`),
+      workoutSuggestion: prescription.isRunRecommended
+        ? `${prescription.label}: ${prescription.runMinutesMin}-${prescription.runMinutesMax}m at RPE ${prescription.targetRpeMin}-${prescription.targetRpeMax}`
+        : `Walk ${prescription.walkMinutesMin}-${prescription.walkMinutesMax}m`,
       bedtimeIso: toIsoOnDate(row.date, bedtimeMinutes),
       bedtimeLabel: formatClockLabel(bedtimeMinutes),
-      bedtimeRangeStartIso: toIsoOnDate(row.date, bedtimeRangeStart),
-      bedtimeRangeEndIso: toIsoOnDate(row.date, bedtimeRangeEnd),
-      bedtimeRangeStartLabel: formatClockLabel(bedtimeRangeStart),
-      bedtimeRangeEndLabel: formatClockLabel(bedtimeRangeEnd),
-      bedtimeRangeLabel: `${formatClockLabel(bedtimeRangeStart)}-${formatClockLabel(bedtimeRangeEnd)}`,
+      bedtimeRangeStartIso: toIsoOnDate(row.date, bedtimeMinutes - bedtimeHalfRange),
+      bedtimeRangeEndIso: toIsoOnDate(row.date, bedtimeMinutes + bedtimeHalfRange),
+      bedtimeRangeStartLabel: formatClockLabel(bedtimeMinutes - bedtimeHalfRange),
+      bedtimeRangeEndLabel: formatClockLabel(bedtimeMinutes + bedtimeHalfRange),
+      bedtimeRangeLabel: `${formatClockLabel(bedtimeMinutes - bedtimeHalfRange)}-${formatClockLabel(bedtimeMinutes + bedtimeHalfRange)}`,
       bedtimeRangeMinutes: bedtimeHalfRange * 2,
-      studyTargetHoursLow,
-      studyTargetHoursHigh,
-      recommendedFreshAirMinutes: anyRow.__freshAirMinutes ?? 30,
-      physicalTargetLow: row.physicalTargetLow,
-      physicalTargetHigh: row.physicalTargetHigh,
-      mentalTargetLow: row.mentalTargetLow,
-      mentalTargetHigh: row.mentalTargetHigh,
+      studyTargetHoursLow: row.studyTargetLow,
+      studyTargetHoursHigh: row.studyTargetHigh,
+      studyTargetLow: row.studyTargetLow,
+      studyTargetHigh: row.studyTargetHigh,
+      studyRationale: row.studyRationale,
+      recommendedFreshAirMinutes: freshnessMinutes(row.mentalRecovery),
+      physicalTargetLow: round(row.physicalTargetLow, 2),
+      physicalTargetHigh: round(row.physicalTargetHigh, 2),
+      mentalTargetLow: round(row.mentalTargetLow, 2),
+      mentalTargetHigh: round(row.mentalTargetHigh, 2),
+      physicalState: row.physicalState,
+      mentalState: row.mentalState,
       scientificSummary: row.narrative,
     };
 
     const scientific: ScientificDailyMetrics = {
       date: row.date,
-      sleepNeedHours: row.sleepNeedHours,
-      sleepHours: row.sleepHours,
-      sleepScore: row.sleepScore,
-      recoveryScore: row.recoveryScore,
-      physicalStrain: row.physicalStrain,
-      mentalRecovery: row.mentalRecovery,
-      mentalStrain: row.mentalStrain,
-      physicalRawLoad: row.physicalRawLoad,
-      mentalRawLoad: row.mentalRawLoad,
-      pressure: row.pressure,
-      physicalAcuteLoad: row.physicalAcuteLoad,
-      physicalChronicLoad: row.physicalChronicLoad,
-      mentalAcuteLoad: row.mentalAcuteLoad,
-      mentalChronicLoad: row.mentalChronicLoad,
-      physicalLoadRatio: row.physicalLoadRatio,
-      mentalLoadRatio: row.mentalLoadRatio,
-      physicalCap: row.physicalCap,
-      mentalCap: row.mentalCap,
+      sleepNeedHours: round(row.sleepNeedMin / 60, 2),
+      sleepHours: round((row.sleepAsleepMin || 0) / 60, 2),
+      sleepEfficiency: round(row.sleepEfficiency || 0, 3),
+      sleepWasoMinutes: round(row.sleepWasoMin || 0, 1),
+      sleepMidpointDeltaMinutes: round(row.sleepMidpointDeltaMin || 0, 1),
+      sleepScore: round(row.sleepScore, 1),
+      recoveryScore: round(row.recoveryScore, 1),
+      physicalStrain: round(row.physicalStrain, 2),
+      mentalRecovery: round(row.mentalRecovery, 1),
+      mentalStrain: round(row.mentalStrain, 2),
+      physicalRawLoad: round(row.physicalImpulse, 2),
+      mentalRawLoad: round(row.mentalImpulse, 2),
+      pressure: round(row.examUrgency, 3),
+      physicalAcuteLoad: round(row.atl, 2),
+      physicalChronicLoad: round(row.ctl, 2),
+      mentalAcuteLoad: round(row.mal, 2),
+      mentalChronicLoad: round(row.mcl, 2),
+      physicalLoadRatio: round(row.ai, 3),
+      mentalLoadRatio: round(row.mai, 3),
+      physicalCap: round(row.physicalRef, 2),
+      mentalCap: round(row.mentalRef, 2),
       physicalTarget: {
-        low: row.physicalTargetLow,
-        center: row.physicalTargetCenter,
-        high: row.physicalTargetHigh,
+        low: round(row.physicalTargetLow, 2),
+        center: round(row.physicalTargetCenter, 2),
+        high: round(row.physicalTargetHigh, 2),
       },
       mentalTarget: {
-        low: row.mentalTargetLow,
-        center: row.mentalTargetCenter,
-        high: row.mentalTargetHigh,
+        low: round(row.mentalTargetLow, 2),
+        center: round(row.mentalTargetCenter, 2),
+        high: round(row.mentalTargetHigh, 2),
       },
+      physicalState: row.physicalState,
+      mentalState: row.mentalState,
+      cardioLoad: {
+        state: row.physicalState,
+        stateScore: round(
+          clamp(
+            100 -
+              Math.abs(row.fi - 1) * 70 -
+              Math.max(0, row.ai - 0.15) * 120 -
+              Math.max(0, 45 - row.recoveryScore),
+            0,
+            100,
+          ),
+          1,
+        ),
+        stateThresholds: {
+          fi_detraining: 0.75,
+          fi_productive_low: 0.9,
+          fi_productive_high: 1.15,
+          ai_fatigued: 0.25,
+          ai_overtraining: 0.35,
+          recovery_low: 45,
+        },
+        stateRationale: physicalStateRationale(row.physicalState, row.fi, row.ai, row.recoveryScore),
+      },
+      mentalLoadState: {
+        state: row.mentalState,
+        stateScore: round(
+          clamp(
+            100 -
+              Math.abs(row.mfi - 1) * 70 -
+              Math.max(0, row.mai - 0.15) * 120 -
+              Math.max(0, 55 - row.mentalRecovery),
+            0,
+            100,
+          ),
+          1,
+        ),
+        stateThresholds: {
+          mfi_underloaded: 0.75,
+          mfi_productive_low: 0.9,
+          mfi_productive_high: 1.15,
+          mai_fatigued: 0.25,
+          mental_recovery_low: 50,
+        },
+        stateRationale: mentalStateRationale(row.mentalState, row.mfi, row.mai, row.mentalRecovery),
+      },
+      studyTargetLow: row.studyTargetLow,
+      studyTargetHigh: row.studyTargetHigh,
+      studyRationale: row.studyRationale,
       components: {
-        sleepDuration: row.sleepDurationScore,
-        sleepEfficiency: row.sleepEfficiencyScore,
-        sleepRegularity: row.sleepRegularityScore,
-        sleepTiming: row.sleepTimingScore,
-        sleepStage: row.sleepStageScore,
-        zLhrv: row.zLhrv,
-        zRhr: row.zRhr,
-        zRr: row.zRr,
-        zSleep: row.zSleep,
-        zApl: row.zApl,
-        zAml: row.zAml,
-        underload: row.underload,
-        gate: row.gate,
-        gUnder: row.gUnder,
-        pressure: row.pressure,
+        sleepDuration: round(row.sleepDurationScore || 50, 2),
+        sleepContinuity: round(row.sleepContinuityScore || 50, 2),
+        sleepRegularity: round(row.sleepRegularityScore || 50, 2),
+        sleepStages: round(row.sleepStagesScore || 50, 2),
+        zLhrv: round(row.zHrv || 0, 3),
+        zRhr: round(row.zRhr || 0, 3),
+        zRr: round(row.zRr || 0, 3),
+        zApl: round(row.ai, 3),
+        zAml: round(row.mai, 3),
+        compHrv: round(row.compHrv || 50, 2),
+        compRhr: round(row.compRhr || 50, 2),
+        compRr: round(row.compRr || 50, 2),
+        underload: round(row.underload, 3),
+        gate: round(row.gate, 3),
+        gUnder: round(row.gUnder, 3),
+        ctl: round(row.ctl, 2),
+        atl: round(row.atl, 2),
+        tsb: round(row.tsb, 2),
+        mcl: round(row.mcl, 2),
+        mal: round(row.mal, 2),
+        fi: round(row.fi, 3),
+        ai: round(row.ai, 3),
+        mfi: round(row.mfi, 3),
+        mai: round(row.mai, 3),
+        examUrgency: round(row.examUrgency, 3),
       },
       confidence: {
-        sleep: row.confidenceSleep,
-        recovery: row.confidenceRecovery,
-        physicalStrain: row.confidencePhysical,
-        mentalRecovery: row.confidenceMentalRecovery,
-        mentalStrain: row.confidenceMentalStrain,
-        overall: row.confidenceOverall,
+        sleep: round(row.sleepConfidence, 3),
+        recovery: round(row.recoveryConfidence, 3),
+        physicalStrain: round(row.physicalConfidence, 3),
+        mentalRecovery: round(row.mentalConfidence, 3),
+        mentalStrain: round(row.mentalConfidence, 3),
+        overall: round(row.overallConfidence, 3),
       },
-      fallbackFlags: row.fallbackFlags,
+      chartPayloads: {
+        physicalStrain: {
+          timestamp: `${row.date}T00:00:00.000Z`,
+          rawValue: round(row.physicalImpulse, 2),
+          normalizedValue: round(row.physicalStrain / 100, 4),
+          componentContributions: {
+            workoutLoad: round(row.physicalImpulseWorkout, 2),
+            fallbackLoad: round(row.physicalImpulseFallback, 2),
+            ctl: round(row.ctl, 2),
+            atl: round(row.atl, 2),
+          },
+          confidence: round(row.physicalConfidence, 3),
+        },
+        mentalStrain: {
+          timestamp: `${row.date}T00:00:00.000Z`,
+          rawValue: round(row.mentalImpulse, 2),
+          normalizedValue: round(row.mentalStrain / 100, 4),
+          componentContributions: {
+            studyLoad: round(row.mentalSessionImpulse, 2),
+            examUrgencyAmplifier: round(row.mentalImpulse - row.mentalSessionImpulse, 2),
+            mcl: round(row.mcl, 2),
+            mal: round(row.mal, 2),
+          },
+          confidence: round(row.mentalConfidence, 3),
+        },
+      },
+      explainability: {
+        sleep: {
+          reasonCodes: row.sleepReasonCodes,
+          userMessages: row.sleepMessages,
+          contributionBreakdown: row.sleepContribution,
+          lowReasons: row.sleepLowReasons,
+          highReasons: row.sleepHighReasons,
+        },
+        physicalRecovery: {
+          reasonCodes: row.recoveryReasonCodes,
+          userMessages: row.recoveryMessages,
+          contributionBreakdown: row.recoveryContribution,
+          reasons: row.recoveryReasons,
+        },
+        mentalRecovery: {
+          reasonCodes: row.mentalRecoveryReasonCodes,
+          userMessages: row.mentalRecoveryMessages,
+          contributionBreakdown: row.mentalRecoveryContribution,
+          reasons: row.mentalRecoveryReasons,
+        },
+        targetRange: {
+          reasonCodes: row.targetReasonCodes,
+          userMessages: row.targetMessages,
+          contributionBreakdown: row.targetContribution,
+          physicalReasons: row.targetPhysicalReasons,
+          mentalReasons: row.targetMentalReasons,
+          studyRationale: row.studyRationale,
+        },
+      },
+      fallbackFlags: [...new Set(row.fallbackFlags)],
       narrative: row.narrative,
     };
 
