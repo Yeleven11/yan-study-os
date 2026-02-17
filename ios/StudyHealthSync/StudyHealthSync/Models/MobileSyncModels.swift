@@ -38,6 +38,9 @@ struct DailyHealthPayload: Codable {
     let sleepDeepHours: Double?
     let sleepRemHours: Double?
     let sleepAwakeHours: Double?
+    let sleepMidpointHour: Double?
+    let sleepBedtimeHour: Double?
+    let sleepRegularitySRI: Double?
     let hrvMs: Double?
     let restingHrBpm: Double?
     let heartRateMinBpm: Double?

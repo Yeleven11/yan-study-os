@@ -41,6 +41,11 @@ function round(value: number, digits = 3): number {
   return Math.round(value * factor) / factor;
 }
 
+function wrapHour(value: number): number {
+  const normalized = value % 24;
+  return normalized < 0 ? normalized + 24 : normalized;
+}
+
 function normalizeFinite(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
@@ -240,6 +245,9 @@ function upsertDailyHealth(
       "sleepDeepHours",
       "sleepRemHours",
       "sleepAwakeHours",
+      "sleepMidpointHour",
+      "sleepBedtimeHour",
+      "sleepRegularitySRI",
       "hrvMs",
       "restingHrBpm",
       "heartRateMinBpm",
@@ -252,6 +260,18 @@ function upsertDailyHealth(
       "restingEnergyKj",
       "exerciseTimeMin",
     ]);
+
+    if (typeof next.sleepMidpointHour === "number" && Number.isFinite(next.sleepMidpointHour)) {
+      next.sleepMidpointHour = round(wrapHour(next.sleepMidpointHour), 3);
+    }
+
+    if (typeof next.sleepBedtimeHour === "number" && Number.isFinite(next.sleepBedtimeHour)) {
+      next.sleepBedtimeHour = round(wrapHour(next.sleepBedtimeHour), 3);
+    }
+
+    if (typeof next.sleepRegularitySRI === "number" && Number.isFinite(next.sleepRegularitySRI)) {
+      next.sleepRegularitySRI = round(clamp(next.sleepRegularitySRI, 0, 100), 3);
+    }
 
     const isNew = !existing;
     byDate.set(date, next);

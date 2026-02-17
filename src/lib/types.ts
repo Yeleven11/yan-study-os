@@ -172,6 +172,8 @@ export interface DailyHealthFact {
   heartRateAvgBpm?: number;
   respiratoryRateBpm?: number;
   sleepMidpointHour?: number;
+  sleepBedtimeHour?: number;
+  sleepRegularitySRI?: number;
   steps?: number;
   walkRunDistanceKm?: number;
   activeEnergyKj?: number;
@@ -301,6 +303,9 @@ export interface MobileSyncDailyHealthInput {
   sleepDeepHours?: number;
   sleepRemHours?: number;
   sleepAwakeHours?: number;
+  sleepMidpointHour?: number;
+  sleepBedtimeHour?: number;
+  sleepRegularitySRI?: number;
   hrvMs?: number;
   restingHrBpm?: number;
   heartRateMinBpm?: number;
@@ -391,6 +396,19 @@ export interface DailyReadiness {
   loadRatio: number;
   zHrv: number;
   zRhr: number;
+  recoveryScore?: number;
+  mentalRecoveryScore?: number;
+  physicalStrain?: number;
+  mentalStrain?: number;
+  physicalTargetLow?: number;
+  physicalTargetHigh?: number;
+  mentalTargetLow?: number;
+  mentalTargetHigh?: number;
+  pressure?: number;
+  confidenceSleep?: number;
+  confidenceRecovery?: number;
+  confidencePhysical?: number;
+  confidenceMental?: number;
 }
 
 export interface DailyRecommendation {
@@ -417,6 +435,75 @@ export interface DailyRecommendation {
   bedtimeRangeEndLabel: string;
   bedtimeRangeLabel: string;
   bedtimeRangeMinutes: number;
+  studyTargetHoursLow?: number;
+  studyTargetHoursHigh?: number;
+  recommendedFreshAirMinutes?: number;
+  physicalTargetLow?: number;
+  physicalTargetHigh?: number;
+  mentalTargetLow?: number;
+  mentalTargetHigh?: number;
+  scientificSummary?: string;
+}
+
+export interface ScientificMetricComponents {
+  sleepDuration: number;
+  sleepEfficiency: number;
+  sleepRegularity: number;
+  sleepTiming: number;
+  sleepStage: number;
+  zLhrv: number;
+  zRhr: number;
+  zRr: number;
+  zSleep: number;
+  zApl: number;
+  zAml: number;
+  underload: number;
+  gate: number;
+  gUnder: number;
+  pressure: number;
+}
+
+export interface ScientificTargetRange {
+  low: number;
+  center: number;
+  high: number;
+}
+
+export interface ScientificMetricConfidence {
+  sleep: number;
+  recovery: number;
+  physicalStrain: number;
+  mentalRecovery: number;
+  mentalStrain: number;
+  overall: number;
+}
+
+export interface ScientificDailyMetrics {
+  date: string;
+  sleepNeedHours: number;
+  sleepHours: number;
+  sleepScore: number;
+  recoveryScore: number;
+  physicalStrain: number;
+  mentalRecovery: number;
+  mentalStrain: number;
+  physicalRawLoad: number;
+  mentalRawLoad: number;
+  pressure: number;
+  physicalAcuteLoad: number;
+  physicalChronicLoad: number;
+  mentalAcuteLoad: number;
+  mentalChronicLoad: number;
+  physicalLoadRatio: number;
+  mentalLoadRatio: number;
+  physicalCap: number;
+  mentalCap: number;
+  physicalTarget: ScientificTargetRange;
+  mentalTarget: ScientificTargetRange;
+  components: ScientificMetricComponents;
+  confidence: ScientificMetricConfidence;
+  fallbackFlags: string[];
+  narrative: string;
 }
 
 export interface AppData {

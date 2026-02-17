@@ -41,8 +41,13 @@ Private study operating system for IBDP finals with integrated health/performanc
 - CSV ingest from Health Auto Export (`/api/integrations/health/csv`, `/api/integrations/health/import-batch`).
 - Native iOS JSON ingest (`/api/integrations/health/mobile-sync`).
 - Workout detail drill-down with merged streams and provenance.
-- Run-focused readiness model (sleep + load + detraining guardrails) with 5 recommendation zones.
+- Deterministic multi-domain metric engine for sleep, recovery, physical strain, mental recovery, and mental strain.
 - User-editable workout difficulty override (1-10) feeding future training load.
+
+Mathematical and debugging docs live in:
+
+- `docs/metric-framework/FORMULAS.md`
+- `docs/metric-framework/DEBUG_GUIDE.md`
 
 ## Stack
 

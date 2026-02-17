@@ -28,6 +28,7 @@ import {
   toDateKey,
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
+import { ScientificDashboard } from "@/components/scientific-dashboard";
 import {
   applyFlashcardGrade,
   buildFlashcardSessionSnapshot,
@@ -68,6 +69,7 @@ const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
 const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
 const COUNTDOWN_BASELINES_KEY = "yan-study-os:countdown-baselines:v1";
+const SCIENTIFIC_MODE_KEY = "yan-study-os:scientific-mode:v1";
 const INITIAL_NOW_MS = Date.now();
 const CALENDAR_MIN_START_DATE = "2026-02-10";
 const STUDY_STREAK_THRESHOLD_SECONDS = 90 * 60;
@@ -725,6 +727,12 @@ export default function StudyDashboard() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<ExpandedCard>(null);
   const [isCountdownExpanded, setIsCountdownExpanded] = useState(false);
+  const [scientificMode, setScientificMode] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(SCIENTIFIC_MODE_KEY) === "1";
+  });
   const focusFeedSectionRef = useRef<HTMLElement | null>(null);
   const focusFeedScrollRef = useRef<HTMLDivElement | null>(null);
   const focusFeedTooltipRef = useRef<HTMLDivElement | null>(null);
@@ -847,6 +855,14 @@ export default function StudyDashboard() {
 
     window.localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(offlineQueue));
   }, [offlineQueue]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(SCIENTIFIC_MODE_KEY, scientificMode ? "1" : "0");
+  }, [scientificMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1219,8 +1235,20 @@ export default function StudyDashboard() {
     () => performanceInsights?.recommendationsByDate || {},
     [performanceInsights],
   );
+  const scientificByDate = useMemo(
+    () => performanceInsights?.scientificByDate || {},
+    [performanceInsights],
+  );
   const todayReadiness = performanceInsights?.todayReadiness || null;
   const todayRecommendation = performanceInsights?.todayRecommendation || null;
+  const todayScientific = performanceInsights?.todayScientific || null;
+  const scientificSeries = useMemo(
+    () =>
+      Object.values(scientificByDate).sort(
+        (left, right) => new Date(left.date).getTime() - new Date(right.date).getTime(),
+      ),
+    [scientificByDate],
+  );
 
   const workoutsByDate = useMemo(() => {
     if (!performanceInsights) {
@@ -2091,6 +2119,16 @@ export default function StudyDashboard() {
               />
             </aside>
 
+            {scientificMode ? (
+              <ScientificDashboard
+                todayReadiness={todayReadiness}
+                todayRecommendation={todayRecommendation}
+                todayScientific={todayScientific}
+                scientificSeries={scientificSeries}
+                sortedWorkouts={sortedWorkouts}
+              />
+            ) : (
+              <>
             <main
               className="grid h-full min-h-0 gap-4 overflow-hidden"
               style={{
@@ -2113,16 +2151,29 @@ export default function StudyDashboard() {
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
                   <h2 className="text-sm font-semibold">Countdown Monitor</h2>
                 </div>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setIsCountdownExpanded((current) => !current);
-                  }}
-                  className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                >
-                  {isCountdownExpanded ? "Done" : "Edit"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setScientificMode((current) => !current);
+                    }}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    title="Toggle between default and scientific dashboard"
+                  >
+                    {scientificMode ? "Default View" : "Scientific View"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setIsCountdownExpanded((current) => !current);
+                    }}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                  >
+                    {isCountdownExpanded ? "Done" : "Edit"}
+                  </button>
+                </div>
               </div>
 
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -2932,6 +2983,8 @@ export default function StudyDashboard() {
             onSelectWorkout={(workoutId) => void handleSelectWorkout(workoutId)}
             usingSampleData={Boolean(performanceInsights?.usingSampleData)}
           />
+              </>
+            )}
         </div>
       </div>
 

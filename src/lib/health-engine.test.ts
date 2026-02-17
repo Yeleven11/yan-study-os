@@ -1,454 +1,282 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDefaultAppData } from "./constants";
-import type { AppData, DailyHealthFact } from "./types";
 import { buildPerformanceInsights } from "./health-engine";
+import type { AppData, DailyHealthFact, StudySession, WorkoutEntry } from "./types";
 
-function createDataWithHealth(days: DailyHealthFact[]): AppData {
-  const seed = createDefaultAppData("Europe/Berlin");
+function addDays(dateKey: string, offset: number): string {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function makeHealthDay(date: string, patch: Partial<DailyHealthFact> = {}): DailyHealthFact {
   return {
-    ...seed,
-    dailyHealth: days,
-    workouts: [],
-    studySessions: [],
-    todos: [],
+    date,
+    sleepHours: 8.2,
+    sleepAsleepHours: 8.2,
+    sleepInBedHours: 8.8,
+    sleepCoreHours: 4.1,
+    sleepDeepHours: 1.5,
+    sleepRemHours: 2.1,
+    sleepAwakeHours: 0.3,
+    sleepMidpointHour: 3.1,
+    sleepBedtimeHour: 23.0,
+    hrvMs: 75,
+    restingHrBpm: 52,
+    respiratoryRateBpm: 13.5,
+    steps: 9000,
+    activeEnergyKj: 1800,
+    source: "manual",
+    createdAt: `${date}T00:00:00Z`,
+    ...patch,
   };
 }
 
-test("sleep driver chooses debt in low-score scenarios", () => {
-  const days: DailyHealthFact[] = [
-    { date: "2026-02-08", sleepHours: 4.2, sleepCoreHours: 2.1, sleepDeepHours: 0.5, sleepRemHours: 1.0, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-08T00:00:00Z" },
-    { date: "2026-02-09", sleepHours: 4.0, sleepCoreHours: 2.0, sleepDeepHours: 0.4, sleepRemHours: 0.9, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-09T00:00:00Z" },
-    { date: "2026-02-10", sleepHours: 4.5, sleepCoreHours: 2.3, sleepDeepHours: 0.5, sleepRemHours: 1.0, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-10T00:00:00Z" },
-    { date: "2026-02-11", sleepHours: 4.4, sleepCoreHours: 2.2, sleepDeepHours: 0.4, sleepRemHours: 1.0, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-11T00:00:00Z" },
-    { date: "2026-02-12", sleepHours: 4.8, sleepCoreHours: 2.4, sleepDeepHours: 0.5, sleepRemHours: 1.1, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-12T00:00:00Z" },
-    { date: "2026-02-13", sleepHours: 5.0, sleepCoreHours: 2.6, sleepDeepHours: 0.6, sleepRemHours: 1.2, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-13T00:00:00Z" },
-    { date: "2026-02-14", sleepHours: 6.2, sleepCoreHours: 3.0, sleepDeepHours: 0.6, sleepRemHours: 1.6, sleepAwakeHours: 0.4, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-14T00:00:00Z" },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-
-  assert.ok(readiness.sleepScore < 65);
-  assert.equal(readiness.sleepDriverMode, "negative");
-  assert.equal(readiness.sleepDriverKey, "debt");
-  assert.match(readiness.sleepDriverSentence, /sleep debt/i);
-});
-
-test("sleep driver chooses duration in high-score scenarios", () => {
-  const days: DailyHealthFact[] = [
-    { date: "2026-02-08", sleepHours: 9.8, sleepCoreHours: 4.9, sleepDeepHours: 1.7, sleepRemHours: 2.7, sleepAwakeHours: 0.3, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-08T00:00:00Z" },
-    { date: "2026-02-09", sleepHours: 9.7, sleepCoreHours: 4.8, sleepDeepHours: 1.7, sleepRemHours: 2.6, sleepAwakeHours: 0.3, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-09T00:00:00Z" },
-    { date: "2026-02-10", sleepHours: 9.9, sleepCoreHours: 5.0, sleepDeepHours: 1.8, sleepRemHours: 2.7, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-10T00:00:00Z" },
-    { date: "2026-02-11", sleepHours: 10.1, sleepCoreHours: 5.1, sleepDeepHours: 1.8, sleepRemHours: 2.8, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-11T00:00:00Z" },
-    { date: "2026-02-12", sleepHours: 10.0, sleepCoreHours: 5.0, sleepDeepHours: 1.7, sleepRemHours: 2.8, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-12T00:00:00Z" },
-    { date: "2026-02-13", sleepHours: 10.2, sleepCoreHours: 5.1, sleepDeepHours: 1.8, sleepRemHours: 2.9, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-13T00:00:00Z" },
-    { date: "2026-02-14", sleepHours: 10.4, sleepCoreHours: 5.2, sleepDeepHours: 1.9, sleepRemHours: 2.9, sleepAwakeHours: 0.2, sleepMidpointHour: 3.0, source: "manual", createdAt: "2026-02-14T00:00:00Z" },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-
-  assert.ok(readiness.sleepScore >= 65);
-  assert.equal(readiness.sleepDriverMode, "positive");
-  assert.equal(readiness.sleepDriverKey, "duration");
-  assert.match(readiness.sleepDriverSentence, /duration/i);
-});
-
-test("schedule driver is not selected when midpoint signal is absent", () => {
-  const days: DailyHealthFact[] = [
-    { date: "2026-02-08", sleepHours: 7.2, sleepCoreHours: 4.2, sleepDeepHours: 0.8, sleepRemHours: 1.9, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-08T00:00:00Z" },
-    { date: "2026-02-09", sleepHours: 7.0, sleepCoreHours: 4.1, sleepDeepHours: 0.8, sleepRemHours: 1.8, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-09T00:00:00Z" },
-    { date: "2026-02-10", sleepHours: 7.3, sleepCoreHours: 4.2, sleepDeepHours: 0.8, sleepRemHours: 2.0, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-10T00:00:00Z" },
-    { date: "2026-02-11", sleepHours: 7.1, sleepCoreHours: 4.1, sleepDeepHours: 0.8, sleepRemHours: 1.9, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-11T00:00:00Z" },
-    { date: "2026-02-12", sleepHours: 7.0, sleepCoreHours: 4.0, sleepDeepHours: 0.8, sleepRemHours: 1.9, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-12T00:00:00Z" },
-    { date: "2026-02-13", sleepHours: 7.2, sleepCoreHours: 4.1, sleepDeepHours: 0.8, sleepRemHours: 2.0, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-13T00:00:00Z" },
-    { date: "2026-02-14", sleepHours: 7.1, sleepCoreHours: 4.1, sleepDeepHours: 0.8, sleepRemHours: 1.9, sleepAwakeHours: 0.3, source: "manual", createdAt: "2026-02-14T00:00:00Z" },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-  assert.notEqual(readiness.sleepDriverKey, "schedule");
-});
-
-test("historical sleep score remains unchanged when adding today's extreme sleep", () => {
-  const baseDays: DailyHealthFact[] = [
-    { date: "2026-02-08", sleepHours: 7.8, sleepCoreHours: 4.4, sleepDeepHours: 0.9, sleepRemHours: 2.2, sleepAwakeHours: 0.3, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-08T00:00:00Z" },
-    { date: "2026-02-09", sleepHours: 8.0, sleepCoreHours: 4.5, sleepDeepHours: 0.9, sleepRemHours: 2.3, sleepAwakeHours: 0.3, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-09T00:00:00Z" },
-    { date: "2026-02-10", sleepHours: 7.6, sleepCoreHours: 4.3, sleepDeepHours: 0.8, sleepRemHours: 2.2, sleepAwakeHours: 0.3, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-10T00:00:00Z" },
-    { date: "2026-02-11", sleepHours: 8.2, sleepCoreHours: 4.6, sleepDeepHours: 0.9, sleepRemHours: 2.4, sleepAwakeHours: 0.3, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-11T00:00:00Z" },
-    { date: "2026-02-12", sleepHours: 7.9, sleepCoreHours: 4.5, sleepDeepHours: 0.9, sleepRemHours: 2.3, sleepAwakeHours: 0.2, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-12T00:00:00Z" },
-    { date: "2026-02-13", sleepHours: 8.1, sleepCoreHours: 4.6, sleepDeepHours: 0.9, sleepRemHours: 2.4, sleepAwakeHours: 0.2, sleepMidpointHour: 3.1, source: "manual", createdAt: "2026-02-13T00:00:00Z" },
-  ];
-
-  const withSixDays = createDataWithHealth(baseDays);
-  const scoreBefore = buildPerformanceInsights(
-    withSixDays,
-    new Date("2026-02-13T12:00:00Z"),
-  ).readinessByDate["2026-02-13"].sleepScore;
-
-  const withExtremeToday = createDataWithHealth([
-    ...baseDays,
-    {
-      date: "2026-02-14",
-      sleepHours: 12,
-      sleepCoreHours: 5.5,
-      sleepDeepHours: 1.3,
-      sleepRemHours: 4.2,
-      sleepAwakeHours: 0.1,
-      sleepMidpointHour: 3.1,
-      source: "manual",
-      createdAt: "2026-02-14T00:00:00Z",
-    },
-  ]);
-  const scoreAfter = buildPerformanceInsights(
-    withExtremeToday,
-    new Date("2026-02-14T12:00:00Z"),
-  ).readinessByDate["2026-02-13"].sleepScore;
-
-  assert.equal(scoreAfter, scoreBefore);
-});
-
-test("sleep score with present but severe sleep data never falls below 30", () => {
-  const days: DailyHealthFact[] = [
-    {
-      date: "2026-02-14",
-      sleepHours: 3.6,
-      sleepCoreHours: 2.1,
-      sleepDeepHours: 0.2,
-      sleepRemHours: 0.8,
-      sleepAwakeHours: 0.5,
-      sleepMidpointHour: 3.6,
-      source: "manual",
-      createdAt: "2026-02-14T00:00:00Z",
-    },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-
-  assert.ok(readiness.sleepScore >= 30);
-});
-
-test("missing sleep data yields sleep score of zero", () => {
+function makeBaseData(startDate: string, totalDays: number): AppData {
   const seed = createDefaultAppData("Europe/Berlin");
-  const data: AppData = {
+  const dailyHealth: DailyHealthFact[] = [];
+
+  for (let i = 0; i < totalDays; i += 1) {
+    dailyHealth.push(makeHealthDay(addDays(startDate, i)));
+  }
+
+  return {
     ...seed,
-    dailyHealth: [],
-    workouts: [
-      {
-        id: "manual-workout-1",
-        type: "cardio",
-        startedAt: "2026-02-14T09:00:00Z",
-        endedAt: "2026-02-14T09:30:00Z",
-        durationMin: 30,
-        source: "manual",
-        createdAt: "2026-02-14T09:30:00Z",
-      },
-    ],
-    studySessions: [],
-    todos: [],
-  };
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-
-  assert.equal(insights.usingSampleData, false);
-  assert.equal(readiness.sleepScore, 0);
-  assert.match(readiness.sleepDriverSentence, /no sleep data/i);
-});
-
-test("4h then 12h then 8h sequence recovers materially by day 3", () => {
-  const days: DailyHealthFact[] = [
-    {
-      date: "2026-02-13",
-      sleepHours: 4.0,
-      sleepCoreHours: 2.0,
-      sleepDeepHours: 0.5,
-      sleepRemHours: 1.2,
-      sleepAwakeHours: 0.3,
-      sleepMidpointHour: 3.0,
-      source: "manual",
-      createdAt: "2026-02-13T00:00:00Z",
-    },
-    {
-      date: "2026-02-14",
-      sleepHours: 12.0,
-      sleepCoreHours: 5.7,
-      sleepDeepHours: 1.4,
-      sleepRemHours: 4.5,
-      sleepAwakeHours: 0.4,
-      sleepMidpointHour: 3.0,
-      source: "manual",
-      createdAt: "2026-02-14T00:00:00Z",
-    },
-    {
-      date: "2026-02-15",
-      sleepHours: 8.0,
-      sleepCoreHours: 4.5,
-      sleepDeepHours: 1.1,
-      sleepRemHours: 2.1,
-      sleepAwakeHours: 0.3,
-      sleepMidpointHour: 3.1,
-      source: "manual",
-      createdAt: "2026-02-15T00:00:00Z",
-    },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-15T12:00:00Z"));
-  const day1 = insights.readinessByDate["2026-02-13"].sleepScore;
-  const day3 = insights.readinessByDate["2026-02-15"].sleepScore;
-
-  assert.ok(day3 > day1 + 20);
-  assert.ok(day3 >= 60);
-});
-
-test("three consecutive target-plus nights strongly reduce debt and push score over 80", () => {
-  const days: DailyHealthFact[] = [
-    {
-      date: "2026-02-12",
-      sleepHours: 9.1,
-      sleepCoreHours: 4.9,
-      sleepDeepHours: 1.6,
-      sleepRemHours: 2.3,
-      sleepAwakeHours: 0.2,
-      sleepMidpointHour: 3.0,
-      source: "manual",
-      createdAt: "2026-02-12T00:00:00Z",
-    },
-    {
-      date: "2026-02-13",
-      sleepHours: 9.0,
-      sleepCoreHours: 4.8,
-      sleepDeepHours: 1.5,
-      sleepRemHours: 2.3,
-      sleepAwakeHours: 0.2,
-      sleepMidpointHour: 3.0,
-      source: "manual",
-      createdAt: "2026-02-13T00:00:00Z",
-    },
-    {
-      date: "2026-02-14",
-      sleepHours: 9.2,
-      sleepCoreHours: 4.9,
-      sleepDeepHours: 1.5,
-      sleepRemHours: 2.5,
-      sleepAwakeHours: 0.2,
-      sleepMidpointHour: 3.0,
-      source: "manual",
-      createdAt: "2026-02-14T00:00:00Z",
-    },
-  ];
-
-  const data = createDataWithHealth(days);
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const readiness = insights.readinessByDate["2026-02-14"];
-
-  assert.ok(readiness.sleepScore >= 80);
-  assert.ok(readiness.sleepDebtHours <= 0.5);
-});
-
-test("user difficulty override drives effective difficulty and session load", () => {
-  const seed = createDefaultAppData("Europe/Berlin");
-  const data: AppData = {
-    ...seed,
-    dailyHealth: [
-      {
-        date: "2026-02-14",
-        sleepHours: 8.2,
-        sleepCoreHours: 4.4,
-        sleepDeepHours: 1.1,
-        sleepRemHours: 2.2,
-        sleepAwakeHours: 0.3,
-        restingHrBpm: 55,
-        source: "manual",
-        createdAt: "2026-02-14T00:00:00Z",
-      },
-    ],
-    workouts: [
-      {
-        id: "run-override",
-        type: "cardio",
-        workoutNameRaw: "Outdoor Run",
-        startedAt: "2026-02-14T08:00:00Z",
-        endedAt: "2026-02-14T09:00:00Z",
-        durationMin: 60,
-        distanceKm: 10,
-        avgHeartRate: 160,
-        difficultyUser: 9,
-        source: "manual",
-        createdAt: "2026-02-14T09:00:00Z",
-      },
-    ],
-    studySessions: [],
-    todos: [],
-  };
-
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const workout = insights.workouts.find((item) => item.id === "run-override");
-  assert.ok(workout);
-  assert.equal(workout?.difficultyUser, 9);
-  assert.equal(workout?.difficultyEffective, 9);
-  assert.equal(workout?.trainingLoad, 540);
-});
-
-test("walk sessions are excluded from weekly run workload count", () => {
-  const seed = createDefaultAppData("Europe/Berlin");
-  const data: AppData = {
-    ...seed,
-    dailyHealth: [
-      {
-        date: "2026-02-14",
-        sleepHours: 8.0,
-        sleepCoreHours: 4.3,
-        sleepDeepHours: 1.0,
-        sleepRemHours: 2.1,
-        sleepAwakeHours: 0.3,
-        source: "manual",
-        createdAt: "2026-02-14T00:00:00Z",
-      },
-    ],
-    workouts: [
-      {
-        id: "weekly-run",
-        type: "cardio",
-        workoutNameRaw: "Outdoor Run",
-        startedAt: "2026-02-13T08:00:00Z",
-        endedAt: "2026-02-13T08:45:00Z",
-        durationMin: 45,
-        distanceKm: 8,
-        source: "manual",
-        createdAt: "2026-02-13T08:45:00Z",
-      },
-      {
-        id: "weekly-walk",
-        type: "recovery",
-        workoutNameRaw: "Outdoor Walk",
-        startedAt: "2026-02-14T10:00:00Z",
-        endedAt: "2026-02-14T10:50:00Z",
-        durationMin: 50,
-        distanceKm: 4,
-        source: "manual",
-        createdAt: "2026-02-14T10:50:00Z",
-      },
-    ],
-    studySessions: [],
-    todos: [],
-  };
-
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  assert.equal(insights.weeklyWorkoutCount, 1);
-});
-
-test("detraining guardrail blocks quality recommendation after 14-day run gap", () => {
-  const seed = createDefaultAppData("Europe/Berlin");
-  const data: AppData = {
-    ...seed,
-    dailyHealth: [
-      {
-        date: "2026-02-12",
-        sleepHours: 8.6,
-        sleepCoreHours: 4.6,
-        sleepDeepHours: 1.3,
-        sleepRemHours: 2.4,
-        sleepAwakeHours: 0.2,
-        restingHrBpm: 51,
-        hrvMs: 70,
-        sleepMidpointHour: 3.0,
-        source: "manual",
-        createdAt: "2026-02-12T00:00:00Z",
-      },
-      {
-        date: "2026-02-13",
-        sleepHours: 8.8,
-        sleepCoreHours: 4.7,
-        sleepDeepHours: 1.3,
-        sleepRemHours: 2.5,
-        sleepAwakeHours: 0.2,
-        restingHrBpm: 50,
-        hrvMs: 72,
-        sleepMidpointHour: 3.0,
-        source: "manual",
-        createdAt: "2026-02-13T00:00:00Z",
-      },
-      {
-        date: "2026-02-14",
-        sleepHours: 8.7,
-        sleepCoreHours: 4.7,
-        sleepDeepHours: 1.3,
-        sleepRemHours: 2.4,
-        sleepAwakeHours: 0.2,
-        restingHrBpm: 50,
-        hrvMs: 71,
-        sleepMidpointHour: 3.0,
-        source: "manual",
-        createdAt: "2026-02-14T00:00:00Z",
-      },
-    ],
-    workouts: [
-      {
-        id: "old-run",
-        type: "cardio",
-        workoutNameRaw: "Outdoor Run",
-        startedAt: "2026-01-27T08:00:00Z",
-        endedAt: "2026-01-27T09:00:00Z",
-        durationMin: 60,
-        distanceKm: 10,
-        avgHeartRate: 152,
-        source: "manual",
-        createdAt: "2026-01-27T09:00:00Z",
-      },
-    ],
-    studySessions: [],
-    todos: [],
-  };
-
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const today = insights.todayRecommendation.trainingCategory;
-  assert.notEqual(today, "quality_run");
-  assert.notEqual(today, "steady_run");
-});
-
-test("bedtime recommendation center remains near preferred 21:00-22:00 baseline", () => {
-  const seed = createDefaultAppData("Europe/Berlin");
-  const data: AppData = {
-    ...seed,
-    goals: {
-      ...seed.goals,
-      preferredBedtimeStart: "21:00",
-      preferredBedtimeEnd: "22:00",
-    },
-    dailyHealth: [
-      {
-        date: "2026-02-14",
-        sleepHours: 8.1,
-        sleepCoreHours: 4.4,
-        sleepDeepHours: 1.1,
-        sleepRemHours: 2.3,
-        sleepAwakeHours: 0.3,
-        restingHrBpm: 54,
-        hrvMs: 61,
-        sleepMidpointHour: 3.1,
-        source: "manual",
-        createdAt: "2026-02-14T00:00:00Z",
-      },
-    ],
+    dailyHealth,
     workouts: [],
     studySessions: [],
     todos: [],
+    exams: [],
+  };
+}
+
+function addWorkout(
+  data: AppData,
+  {
+    id,
+    date,
+    durationMin,
+    avgHr,
+    distanceKm,
+  }: {
+    id: string;
+    date: string;
+    durationMin: number;
+    avgHr: number;
+    distanceKm?: number;
+  },
+): void {
+  const startedAt = `${date}T08:00:00Z`;
+  const ended = new Date(startedAt);
+  ended.setUTCMinutes(ended.getUTCMinutes() + durationMin);
+
+  const workout: WorkoutEntry = {
+    id,
+    type: "cardio",
+    workoutNameRaw: "Outdoor Run",
+    startedAt,
+    endedAt: ended.toISOString(),
+    durationMin,
+    distanceKm,
+    avgHeartRate: avgHr,
+    hrAvg: avgHr,
+    hrMin: Math.max(60, avgHr - 35),
+    hrMax: avgHr + 20,
+    source: "manual",
+    createdAt: ended.toISOString(),
   };
 
-  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
-  const [startLabel, endLabel] = insights.todayRecommendation.bedtimeRangeLabel.split("-");
-  const parseMinutes = (value: string): number => {
-    const [hours, minutes] = value.split(":").map(Number);
-    return hours * 60 + minutes;
+  data.workouts.push(workout);
+}
+
+function addStudySession(
+  data: AppData,
+  {
+    id,
+    date,
+    startHour,
+    durationMin,
+  }: {
+    id: string;
+    date: string;
+    startHour: number;
+    durationMin: number;
+  },
+): void {
+  const started = new Date(`${date}T00:00:00Z`);
+  started.setUTCHours(startHour, 0, 0, 0);
+  const ended = new Date(started);
+  ended.setUTCMinutes(ended.getUTCMinutes() + durationMin);
+
+  const session: StudySession = {
+    id,
+    subjectId: "math_aa_hl",
+    startedAt: started.toISOString(),
+    endedAt: ended.toISOString(),
+    durationSec: durationMin * 60,
+    createdAt: started.toISOString(),
   };
-  const centerMinutes = (parseMinutes(startLabel) + parseMinutes(endLabel)) / 2;
-  assert.ok(centerMinutes >= 20 * 60 + 45);
-  assert.ok(centerMinutes <= 22 * 60 + 15);
+
+  data.studySessions.push(session);
+}
+
+test("recovery decreases when acute load spikes under stable sleep/autonomic inputs", () => {
+  const start = "2026-01-01";
+  const totalDays = 26;
+  const data = makeBaseData(start, totalDays);
+
+  const lowLoadDay = addDays(start, totalDays - 2);
+  const highLoadDay = addDays(start, totalDays - 1);
+
+  addWorkout(data, {
+    id: "low-load",
+    date: lowLoadDay,
+    durationMin: 20,
+    avgHr: 120,
+    distanceKm: 3,
+  });
+  addWorkout(data, {
+    id: "high-load",
+    date: highLoadDay,
+    durationMin: 85,
+    avgHr: 166,
+    distanceKm: 15,
+  });
+  addStudySession(data, {
+    id: "high-load-study-a",
+    date: highLoadDay,
+    startHour: 15,
+    durationMin: 240,
+  });
+  addStudySession(data, {
+    id: "high-load-study-b",
+    date: highLoadDay,
+    startHour: 21,
+    durationMin: 180,
+  });
+
+  const insights = buildPerformanceInsights(data, new Date(`${highLoadDay}T12:00:00Z`));
+  const low = insights.scientificByDate[lowLoadDay];
+  const high = insights.scientificByDate[highLoadDay];
+
+  assert.ok(low.recoveryScore > high.recoveryScore);
+  assert.ok(high.physicalStrain > low.physicalStrain);
+});
+
+test("under-studying boost raises mental target when recovery is high", () => {
+  const start = "2026-01-01";
+  const totalDays = 32;
+
+  const underStudied = makeBaseData(start, totalDays);
+
+  for (let i = 0; i < totalDays - 3; i += 1) {
+    const date = addDays(start, i);
+    addStudySession(underStudied, {
+      id: `under-baseline-${i}`,
+      date,
+      startHour: 16,
+      durationMin: 120,
+    });
+  }
+
+  const dayMinusOne = addDays(start, totalDays - 1);
+
+  const underTodayIndex = underStudied.dailyHealth.findIndex((item) => item.date === dayMinusOne);
+  underStudied.dailyHealth[underTodayIndex] = makeHealthDay(dayMinusOne, {
+    sleepHours: 9.0,
+    sleepAsleepHours: 9.0,
+    sleepInBedHours: 9.4,
+    hrvMs: 95,
+    restingHrBpm: 48,
+    respiratoryRateBpm: 12.5,
+  });
+
+  const under = buildPerformanceInsights(underStudied, new Date(`${dayMinusOne}T12:00:00Z`));
+  const underToday = under.todayScientific;
+
+  assert.ok(underToday.components.gUnder > 1);
+  assert.ok(underToday.components.gate > 0.7);
+  assert.ok(underToday.mentalStrain < 5);
+  assert.ok(
+    (under.todayRecommendation.mentalTargetHigh || 0) >
+      (under.todayRecommendation.mentalTargetLow || 0),
+  );
+});
+
+test("missing stage data keeps sleep score bounded but lowers confidence", () => {
+  const start = "2026-01-01";
+  const totalDays = 24;
+
+  const withStages = makeBaseData(start, totalDays);
+  const withoutStages = makeBaseData(start, totalDays);
+
+  const targetDay = addDays(start, totalDays - 1);
+  const targetIndex = withoutStages.dailyHealth.findIndex((item) => item.date === targetDay);
+
+  withoutStages.dailyHealth[targetIndex] = makeHealthDay(targetDay, {
+    sleepDeepHours: undefined,
+    sleepRemHours: undefined,
+    sleepCoreHours: undefined,
+  });
+
+  const full = buildPerformanceInsights(withStages, new Date(`${targetDay}T12:00:00Z`));
+  const missing = buildPerformanceInsights(withoutStages, new Date(`${targetDay}T12:00:00Z`));
+
+  const scoreDelta = Math.abs(full.todayScientific.sleepScore - missing.todayScientific.sleepScore);
+
+  assert.ok(scoreDelta <= 12);
+  assert.ok(full.todayScientific.confidence.sleep > missing.todayScientific.confidence.sleep);
+  assert.ok(missing.todayScientific.fallbackFlags.includes("sleep_stage_neutral"));
+});
+
+test("exam pressure adds mental background load and lowers mental recovery", () => {
+  const start = "2026-01-01";
+  const totalDays = 22;
+
+  const control = makeBaseData(start, totalDays);
+  const pressured = makeBaseData(start, totalDays);
+
+  const today = addDays(start, totalDays - 1);
+  const tomorrow = addDays(today, 1);
+
+  pressured.exams = [
+    {
+      id: "exam-1",
+      subjectId: "physics_hl",
+      title: "Physics HL",
+      paper: "Paper 2",
+      startsAt: `${tomorrow}T09:00:00Z`,
+    },
+  ];
+
+  const controlInsights = buildPerformanceInsights(control, new Date(`${today}T12:00:00Z`));
+  const pressureInsights = buildPerformanceInsights(pressured, new Date(`${today}T12:00:00Z`));
+
+  assert.ok(pressureInsights.todayScientific.pressure > controlInsights.todayScientific.pressure);
+  assert.ok(pressureInsights.todayScientific.mentalRawLoad > controlInsights.todayScientific.mentalRawLoad);
+  assert.ok(
+    pressureInsights.todayScientific.mentalRecovery < controlInsights.todayScientific.mentalRecovery,
+  );
+});
+
+test("TIB fallback imputes sleep when TST is absent", () => {
+  const start = "2026-01-01";
+  const totalDays = 18;
+  const data = makeBaseData(start, totalDays);
+
+  const today = addDays(start, totalDays - 1);
+  const targetIndex = data.dailyHealth.findIndex((item) => item.date === today);
+
+  data.dailyHealth[targetIndex] = makeHealthDay(today, {
+    sleepHours: 0,
+    sleepAsleepHours: undefined,
+    sleepInBedHours: 8.0,
+  });
+
+  const insights = buildPerformanceInsights(data, new Date(`${today}T12:00:00Z`));
+
+  assert.ok(insights.todayScientific.sleepHours > 6);
+  assert.ok(insights.todayScientific.sleepScore > 40);
+  assert.ok(insights.todayScientific.fallbackFlags.includes("sleep_tst_from_tib"));
 });

@@ -518,6 +518,9 @@ actor HealthKitService {
                 sleepDeepHours: sleep.deepHours,
                 sleepRemHours: sleep.remHours,
                 sleepAwakeHours: sleep.awakeHours,
+                sleepMidpointHour: sleep.midpointHour,
+                sleepBedtimeHour: sleep.bedtimeHour,
+                sleepRegularitySRI: sleep.regularitySRI,
                 hrvMs: quantities.hrvMs,
                 restingHrBpm: quantities.restingHr,
                 heartRateMinBpm: quantities.hrMin,
@@ -776,10 +779,13 @@ actor HealthKitService {
         coreHours: Double?,
         deepHours: Double?,
         remHours: Double?,
-        awakeHours: Double?
+        awakeHours: Double?,
+        midpointHour: Double?,
+        bedtimeHour: Double?,
+        regularitySRI: Double?
     ) {
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            return (nil, nil, nil, nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
         }
 
         let start = Calendar.current.date(byAdding: .hour, value: -12, to: dayStart) ?? dayStart
@@ -794,6 +800,7 @@ actor HealthKitService {
         var deepSeconds = 0.0
         var remSeconds = 0.0
         var awakeSeconds = 0.0
+        var asleepIntervals: [(start: Date, end: Date)] = []
 
         for sample in samples {
             let overlapStart = max(sample.startDate, dayStart)
@@ -808,15 +815,35 @@ actor HealthKitService {
                 inBedSeconds += duration
             case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
                 asleepSeconds += duration
+                let intervalStart = max(sample.startDate, start)
+                let intervalEnd = min(sample.endDate, end)
+                if intervalEnd > intervalStart {
+                    asleepIntervals.append((intervalStart, intervalEnd))
+                }
             case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
                 coreSeconds += duration
                 asleepSeconds += duration
+                let intervalStart = max(sample.startDate, start)
+                let intervalEnd = min(sample.endDate, end)
+                if intervalEnd > intervalStart {
+                    asleepIntervals.append((intervalStart, intervalEnd))
+                }
             case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
                 deepSeconds += duration
                 asleepSeconds += duration
+                let intervalStart = max(sample.startDate, start)
+                let intervalEnd = min(sample.endDate, end)
+                if intervalEnd > intervalStart {
+                    asleepIntervals.append((intervalStart, intervalEnd))
+                }
             case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
                 remSeconds += duration
                 asleepSeconds += duration
+                let intervalStart = max(sample.startDate, start)
+                let intervalEnd = min(sample.endDate, end)
+                if intervalEnd > intervalStart {
+                    asleepIntervals.append((intervalStart, intervalEnd))
+                }
             case HKCategoryValueSleepAnalysis.awake.rawValue:
                 awakeSeconds += duration
             default:
@@ -825,6 +852,9 @@ actor HealthKitService {
         }
 
         let totalSleepHours = asleepSeconds > 0 ? asleepSeconds / 3600.0 : nil
+        let mainInterval = longestMergedInterval(from: asleepIntervals)
+        let bedtimeHour = mainInterval.map { decimalHour($0.start) }
+        let midpointHour = mainInterval.map { decimalHour($0.start.addingTimeInterval($0.end.timeIntervalSince($0.start) / 2)) }
 
         return (
             totalSleepHours,
@@ -833,8 +863,47 @@ actor HealthKitService {
             coreSeconds > 0 ? coreSeconds / 3600.0 : nil,
             deepSeconds > 0 ? deepSeconds / 3600.0 : nil,
             remSeconds > 0 ? remSeconds / 3600.0 : nil,
-            awakeSeconds > 0 ? awakeSeconds / 3600.0 : nil
+            awakeSeconds > 0 ? awakeSeconds / 3600.0 : nil,
+            midpointHour,
+            bedtimeHour,
+            nil
         )
+    }
+
+    private func longestMergedInterval(
+        from intervals: [(start: Date, end: Date)]
+    ) -> (start: Date, end: Date)? {
+        guard !intervals.isEmpty else {
+            return nil
+        }
+
+        let sorted = intervals.sorted(by: { $0.start < $1.start })
+        var merged: [(start: Date, end: Date)] = []
+
+        for interval in sorted {
+            if var last = merged.last {
+                if interval.start <= last.end.addingTimeInterval(15 * 60) {
+                    if interval.end > last.end {
+                        last.end = interval.end
+                    }
+                    merged[merged.count - 1] = last
+                } else {
+                    merged.append(interval)
+                }
+            } else {
+                merged.append(interval)
+            }
+        }
+
+        return merged.max(by: { $0.end.timeIntervalSince($0.start) < $1.end.timeIntervalSince($1.start) })
+    }
+
+    private func decimalHour(_ date: Date) -> Double {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let hour = Double(components.hour ?? 0)
+        let minute = Double(components.minute ?? 0) / 60.0
+        let value = hour + minute
+        return value >= 24 ? value - 24 : value
     }
 
     private func currentDeviceInfo() async -> MobileSyncPayload.DeviceInfo {
