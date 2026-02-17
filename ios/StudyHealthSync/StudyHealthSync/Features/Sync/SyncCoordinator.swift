@@ -122,6 +122,37 @@ final class SyncCoordinator: ObservableObject {
         }
     }
 
+    func disconnectAppleHealth() {
+        Task {
+            if isSyncing {
+                lastErrorMessage = "Please wait for the current sync to finish before disconnecting."
+                return
+            }
+
+            await healthService.stopBackgroundObserversAndDelivery()
+            observersStarted = false
+            lastObserverSyncRequestAt = nil
+
+            await anchorStore.clearSyncState()
+            await queueStore.clearPending()
+            await healthService.clearAuthorizationTracking()
+            UserDefaults.standard.removeObject(forKey: Keys.repairBackfillCompleted)
+
+            settings.performFullDisconnect()
+            applySettingsAndReschedule()
+
+            await refreshLastSyncFromStore()
+            await refreshAuthorizationState(runRepairIfRecovered: false)
+
+            lastErrorMessage = "Apple Health disconnected. Re-enable access in iOS Settings when you want to sync again."
+            await queueStore.appendLog(
+                "Apple Health disconnected: token cleared, auto-sync disabled, anchors reset."
+            )
+            await refreshQueueState()
+            openAppSettings()
+        }
+    }
+
     func syncNow(trigger: SyncTrigger) async -> Bool {
         if isSyncing {
             return false
@@ -431,6 +462,10 @@ final class SyncCoordinator: ObservableObject {
     }
 
     private func rescheduleBackgroundTasks() {
+        guard settings.autoSyncEnabled else {
+            BackgroundSyncScheduler.shared.cancelAllScheduledTasks()
+            return
+        }
         BackgroundSyncScheduler.shared.scheduleNext(intervalMinutes: settings.syncIntervalMinutes)
     }
 

@@ -53,6 +53,11 @@ final class BackgroundSyncScheduler {
         }
     }
 
+    func cancelAllScheduledTasks() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.refreshTaskIdentifier)
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingTaskIdentifier)
+    }
+
     private func handleRefreshTask(task: BGAppRefreshTask) {
         task.expirationHandler = {
             task.setTaskCompleted(success: false)

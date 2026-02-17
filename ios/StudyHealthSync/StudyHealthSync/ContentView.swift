@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
@@ -6,6 +7,9 @@ struct ContentView: View {
 
     @State private var manualRangeDays = 30
     @State private var showConnectionSettings = false
+    @State private var showDisconnectConfirmation = false
+    @State private var selectedLogForCopy: SyncAttemptLog?
+    @State private var copyFeedback: String?
 
     private let manualRangeOptions = [7, 14, 30, 60, 90, 180, 365]
 
@@ -26,7 +30,7 @@ struct ContentView: View {
                     }
 
                     if coordinator.authorizationState == .denied {
-                        Text("Enable access in Settings > Health > Data Access & Devices > StudyHealthSync, then allow Workouts and Heart Rate.")
+                        Text("Enable access in Settings > Health > Data Access & Devices > StudyHealthSync, then allow workout, sleep, heart, and movement data.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else if coordinator.needsHealthPermissionsInSettings {
@@ -34,6 +38,13 @@ struct ContentView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+
+                    Button(role: .destructive) {
+                        showDisconnectConfirmation = true
+                    } label: {
+                        Text("Disconnect Apple Health")
+                    }
+                    .disabled(coordinator.isSyncing)
                 }
 
                 Section("Sync Configuration") {
@@ -111,19 +122,32 @@ struct ContentView: View {
                 }
 
                 Section("Recent Sync Logs") {
+                    if let copyFeedback, !copyFeedback.isEmpty {
+                        Text(copyFeedback)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
                     if coordinator.recentLogs.isEmpty {
                         Text("No sync logs yet.")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(coordinator.recentLogs) { log in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(log.message)
-                                    .font(.footnote)
-                                Text(log.timestamp)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            Button {
+                                selectedLogForCopy = log
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(log.message)
+                                        .font(.footnote)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(log.timestamp)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, 2)
                             }
-                            .padding(.vertical, 2)
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -137,6 +161,36 @@ struct ContentView: View {
                         coordinator.applySettingsAndReschedule()
                     }
                 )
+            }
+            .confirmationDialog(
+                "Disconnect Apple Health?",
+                isPresented: $showDisconnectConfirmation
+            ) {
+                Button("Disconnect", role: .destructive) {
+                    coordinator.disconnectAppleHealth()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears your sync token, disables auto sync, and resets local Health sync state.")
+            }
+            .confirmationDialog(
+                "Copy Sync Log",
+                isPresented: Binding(
+                    get: { selectedLogForCopy != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            selectedLogForCopy = nil
+                        }
+                    }
+                )
+            ) {
+                Button("Copy message") {
+                    copySelectedLog(includeTimestamp: false)
+                }
+                Button("Copy timestamp + message") {
+                    copySelectedLog(includeTimestamp: true)
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
     }
@@ -173,6 +227,26 @@ struct ContentView: View {
             return coordinator.needsHealthPermissionsInSettings
                 ? "Open Health Permissions in Settings"
                 : "Grant Health Permissions"
+        }
+    }
+
+    private func copySelectedLog(includeTimestamp: Bool) {
+        guard let log = selectedLogForCopy else {
+            return
+        }
+
+        let copied = includeTimestamp ? "\(log.timestamp) \(log.message)" : log.message
+        UIPasteboard.general.string = copied
+        selectedLogForCopy = nil
+
+        let message = includeTimestamp ? "Copied timestamp + message." : "Copied message."
+        copyFeedback = message
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if copyFeedback == message {
+                copyFeedback = nil
+            }
         }
     }
 }

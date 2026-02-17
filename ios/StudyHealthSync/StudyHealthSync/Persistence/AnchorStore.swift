@@ -50,6 +50,11 @@ actor AnchorStore {
         readAnchorMap()
     }
 
+    func clearSyncState() {
+        UserDefaults.standard.removeObject(forKey: Keys.anchors)
+        UserDefaults.standard.removeObject(forKey: Keys.lastSyncAt)
+    }
+
     private func readAnchorMap() -> [String: Data] {
         UserDefaults.standard.dictionary(forKey: Keys.anchors) as? [String: Data] ?? [:]
     }

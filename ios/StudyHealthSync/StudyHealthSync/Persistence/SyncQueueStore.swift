@@ -84,6 +84,12 @@ actor SyncQueueStore {
         saveState()
     }
 
+    func clearPending() {
+        let removed = batches.count
+        batches.removeAll()
+        appendLog("Cleared \(removed) pending sync batch(es).")
+    }
+
     private static func loadState(decoder: JSONDecoder, fileURL: URL, directory: URL) -> PersistedState {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

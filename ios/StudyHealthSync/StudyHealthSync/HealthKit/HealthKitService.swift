@@ -77,6 +77,24 @@ actor HealthKitService {
         UserDefaults.standard.set(true, forKey: Keys.requestedAuthorization)
     }
 
+    func stopBackgroundObserversAndDelivery() async {
+        observerQueries.forEach { healthStore.stop($0) }
+        observerQueries.removeAll()
+
+        await withCheckedContinuation { continuation in
+            healthStore.disableAllBackgroundDelivery { success, error in
+                if !success, let error {
+                    print("Disable background delivery failed: \(error.localizedDescription)")
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    func clearAuthorizationTracking() {
+        UserDefaults.standard.removeObject(forKey: Keys.requestedAuthorization)
+    }
+
     func startBackgroundObservers(onUpdate: @escaping @Sendable () -> Void) {
         observerQueries.forEach { healthStore.stop($0) }
         observerQueries.removeAll()
@@ -280,28 +298,87 @@ actor HealthKitService {
     private func readTypes() -> Set<HKObjectType> {
         var types: Set<HKObjectType> = [HKObjectType.workoutType()]
 
-        let quantityIds: [HKQuantityTypeIdentifier] = [
-            .heartRate,
-            .restingHeartRate,
-            .heartRateVariabilitySDNN,
-            .stepCount,
-            .distanceWalkingRunning,
-            .activeEnergyBurned,
-            .basalEnergyBurned,
-            .respiratoryRate,
+        let quantityTypeRawIdentifiers = [
+            // Heart and cardio
+            "HKQuantityTypeIdentifierHeartRate",
+            "HKQuantityTypeIdentifierRestingHeartRate",
+            "HKQuantityTypeIdentifierWalkingHeartRateAverage",
+            "HKQuantityTypeIdentifierHeartRateVariabilitySDNN",
+            "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",
+            "HKQuantityTypeIdentifierRespiratoryRate",
+            "HKQuantityTypeIdentifierVO2Max",
+            "HKQuantityTypeIdentifierOxygenSaturation",
+            // Movement and workout
+            "HKQuantityTypeIdentifierStepCount",
+            "HKQuantityTypeIdentifierFlightsClimbed",
+            "HKQuantityTypeIdentifierDistanceWalkingRunning",
+            "HKQuantityTypeIdentifierDistanceCycling",
+            "HKQuantityTypeIdentifierDistanceSwimming",
+            "HKQuantityTypeIdentifierDistanceWheelchair",
+            "HKQuantityTypeIdentifierDistanceDownhillSnowSports",
+            "HKQuantityTypeIdentifierDistanceCrossCountrySkiing",
+            "HKQuantityTypeIdentifierDistancePaddleSports",
+            "HKQuantityTypeIdentifierDistanceSkatingSports",
+            "HKQuantityTypeIdentifierActiveEnergyBurned",
+            "HKQuantityTypeIdentifierBasalEnergyBurned",
+            "HKQuantityTypeIdentifierAppleExerciseTime",
+            "HKQuantityTypeIdentifierAppleMoveTime",
+            "HKQuantityTypeIdentifierAppleStandTime",
+            "HKQuantityTypeIdentifierWalkingSpeed",
+            "HKQuantityTypeIdentifierWalkingStepLength",
+            "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",
+            "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage",
+            "HKQuantityTypeIdentifierStairAscentSpeed",
+            "HKQuantityTypeIdentifierStairDescentSpeed",
+            "HKQuantityTypeIdentifierSixMinuteWalkTestDistance",
+            "HKQuantityTypeIdentifierRunningSpeed",
+            "HKQuantityTypeIdentifierRunningPower",
+            "HKQuantityTypeIdentifierRunningStrideLength",
+            "HKQuantityTypeIdentifierRunningVerticalOscillation",
+            "HKQuantityTypeIdentifierRunningGroundContactTime",
+            "HKQuantityTypeIdentifierCyclingCadence",
+            "HKQuantityTypeIdentifierCyclingPower",
+            "HKQuantityTypeIdentifierSwimmingStrokeCount",
         ]
+        insertQuantityTypes(quantityTypeRawIdentifiers, into: &types)
 
-        for id in quantityIds {
-            if let type = HKObjectType.quantityType(forIdentifier: id) {
-                types.insert(type)
-            }
-        }
-
-        if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
-            types.insert(sleep)
-        }
+        let categoryTypeRawIdentifiers = [
+            // Sleep
+            "HKCategoryTypeIdentifierSleepAnalysis",
+            // Movement/cardio events
+            "HKCategoryTypeIdentifierAppleStandHour",
+            "HKCategoryTypeIdentifierLowCardioFitnessEvent",
+            "HKCategoryTypeIdentifierHighHeartRateEvent",
+            "HKCategoryTypeIdentifierLowHeartRateEvent",
+            "HKCategoryTypeIdentifierIrregularHeartRhythmEvent",
+        ]
+        insertCategoryTypes(categoryTypeRawIdentifiers, into: &types)
+        insertAdditionalReadTypes(into: &types)
 
         return types
+    }
+
+    private func insertQuantityTypes(_ rawIdentifiers: [String], into types: inout Set<HKObjectType>) {
+        for rawIdentifier in rawIdentifiers {
+            let identifier = HKQuantityTypeIdentifier(rawValue: rawIdentifier)
+            if let quantityType = HKObjectType.quantityType(forIdentifier: identifier) {
+                types.insert(quantityType)
+            }
+        }
+    }
+
+    private func insertCategoryTypes(_ rawIdentifiers: [String], into types: inout Set<HKObjectType>) {
+        for rawIdentifier in rawIdentifiers {
+            let identifier = HKCategoryTypeIdentifier(rawValue: rawIdentifier)
+            if let categoryType = HKObjectType.categoryType(forIdentifier: identifier) {
+                types.insert(categoryType)
+            }
+        }
+    }
+
+    private func insertAdditionalReadTypes(into types: inout Set<HKObjectType>) {
+        types.insert(HKObjectType.activitySummaryType())
+        types.insert(HKSeriesType.workoutRoute())
     }
 
     private func sampleType(for key: HealthSampleKey) -> HKSampleType? {

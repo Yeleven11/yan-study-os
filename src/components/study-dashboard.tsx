@@ -4126,7 +4126,7 @@ function HealthExplorer({
                 <SeriesPanel
                   title="Heart Rate Series"
                   rows={detailForSelectedWorkout.heartRateSeries || []}
-                  extractValue={(row) => row.avg ?? row.max ?? row.min}
+                  extractValue={(row) => row.value ?? row.avg ?? row.max ?? row.min}
                   color="#ff8f8f"
                   unit="bpm"
                 />

@@ -73,6 +73,11 @@ final class AppSettingsStore: ObservableObject {
         KeychainStore.delete(service: SecureKeys.service, account: SecureKeys.account)
     }
 
+    func performFullDisconnect() {
+        autoSyncEnabled = false
+        clearToken()
+    }
+
     private func clampInterval(_ minutes: Int) -> Int {
         min(max(minutes, minIntervalMinutes), maxIntervalMinutes)
     }

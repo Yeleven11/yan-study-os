@@ -23,6 +23,60 @@ function hasSeries(rows: WorkoutStreamPoint[] | undefined): boolean {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function buildHeartRateSeriesFromStreams(
+  streams: WorkoutDetail["streams"] | undefined,
+): WorkoutStreamPoint[] {
+  if (!Array.isArray(streams) || streams.length === 0) {
+    return [];
+  }
+
+  const points: WorkoutStreamPoint[] = [];
+
+  for (const stream of streams) {
+    if (stream.streamType !== "heart_rate" && stream.streamType !== "hr_recovery") {
+      continue;
+    }
+
+    for (const row of stream.rows || []) {
+      if (!row || typeof row.timestamp !== "string" || row.timestamp.length === 0) {
+        continue;
+      }
+
+      const value = isFiniteNumber(row.value) ? row.value : undefined;
+      const min = isFiniteNumber(row.min) ? row.min : undefined;
+      const max = isFiniteNumber(row.max) ? row.max : undefined;
+      const avg = isFiniteNumber(row.avg) ? row.avg : undefined;
+
+      if (
+        typeof value !== "number" &&
+        typeof min !== "number" &&
+        typeof max !== "number" &&
+        typeof avg !== "number"
+      ) {
+        continue;
+      }
+
+      points.push({
+        timestamp: row.timestamp,
+        value,
+        min,
+        max,
+        avg,
+        context: row.context || stream.streamType,
+      });
+    }
+  }
+
+  return points.sort(
+    (left, right) =>
+      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  );
+}
+
 function toFallbackDetailFromWorkout(workout: WorkoutEntry): WorkoutDetail {
   return {
     workoutId: workout.id,
@@ -81,7 +135,10 @@ export function withWorkoutSeriesFallback(
   const restingEnergyKj = next.restingEnergyKj ?? workout?.restingEnergyKj;
 
   if (!hasSeries(next.heartRateSeries)) {
-    if (
+    const streamFallback = buildHeartRateSeriesFromStreams(next.streams);
+    if (streamFallback.length > 0) {
+      next.heartRateSeries = streamFallback;
+    } else if (
       (typeof hrMin === "number" && hrMin > 0) ||
       (typeof hrMax === "number" && hrMax > 0) ||
       (typeof hrAvg === "number" && hrAvg > 0)
