@@ -48,7 +48,7 @@ enum AppConfig {
         if let value = info["SyncMinIntervalMinutes"] as? Int {
             return value
         }
-        return 15
+        return 1
     }()
 
     static let maximumIntervalMinutes: Int = {

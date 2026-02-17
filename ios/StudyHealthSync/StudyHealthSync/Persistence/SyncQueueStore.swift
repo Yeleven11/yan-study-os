@@ -37,6 +37,10 @@ actor SyncQueueStore {
         batches.first
     }
 
+    func latestBatch() -> PendingSyncBatch? {
+        batches.last
+    }
+
     func enqueue(payload: MobileSyncPayload, anchors: [AnchorSnapshot]) {
         let batch = PendingSyncBatch(
             id: payload.batchId,
@@ -88,6 +92,17 @@ actor SyncQueueStore {
         let removed = batches.count
         batches.removeAll()
         appendLog("Cleared \(removed) pending sync batch(es).")
+    }
+
+    func discardAllButLatest() -> Int {
+        guard batches.count > 1, let latest = batches.last else {
+            return 0
+        }
+
+        let removed = batches.count - 1
+        batches = [latest]
+        saveState()
+        return removed
     }
 
     private static func loadState(decoder: JSONDecoder, fileURL: URL, directory: URL) -> PersistedState {

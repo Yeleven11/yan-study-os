@@ -111,3 +111,70 @@ test("applies workout deletions from mobile payload", () => {
   assert.equal(afterDelete.nextData.workouts.length, 0);
   assert.equal(afterDelete.nextData.workoutDetails.length, 0);
 });
+
+test("drops future-dated records and ignores future incoming payload data", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  seed.dailyHealth.push({
+    date: "2120-01-01",
+    sleepHours: 8,
+    source: "health_import",
+    createdAt: "2120-01-01T08:00:00.000Z",
+  });
+  seed.workouts.push({
+    id: "future-workout-seed",
+    sourceWorkoutKey: "future-seed",
+    type: "cardio",
+    startedAt: "2120-01-01T08:00:00.000Z",
+    endedAt: "2120-01-01T09:00:00.000Z",
+    durationMin: 60,
+    source: "health_import",
+    createdAt: "2120-01-01T09:00:00.000Z",
+  });
+  seed.workoutDetails.push({
+    workoutId: "future-workout-seed",
+    workoutKey: "future-seed",
+    workoutType: "cardio",
+    startedAt: "2120-01-01T08:00:00.000Z",
+    endedAt: "2120-01-01T09:00:00.000Z",
+    durationMin: 60,
+    mergeConfidence: 0.9,
+    streamCount: 1,
+    sourceFiles: ["seed.json"],
+    streams: [],
+    heartRateSeries: [],
+    distanceSeries: [],
+    stepSeries: [],
+    activeEnergySeries: [],
+    restingEnergySeries: [],
+  });
+
+  const payload = buildPayload("batch-future-filter");
+  payload.dailyHealth?.push({
+    date: "2120-01-01",
+    sleepHours: 8.3,
+  });
+  payload.workouts?.push({
+    hkWorkoutUuid: "11111111-1111-1111-1111-111111111111",
+    workoutType: "Outdoor Run",
+    startedAt: "2120-01-01T08:00:00.000Z",
+    endedAt: "2120-01-01T08:50:00.000Z",
+    durationMin: 50,
+  });
+
+  const imported = importMobileSyncPayload(seed, payload);
+
+  assert.equal(imported.summary.importedHealthDays, 1);
+  assert.equal(imported.summary.importedWorkouts, 1);
+  assert.equal(
+    imported.nextData.dailyHealth.some((item) => item.date >= "2100-01-01"),
+    false,
+  );
+  assert.equal(
+    imported.nextData.workouts.some((item) => item.startedAt.startsWith("2120-")),
+    false,
+  );
+  assert.equal(
+    imported.nextData.workoutDetails.some((item) => item.startedAt.startsWith("2120-")),
+    false,
+  );
+});

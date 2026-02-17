@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { toDateKey } from "@/lib/dashboard-utils";
+import { sanitizeFutureHealthData } from "@/lib/server/health-time-sanity";
 import type {
   AppData,
   DailyHealthFact,
@@ -146,6 +147,19 @@ function normalizeStreamPoints(points: unknown): WorkoutStreamPoint[] {
   return normalized.slice(normalized.length - MAX_SERIES_POINTS);
 }
 
+function toMs(value: string): number | null {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isDateKeyOnOrBefore(dateKey: string, cutoffMs: number): boolean {
+  const parsed = toMs(dateKey);
+  if (parsed == null) {
+    return false;
+  }
+  return parsed <= cutoffMs;
+}
+
 function buildStream(
   workoutKey: string,
   sourceFile: string,
@@ -188,6 +202,7 @@ function upsertDailyHealth(
   current: DailyHealthFact[],
   incoming: MobileSyncDailyHealthInput[],
   importedAt: string,
+  cutoffMs: number,
 ): { next: DailyHealthFact[]; importedHealthDays: number } {
   const byDate = new Map(current.map((item) => [item.date, item]));
   let importedHealthDays = 0;
@@ -195,6 +210,9 @@ function upsertDailyHealth(
   for (const row of incoming) {
     const date = normalizeDateKey(row.date);
     if (!date) {
+      continue;
+    }
+    if (!isDateKeyOnOrBefore(date, cutoffMs)) {
       continue;
     }
 
@@ -248,7 +266,11 @@ function upsertDailyHealth(
   };
 }
 
-function buildWorkoutEntry(input: MobileSyncWorkoutInput, importedAt: string): WorkoutEntry | null {
+function buildWorkoutEntry(
+  input: MobileSyncWorkoutInput,
+  importedAt: string,
+  cutoffMs: number,
+): WorkoutEntry | null {
   const hkWorkoutUuid = sanitizeUuid(input.hkWorkoutUuid || "");
   if (!hkWorkoutUuid) {
     return null;
@@ -257,6 +279,11 @@ function buildWorkoutEntry(input: MobileSyncWorkoutInput, importedAt: string): W
   const startedAt = normalizeIso(input.startedAt);
   const endedAt = normalizeIso(input.endedAt);
   if (!startedAt || !endedAt) {
+    return null;
+  }
+  const startedAtMs = toMs(startedAt);
+  const endedAtMs = toMs(endedAt);
+  if (startedAtMs == null || endedAtMs == null || startedAtMs > cutoffMs || endedAtMs > cutoffMs) {
     return null;
   }
 
@@ -301,15 +328,35 @@ function buildWorkoutEntry(input: MobileSyncWorkoutInput, importedAt: string): W
   return entry;
 }
 
-function buildWorkoutDetail(entry: WorkoutEntry, input: MobileSyncWorkoutInput, sourceFile: string): WorkoutDetail {
+function buildWorkoutDetail(
+  entry: WorkoutEntry,
+  input: MobileSyncWorkoutInput,
+  sourceFile: string,
+  cutoffMs: number,
+): WorkoutDetail {
   const workoutKey = entry.sourceWorkoutKey || entry.id;
   const streamsInput = input.streams || {};
 
-  const heartRateSeries = normalizeStreamPoints(streamsInput.heartRateSeries);
-  const distanceSeries = normalizeStreamPoints(streamsInput.distanceSeries);
-  const stepSeries = normalizeStreamPoints(streamsInput.stepSeries);
-  const activeEnergySeries = normalizeStreamPoints(streamsInput.activeEnergySeries);
-  const restingEnergySeries = normalizeStreamPoints(streamsInput.restingEnergySeries);
+  const heartRateSeries = normalizeStreamPoints(streamsInput.heartRateSeries).filter((point) => {
+    const timestampMs = toMs(point.timestamp);
+    return timestampMs != null && timestampMs <= cutoffMs;
+  });
+  const distanceSeries = normalizeStreamPoints(streamsInput.distanceSeries).filter((point) => {
+    const timestampMs = toMs(point.timestamp);
+    return timestampMs != null && timestampMs <= cutoffMs;
+  });
+  const stepSeries = normalizeStreamPoints(streamsInput.stepSeries).filter((point) => {
+    const timestampMs = toMs(point.timestamp);
+    return timestampMs != null && timestampMs <= cutoffMs;
+  });
+  const activeEnergySeries = normalizeStreamPoints(streamsInput.activeEnergySeries).filter((point) => {
+    const timestampMs = toMs(point.timestamp);
+    return timestampMs != null && timestampMs <= cutoffMs;
+  });
+  const restingEnergySeries = normalizeStreamPoints(streamsInput.restingEnergySeries).filter((point) => {
+    const timestampMs = toMs(point.timestamp);
+    return timestampMs != null && timestampMs <= cutoffMs;
+  });
 
   const streams = [
     buildStream(workoutKey, sourceFile, "heart_rate", heartRateSeries),
@@ -416,17 +463,20 @@ export function importMobileSyncPayload(
   current: AppData,
   request: MobileSyncRequest,
 ): { nextData: AppData; summary: MobileHealthImportSummary } {
-  const importedAt = new Date().toISOString();
+  const now = new Date();
+  const cutoffMs = now.getTime();
+  const sanitizedCurrent = sanitizeFutureHealthData(current, now).data;
+  const importedAt = now.toISOString();
   const sourceFilename = `mobile-sync-${request.batchId}.json`;
   const payloadHash = hashText(JSON.stringify(request));
 
-  const duplicate = current.healthRawFiles.some(
+  const duplicate = sanitizedCurrent.healthRawFiles.some(
     (file) => file.hash === payloadHash || file.filename === sourceFilename,
   );
 
   if (duplicate) {
     return {
-      nextData: current,
+      nextData: sanitizedCurrent,
       summary: {
         importedHealthDays: 0,
         importedWorkouts: 0,
@@ -442,17 +492,24 @@ export function importMobileSyncPayload(
   const dailyHealthInput = Array.isArray(request.dailyHealth) ? request.dailyHealth : [];
   const workoutInput = Array.isArray(request.workouts) ? request.workouts : [];
 
-  const dailyMerged = upsertDailyHealth(current.dailyHealth, dailyHealthInput, importedAt);
+  const dailyMerged = upsertDailyHealth(
+    sanitizedCurrent.dailyHealth,
+    dailyHealthInput,
+    importedAt,
+    cutoffMs,
+  );
 
-  const workoutsById = new Map(current.workouts.map((item) => [item.id, item]));
-  const detailsByWorkoutId = new Map(current.workoutDetails.map((item) => [item.workoutId, item]));
+  const workoutsById = new Map(sanitizedCurrent.workouts.map((item) => [item.id, item]));
+  const detailsByWorkoutId = new Map(
+    sanitizedCurrent.workoutDetails.map((item) => [item.workoutId, item]),
+  );
 
   let importedWorkouts = 0;
   let updatedWorkouts = 0;
   let linkedStreams = 0;
 
   for (const row of workoutInput) {
-    const incomingEntry = buildWorkoutEntry(row, importedAt);
+    const incomingEntry = buildWorkoutEntry(row, importedAt, cutoffMs);
     if (!incomingEntry) {
       continue;
     }
@@ -466,7 +523,12 @@ export function importMobileSyncPayload(
       importedWorkouts += 1;
     }
 
-    const detail = buildWorkoutDetail(workoutsById.get(incomingEntry.id)!, row, sourceFilename);
+    const detail = buildWorkoutDetail(
+      workoutsById.get(incomingEntry.id)!,
+      row,
+      sourceFilename,
+      cutoffMs,
+    );
     linkedStreams += detail.streams.length;
     const existingDetail = detailsByWorkoutId.get(detail.workoutId);
     detailsByWorkoutId.set(detail.workoutId, mergeWorkoutDetail(existingDetail, detail));
@@ -501,7 +563,7 @@ export function importMobileSyncPayload(
   };
 
   const nextData: AppData = {
-    ...current,
+    ...sanitizedCurrent,
     dailyHealth: dailyMerged.next,
     workouts: [...workoutsById.values()].sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
@@ -509,12 +571,13 @@ export function importMobileSyncPayload(
     workoutDetails: [...detailsByWorkoutId.values()].sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
-    healthRawFiles: [...current.healthRawFiles, rawFile],
-    healthRawRows: [...current.healthRawRows, rawRow],
+    healthRawFiles: [...sanitizedCurrent.healthRawFiles, rawFile],
+    healthRawRows: [...sanitizedCurrent.healthRawRows, rawRow],
   };
+  const sanitizedNext = sanitizeFutureHealthData(nextData, now).data;
 
   return {
-    nextData,
+    nextData: sanitizedNext,
     summary: {
       importedHealthDays: dailyMerged.importedHealthDays,
       importedWorkouts,

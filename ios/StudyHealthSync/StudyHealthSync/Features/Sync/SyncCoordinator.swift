@@ -11,6 +11,9 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var lastAttemptAt: Date?
     @Published private(set) var nextScheduledAt: Date?
+    @Published private(set) var nextSyncWindowFrom: Date?
+    @Published private(set) var nextSyncWindowTo: Date?
+    @Published private(set) var nextSyncWindowLabel: String = "-"
     @Published private(set) var pendingQueueCount: Int = 0
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var recentLogs: [SyncAttemptLog] = []
@@ -29,9 +32,17 @@ final class SyncCoordinator: ObservableObject {
     private let observerSyncCooldownSeconds: TimeInterval = 20
     private var isRepairBackfillRunning = false
     private let repairBackfillDays = 90
+    private let initialLookbackDays = 120
 
     private enum Keys {
         static let repairBackfillCompleted = "sync.healthkit.repairBackfillCompleted"
+        static let schedulerNextPlannedAt = "sync.scheduler.nextPlannedAt"
+        static let schedulerIntervalAtSchedule = "sync.scheduler.intervalAtSchedule"
+    }
+
+    private enum ScheduleRestoreResult {
+        case restored(Date)
+        case initialized(Date)
     }
 
     init() {
@@ -65,12 +76,24 @@ final class SyncCoordinator: ObservableObject {
         }
 
         rescheduleBackgroundTasks()
-        restartForegroundAutoSyncLoop()
 
         Task {
             await refreshQueueState()
             await refreshLastSyncFromStore()
-            _ = await syncNow(trigger: .appLaunch)
+            switch restoreOrInitializeNextScheduledAt() {
+            case let .restored(date):
+                await queueStore.appendLog("Restored planned sync at \(DateFormatting.absolute(date)).")
+            case let .initialized(date):
+                await queueStore.appendLog("Initialized planned sync at \(DateFormatting.absolute(date)).")
+            case .none:
+                break
+            }
+
+            let ranDueSync = await runDueSyncIfNeededOnStart()
+            if !ranDueSync {
+                _ = await syncNow(trigger: .appLaunch)
+            }
+            restartForegroundAutoSyncLoop()
         }
     }
 
@@ -166,6 +189,7 @@ final class SyncCoordinator: ObservableObject {
                     : "Health permissions are required before syncing."
                 await queueStore.appendLog("Sync skipped (\(trigger.rawValue)): authorization not granted")
                 await refreshQueueState()
+                rescheduleBackgroundTasks()
                 return false
             }
         }
@@ -174,11 +198,13 @@ final class SyncCoordinator: ObservableObject {
             lastErrorMessage = "Base URL is invalid."
             await queueStore.appendLog("Sync failed: invalid base URL")
             await refreshQueueState()
+            rescheduleBackgroundTasks()
             return false
         }
 
         isSyncing = true
         lastAttemptAt = Date()
+        refreshNextSyncWindowPreview()
         lastErrorMessage = nil
 
         do {
@@ -202,7 +228,7 @@ final class SyncCoordinator: ObservableObject {
 
             await refreshLastSyncFromStore()
             await refreshQueueState()
-            scheduleNextForegroundTick()
+            rescheduleBackgroundTasks()
             isSyncing = false
             return true
         } catch {
@@ -210,7 +236,7 @@ final class SyncCoordinator: ObservableObject {
             lastErrorMessage = message
             await queueStore.appendLog("Sync error (\(trigger.rawValue)): \(message)")
             await refreshQueueState()
-            scheduleNextForegroundTick()
+            rescheduleBackgroundTasks()
             isSyncing = false
             return false
         }
@@ -219,7 +245,17 @@ final class SyncCoordinator: ObservableObject {
     func applySettingsAndReschedule() {
         restartForegroundAutoSyncLoop()
         rescheduleBackgroundTasks()
-        scheduleNextForegroundTick()
+    }
+
+    func handleSyncIntervalChanged() {
+        resetScheduleFromNow()
+        Task {
+            await queueStore.appendLog(
+                "Sync interval changed to \(settings.syncIntervalMinutes)m. Planned sync reset to \(DateFormatting.absolute(nextScheduledAt))."
+            )
+            await refreshQueueState()
+        }
+        applySettingsAndReschedule()
     }
 
     private func syncRange(days: Int) async -> Bool {
@@ -237,6 +273,7 @@ final class SyncCoordinator: ObservableObject {
                     : "Health permissions are required before syncing."
                 await queueStore.appendLog("Range upload skipped: authorization not granted")
                 await refreshQueueState()
+                rescheduleBackgroundTasks()
                 return false
             }
         }
@@ -245,11 +282,13 @@ final class SyncCoordinator: ObservableObject {
             lastErrorMessage = "Base URL is invalid."
             await queueStore.appendLog("Range upload failed: invalid base URL")
             await refreshQueueState()
+            rescheduleBackgroundTasks()
             return false
         }
 
         isSyncing = true
         lastAttemptAt = Date()
+        refreshNextSyncWindowPreview()
         lastErrorMessage = nil
 
         do {
@@ -278,7 +317,7 @@ final class SyncCoordinator: ObservableObject {
 
             await refreshLastSyncFromStore()
             await refreshQueueState()
-            scheduleNextForegroundTick()
+            rescheduleBackgroundTasks()
             isSyncing = false
             return true
         } catch {
@@ -286,29 +325,38 @@ final class SyncCoordinator: ObservableObject {
             lastErrorMessage = message
             await queueStore.appendLog("Range upload error (\(boundedDays)d): \(message)")
             await refreshQueueState()
-            scheduleNextForegroundTick()
+            rescheduleBackgroundTasks()
             isSyncing = false
             return false
         }
     }
 
     private func flushPendingQueue(baseURL: URL) async throws {
-        while let batch = await queueStore.nextBatch() {
-            do {
-                _ = try await apiClient.send(
-                    payload: batch.payload,
-                    baseURL: baseURL,
-                    endpointPath: settings.endpointPath,
-                    bearerToken: settings.token,
-                    timeoutSeconds: settings.timeoutSeconds
-                )
+        let pendingBefore = await queueStore.pendingCount()
+        let removed = await queueStore.discardAllButLatest()
+        if removed > 0 {
+            await queueStore.appendLog("Compacted pending queue from \(pendingBefore) to 1 (latest-only).")
+            await refreshQueueState()
+        }
 
-                await persistAnchorsAfterUpload(batch.anchors, at: Date())
-                await queueStore.removeBatch(id: batch.id)
-            } catch {
-                await queueStore.incrementAttempts(for: batch.id, reason: error.localizedDescription)
-                throw error
-            }
+        guard let batch = await queueStore.latestBatch() else {
+            return
+        }
+
+        do {
+            _ = try await apiClient.send(
+                payload: batch.payload,
+                baseURL: baseURL,
+                endpointPath: settings.endpointPath,
+                bearerToken: settings.token,
+                timeoutSeconds: settings.timeoutSeconds
+            )
+
+            await persistAnchorsAfterUpload(batch.anchors, at: Date())
+            await queueStore.removeBatch(id: batch.id)
+        } catch {
+            await queueStore.incrementAttempts(for: batch.id, reason: error.localizedDescription)
+            throw error
         }
     }
 
@@ -329,6 +377,7 @@ final class SyncCoordinator: ObservableObject {
         let syncDate = Date()
         await persistAnchorsAfterUpload(anchorSnapshots, at: syncDate)
         lastSyncAt = syncDate
+        refreshNextSyncWindowPreview()
 
         await queueStore.appendLog(
             "Sync ok (\(trigger.rawValue)): +\(response.importedHealthDays) days, +\(response.importedWorkouts) workouts, updated \(response.updatedWorkouts)"
@@ -431,10 +480,14 @@ final class SyncCoordinator: ObservableObject {
 
         guard settings.autoSyncEnabled else {
             nextScheduledAt = nil
+            clearPersistedSchedule()
+            refreshNextSyncWindowPreview()
             return
         }
 
-        scheduleNextForegroundTick()
+        if nextScheduledAt == nil {
+            _ = restoreOrInitializeNextScheduledAt()
+        }
 
         autoSyncTask = Task { [weak self] in
             guard let self else {
@@ -442,23 +495,35 @@ final class SyncCoordinator: ObservableObject {
             }
 
             while !Task.isCancelled {
-                let seconds = max(15 * 60, min(180 * 60, settings.syncIntervalMinutes * 60))
-                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                guard settings.autoSyncEnabled else {
+                    break
+                }
+                guard let scheduledAt = nextScheduledAt else {
+                    _ = restoreOrInitializeNextScheduledAt()
+                    continue
+                }
+
+                let secondsUntilDue = max(0, scheduledAt.timeIntervalSinceNow)
+                if secondsUntilDue > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(secondsUntilDue * 1_000_000_000))
+                }
                 if Task.isCancelled {
                     break
                 }
+
+                guard let dueAt = nextScheduledAt else {
+                    continue
+                }
+                if Date() < dueAt {
+                    continue
+                }
+
+                await queueStore.appendLog("Auto-sync due. Estimated window: \(nextSyncWindowLabel)")
+                let runNow = Date()
                 _ = await self.syncNow(trigger: .foregroundInterval)
+                self.advanceScheduleAfterRun(now: runNow)
             }
         }
-    }
-
-    private func scheduleNextForegroundTick() {
-        guard settings.autoSyncEnabled else {
-            nextScheduledAt = nil
-            return
-        }
-
-        nextScheduledAt = Date(timeIntervalSinceNow: TimeInterval(settings.syncIntervalMinutes * 60))
     }
 
     private func rescheduleBackgroundTasks() {
@@ -469,6 +534,107 @@ final class SyncCoordinator: ObservableObject {
         BackgroundSyncScheduler.shared.scheduleNext(intervalMinutes: settings.syncIntervalMinutes)
     }
 
+    private func restoreOrInitializeNextScheduledAt() -> ScheduleRestoreResult? {
+        guard settings.autoSyncEnabled else {
+            nextScheduledAt = nil
+            clearPersistedSchedule()
+            refreshNextSyncWindowPreview()
+            return nil
+        }
+
+        let storedTimestamp = UserDefaults.standard.double(forKey: Keys.schedulerNextPlannedAt)
+        let storedInterval = UserDefaults.standard.integer(forKey: Keys.schedulerIntervalAtSchedule)
+        if storedTimestamp > 0, storedInterval == settings.syncIntervalMinutes {
+            let restored = Date(timeIntervalSince1970: storedTimestamp)
+            nextScheduledAt = restored
+            refreshNextSyncWindowPreview()
+            return .restored(restored)
+        }
+
+        let initialized = Date(timeIntervalSinceNow: TimeInterval(settings.syncIntervalMinutes * 60))
+        persistNextScheduledAt(initialized)
+        return .initialized(initialized)
+    }
+
+    private func runDueSyncIfNeededOnStart() async -> Bool {
+        guard settings.autoSyncEnabled else {
+            return false
+        }
+        guard let planned = nextScheduledAt else {
+            return false
+        }
+        guard planned <= Date() else {
+            return false
+        }
+
+        await queueStore.appendLog(
+            "Planned sync was overdue (\(DateFormatting.absolute(planned))). Running once now."
+        )
+        await refreshQueueState()
+
+        let runNow = Date()
+        _ = await syncNow(trigger: .foregroundInterval)
+        advanceScheduleAfterRun(now: runNow)
+        return true
+    }
+
+    private func persistNextScheduledAt(_ date: Date) {
+        nextScheduledAt = date
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Keys.schedulerNextPlannedAt)
+        UserDefaults.standard.set(settings.syncIntervalMinutes, forKey: Keys.schedulerIntervalAtSchedule)
+        refreshNextSyncWindowPreview()
+    }
+
+    private func clearPersistedSchedule() {
+        UserDefaults.standard.removeObject(forKey: Keys.schedulerNextPlannedAt)
+        UserDefaults.standard.removeObject(forKey: Keys.schedulerIntervalAtSchedule)
+    }
+
+    private func resetScheduleFromNow() {
+        guard settings.autoSyncEnabled else {
+            nextScheduledAt = nil
+            clearPersistedSchedule()
+            refreshNextSyncWindowPreview()
+            return
+        }
+
+        clearPersistedSchedule()
+        let next = Date(timeIntervalSinceNow: TimeInterval(settings.syncIntervalMinutes * 60))
+        persistNextScheduledAt(next)
+    }
+
+    private func advanceScheduleAfterRun(now: Date) {
+        guard settings.autoSyncEnabled else {
+            nextScheduledAt = nil
+            clearPersistedSchedule()
+            refreshNextSyncWindowPreview()
+            return
+        }
+
+        let intervalSeconds = TimeInterval(settings.syncIntervalMinutes * 60)
+        let base = nextScheduledAt ?? now
+        let next: Date
+        if base <= now {
+            let elapsed = now.timeIntervalSince(base)
+            let intervalsToAdvance = floor(elapsed / intervalSeconds) + 1
+            next = base.addingTimeInterval(intervalSeconds * intervalsToAdvance)
+        } else {
+            next = base.addingTimeInterval(intervalSeconds)
+        }
+
+        persistNextScheduledAt(next)
+    }
+
+    private func refreshNextSyncWindowPreview() {
+        nextSyncWindowFrom = lastSyncAt
+        nextSyncWindowTo = nextScheduledAt
+        nextSyncWindowLabel = DateFormatting.syncWindow(
+            from: nextSyncWindowFrom,
+            to: nextSyncWindowTo,
+            initialLookbackDays: initialLookbackDays
+        )
+    }
+
     private func refreshQueueState() async {
         pendingQueueCount = await queueStore.pendingCount()
         recentLogs = await queueStore.recentLogs(limit: 10)
@@ -476,6 +642,7 @@ final class SyncCoordinator: ObservableObject {
 
     private func refreshLastSyncFromStore() async {
         lastSyncAt = await anchorStore.lastSuccessfulSyncAt()
+        refreshNextSyncWindowPreview()
     }
 
     private func payloadDiagnostics(_ payload: MobileSyncPayload) -> String {

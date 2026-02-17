@@ -65,7 +65,6 @@ final class BackgroundSyncScheduler {
 
         Task {
             let success = await taskHandler?(.backgroundTask) ?? false
-            scheduleNext(intervalMinutes: AppConfig.defaultIntervalMinutes)
             task.setTaskCompleted(success: success)
         }
     }
@@ -77,7 +76,6 @@ final class BackgroundSyncScheduler {
 
         Task {
             let success = await taskHandler?(.backgroundTask) ?? false
-            scheduleNext(intervalMinutes: AppConfig.defaultIntervalMinutes)
             task.setTaskCompleted(success: success)
         }
     }

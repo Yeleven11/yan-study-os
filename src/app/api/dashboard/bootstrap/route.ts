@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import type { WorkoutDetail } from "@/lib/types";
+import { sanitizeFutureHealthData } from "@/lib/server/health-time-sanity";
 import { getDashboardStore } from "@/lib/server/store";
 import { requireSession } from "@/lib/server/route-helpers";
 import { withWorkoutSeriesFallback } from "@/lib/server/workout-detail";
@@ -12,7 +13,12 @@ export async function GET(request: NextRequest) {
   }
 
   const store = getDashboardStore();
-  const data = await store.getData();
+  const loadedData = await store.getData();
+  const sanitized = sanitizeFutureHealthData(loadedData);
+  const data = sanitized.data;
+  if (sanitized.summary.changed) {
+    await store.saveData(data);
+  }
   const workoutById = new Map(data.workouts.map((workout) => [workout.id, workout]));
   const detailByWorkoutId = new Map(
     data.workoutDetails.map((detail) => [detail.workoutId, detail]),

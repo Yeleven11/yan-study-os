@@ -43,6 +43,10 @@ ios/StudyHealthSync/**/xcuserdata/
 
 # amplify
 .amplify/
+data/aws-export-*/
+data/aws-export-*.tar.gz
+data/aws-offload-*/
+data/aws-offload-*.tar.gz
 
 # typescript
 *.tsbuildinfo

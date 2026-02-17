@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var copyFeedback: String?
 
     private let manualRangeOptions = [7, 14, 30, 60, 90, 180, 365]
+    private let syncIntervalOptions = [1, 5, 15, 30, 60, 90, 120, 180]
 
     var body: some View {
         NavigationStack {
@@ -60,15 +61,19 @@ struct ContentView: View {
                             coordinator.applySettingsAndReschedule()
                         }
 
-                    Stepper(
-                        "Update interval: \(settings.syncIntervalMinutes) min",
-                        value: $settings.syncIntervalMinutes,
-                        in: settings.minIntervalMinutes...settings.maxIntervalMinutes,
-                        step: 5
-                    )
-                    .onChange(of: settings.syncIntervalMinutes) { _, _ in
-                        coordinator.applySettingsAndReschedule()
+                    Picker("Update interval", selection: $settings.syncIntervalMinutes) {
+                        ForEach(availableIntervalOptions, id: \.self) { option in
+                            Text("\(option) min").tag(option)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .onChange(of: settings.syncIntervalMinutes) { _, _ in
+                        coordinator.handleSyncIntervalChanged()
+                    }
+
+                    Text("Sync sends delta data since your last successful sync. 1m/5m intervals are foreground-reliable; background timing is best-effort by iOS.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
                     Button {
                         coordinator.triggerManualSync()
@@ -112,6 +117,7 @@ struct ContentView: View {
                     LabeledContent("Last Successful Sync", value: DateFormatting.absolute(coordinator.lastSyncAt))
                     LabeledContent("Last Attempt", value: DateFormatting.absolute(coordinator.lastAttemptAt))
                     LabeledContent("Next Planned Attempt", value: DateFormatting.absolute(coordinator.nextScheduledAt))
+                    LabeledContent("Next Planned Sync Window", value: coordinator.nextSyncWindowLabel)
                     LabeledContent("Queue", value: "\(coordinator.pendingQueueCount) pending")
 
                     if let error = coordinator.lastErrorMessage, !error.isEmpty {
@@ -248,6 +254,14 @@ struct ContentView: View {
                 copyFeedback = nil
             }
         }
+    }
+
+    private var availableIntervalOptions: [Int] {
+        var options = syncIntervalOptions
+        if !options.contains(settings.syncIntervalMinutes) {
+            options.append(settings.syncIntervalMinutes)
+        }
+        return options.sorted()
     }
 }
 

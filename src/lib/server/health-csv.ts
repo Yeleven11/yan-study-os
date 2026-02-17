@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { toDateKey } from "@/lib/dashboard-utils";
+import { sanitizeFutureHealthData } from "@/lib/server/health-time-sanity";
 import type {
   AppData,
   DailyHealthFact,
@@ -1467,14 +1468,16 @@ export function importHealthFiles(
   current: AppData,
   files: HealthImportInputFile[],
 ): { nextData: AppData; summary: HealthImportSummary } {
+  const now = new Date();
+  const sanitizedCurrent = sanitizeFutureHealthData(current, now).data;
   const allowWorkoutReimport =
-    current.workouts.length === 0 && current.workoutDetails.length === 0;
+    sanitizedCurrent.workouts.length === 0 && sanitizedCurrent.workoutDetails.length === 0;
   const isWorkoutLikeRawFile = (file: HealthRawFile): boolean =>
     file.fileType === "workout_summary" ||
     file.fileType === "workout_stream" ||
     /\bworkouts?\b/i.test(file.filename);
   const existingHashes = new Set(
-    current.healthRawFiles
+    sanitizedCurrent.healthRawFiles
       .filter((file) => {
         if (file.fileType === "unknown") {
           return false;
@@ -1502,13 +1505,13 @@ export function importHealthFiles(
     }
   }
 
-  const importedAt = new Date().toISOString();
+  const importedAt = now.toISOString();
   const dailyHealthMerged = mergeDailyHealth([
-    ...current.dailyHealth,
+    ...sanitizedCurrent.dailyHealth,
     ...parsedFiles.flatMap((entry) => entry.dailyHealth),
   ]);
 
-  const existingWorkouts = [...current.workouts];
+  const existingWorkouts = [...sanitizedCurrent.workouts];
   const canonicalFromFiles = parsedFiles.flatMap((entry) => entry.workouts);
   const streamFromFiles = parsedFiles.flatMap((entry) => entry.streams);
 
@@ -1522,7 +1525,9 @@ export function importHealthFiles(
 
   const merged = mergeWorkouts([...canonicalById.values()], streamFromFiles, importedAt);
 
-  const detailById = new Map(current.workoutDetails.map((detail) => [detail.workoutId, detail]));
+  const detailById = new Map(
+    sanitizedCurrent.workoutDetails.map((detail) => [detail.workoutId, detail]),
+  );
   for (const detail of merged.details) {
     detailById.set(
       detail.workoutId,
@@ -1530,12 +1535,12 @@ export function importHealthFiles(
     );
   }
 
-  const rawFileById = new Map(current.healthRawFiles.map((file) => [file.id, file]));
+  const rawFileById = new Map(sanitizedCurrent.healthRawFiles.map((file) => [file.id, file]));
   for (const parsed of parsedFiles) {
     rawFileById.set(parsed.file.id, parsed.file);
   }
 
-  const rawRowById = new Map(current.healthRawRows.map((row) => [row.id, row]));
+  const rawRowById = new Map(sanitizedCurrent.healthRawRows.map((row) => [row.id, row]));
   for (const parsed of parsedFiles) {
     for (const row of parsed.rawRows) {
       rawRowById.set(row.id, row);
@@ -1546,19 +1551,26 @@ export function importHealthFiles(
   const filesIgnored = parsedFiles.filter((entry) => entry.file.fileType === "ignored").length;
 
   const nextData: AppData = {
-    ...current,
+    ...sanitizedCurrent,
     dailyHealth: dailyHealthMerged,
     workouts: merged.workouts,
     workoutDetails: [...detailById.values()],
     healthRawFiles: [...rawFileById.values()],
     healthRawRows: [...rawRowById.values()],
   };
+  const sanitizedNext = sanitizeFutureHealthData(nextData, now).data;
 
   return {
-    nextData,
+    nextData: sanitizedNext,
     summary: {
-      importedHealthDays: parsedFiles.flatMap((entry) => entry.dailyHealth).length,
-      importedWorkouts: Math.max(0, merged.workouts.length - current.workouts.length),
+      importedHealthDays: Math.max(
+        0,
+        sanitizedNext.dailyHealth.length - sanitizedCurrent.dailyHealth.length,
+      ),
+      importedWorkouts: Math.max(
+        0,
+        sanitizedNext.workouts.length - sanitizedCurrent.workouts.length,
+      ),
       filesProcessed,
       filesSkipped: files.length - parsedFiles.length,
       filesIgnored,
