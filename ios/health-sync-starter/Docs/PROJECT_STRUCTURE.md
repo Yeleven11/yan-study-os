@@ -1,33 +1,42 @@
-# Recommended Project Structure
+# StudyHealthSync Project Structure
 
-After creating the Xcode app, keep this structure:
+Current project locations:
 
-- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/ios/StudyHealthSync/StudyHealthSync.xcodeproj`
-- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/ios/StudyHealthSync/StudyHealthSync/`
-- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/ios/StudyHealthSync/Config/Env.local.xcconfig`
+- `ios/StudyHealthSync/StudyHealthSync.xcodeproj`
+- `ios/StudyHealthSync/StudyHealthSync/`
+- `ios/StudyHealthSync/Config/Env.shared.xcconfig`
+- `ios/StudyHealthSync/Config/Env.local.xcconfig` (local, optional, not committed)
 
-Inside app source folder, we will add:
+## Source Layout
 
 - `App/`
+  - app bootstrapping and build-time config mapping (`AppConfig.swift`)
 - `Features/Sync/`
-- `Features/Permissions/`
-- `HealthKit/Queries/`
+  - sync coordinator + background scheduling
+- `HealthKit/`
+  - HealthKit authorization, anchored collection, workout payload assembly
 - `Networking/`
+  - API client for mobile sync endpoint
 - `Persistence/`
+  - app settings, keychain token, anchor state, retry queue
 - `Models/`
+  - payload and state models used by sync pipeline
 - `Utilities/`
+  - date formatting helpers for UI
 
-Module intent:
+## Config Files
 
-1. `Features/Permissions`:
-   - Health access request + status display.
-2. `HealthKit/Queries`:
-   - Anchored queries and data mapping.
-3. `Persistence`:
-   - Anchor tokens, retry queue, last-sync metadata.
-4. `Networking`:
-   - API client and request signing/headers.
-5. `Features/Sync`:
-   - Sync coordinator and UI actions.
+- `Env.shared.xcconfig`:
+  - committed shared defaults
+  - includes `#include? "Env.local.xcconfig"`
+- `Env.local.xcconfig`:
+  - private overrides for URL/token
+  - keep local only
 
-This keeps the code clean and easy for iterative improvements.
+## Data Flow (High Level)
+
+1. `SyncCoordinator` requests HealthKit permission.
+2. `HealthKitService` collects delta/range payloads.
+3. `SyncAPIClient` sends payload to `/api/integrations/health/mobile-sync`.
+4. On success, anchor snapshots persist in `AnchorStore`.
+5. On failure, payload persists in `SyncQueueStore` and retries later.

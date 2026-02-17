@@ -1,56 +1,65 @@
 # Yan Study OS
 
-Personal IBDP Year 2 study command center for the final exam sprint.
+Private study operating system for IBDP finals with integrated health/performance coaching and native iOS HealthKit sync.
 
-## What Is Implemented
+## Current State
 
-- Dark terminal/IDE dashboard (JetBrains Mono, minimal color usage, subject color accents)
-- Single passcode login (server-verified; no username)
-- Top exam countdown card (nearest 3 exams with subject-colored progress bars)
-- Editable exam schedule (in expanded exam view)
-- 120-day forward study calendar with glowing exam-day highlight
-- Time-dependent greeting variants for Yan
-- Study timer with `Start` / `Pause|Resume` / `End`
-- Session threshold filter (`< 5 min` ignored)
-- Timer auto-resume after refresh/reopen
-- Subject cumulative study trackers (6 subjects)
-- Study log (reverse chronological, subject color strips)
-- Whoop-style condition/readiness widget (sleep + HRV + RHR + load + cognitive strain)
-- Workout tracker with manual logging + calendar workout markers
-- Health Analytics V2:
-  - multi-file Apple Health CSV ingestion (batch import)
-  - merged workout assembly across split stream files
-  - workout confidence + stream count + raw file provenance
-  - Workout Explorer rail cards + full drill-down modal with raw series visuals
-  - sleep raw bars (hours + score) and 7-day/30-day trend views
-- Goal-driven coaching (study target, bedtime recommendation, workout recommendation)
-- CSV health import endpoint (comma-separated) with sample-mode fallback when no health data exists
-- Left-side todo rail with:
-  - add todo (`title`, `deadline`, `ultraPriority`, `subject`)
-  - chronological sorting + ultra-priority pinning
-  - archive/restore workflow
-- Fullscreen card expansion with backdrop blur + keyboard escape + focus trap
-- API contract routes from the plan (`/auth`, `/dashboard/bootstrap`, `/study-sessions`, `/todos`, `/settings/exams`)
-- Offline mutation queue for API mode (auto flush on reconnect)
+- Next.js 16 dashboard with passcode session auth.
+- Homepage split rails:
+  - top: scrollable todo rail
+  - bottom: always-ready flashcards (no start/stop workflow)
+- Flashcards use spaced repetition scheduling and save instantly after each review outcome.
+- Focus feed includes live study-target progress and exam-day subject outlines (inside the day square, no glow bleed).
+- Performance module uses imported health/workout data (manual workout logging UI removed).
+- Native iOS companion app (`ios/StudyHealthSync`) sends incremental HealthKit data to the server.
+- Backend persistence modes:
+  - `local` (file store)
+  - `dynamodb` (AWS DynamoDB)
+- No synthetic sample health fallback is used in the analytics engine.
+
+## Core Features
+
+### Study + planning
+
+- Passcode-only login.
+- Study timer with start/pause/resume/end and session persistence.
+- Daily streak in the top status bar (counts only when total study time for day >= 1.5h).
+- Todo management with archive/restore and priority ordering.
+- Subject-aware exam calendar and countdown surfaces.
+
+### Flashcards
+
+- Add cards from homepage (`question`, `answer`).
+- Front of card shows question immediately.
+- Flip card to reveal answer + `Correct` / `Incorrect` buttons.
+- Review action persists immediately and updates spaced-repetition schedule.
+- Session snapshot tracks due/critical card counts.
+
+### Health + performance
+
+- CSV ingest from Health Auto Export (`/api/integrations/health/csv`, `/api/integrations/health/import-batch`).
+- Native iOS JSON ingest (`/api/integrations/health/mobile-sync`).
+- Workout detail drill-down with merged streams and provenance.
+- Run-focused readiness model (sleep + load + detraining guardrails) with 5 recommendation zones.
+- User-editable workout difficulty override (1-10) feeding future training load.
 
 ## Stack
 
-- Next.js 16 + TypeScript + Tailwind CSS
-- App Router + Route Handlers
-- Amplify Gen 2 backend scaffolding
-- Local file data store for development
-- Optional DynamoDB-backed store for AWS runtime
+- Next.js 16 (App Router + Route Handlers)
+- TypeScript
+- Tailwind CSS
+- Optional AWS DynamoDB backend
+- Native SwiftUI iOS companion app for HealthKit sync
 
-## Subject Colors
+## Repository Layout
 
-- Math AA HL: `#C3423F`
-- Physics HL: `#9BC53D`
-- Computer Science HL: `#730071`
-- German Lang Lit SL: `#FFAD05`
-- English Lang Lit SL: `#5BC0EB`
-- Business SL: `#FDE74C`
+- `src/` - web app, API routes, analytics/health logic
+- `ios/StudyHealthSync/` - production iOS app project
+- `ios/health-sync-starter/` - setup and structure docs/templates
+- `scripts/` - utility scripts (passcode hash, health batch import, mobile token generation)
+- `runtime-data/` - local file backend data (`DATA_BACKEND=local`)
 
-## Local Run
+## Local Development
 
 1. Install dependencies:
 
@@ -64,20 +73,20 @@ npm install
 cp .env.example .env.local
 ```
 
-3. Set passcode in `.env.local`:
+3. Generate passcode hash:
 
 ```bash
-node scripts/generate-passcode-hash.mjs "your-passcode"
+npm run passcode:hash -- "your-passcode"
 ```
 
-Paste output into:
+4. Set required auth vars in `.env.local`:
 
 ```bash
-YAN_STUDY_PASSCODE_HASH=<generated-value>
-SESSION_SECRET=<random-long-secret>
+YAN_STUDY_PASSCODE_HASH=<generated>
+SESSION_SECRET=<long-random-secret>
 ```
 
-4. Start:
+5. Run app:
 
 ```bash
 npm run dev
@@ -85,64 +94,53 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Data Modes
+## Data Modes And Persistence
 
-`NEXT_PUBLIC_DATA_MODE` controls frontend adapter:
+`NEXT_PUBLIC_DATA_MODE` (frontend adapter):
 
-- `api` (default): frontend uses protected API routes
-- `local`: frontend uses browser localStorage only
+- `api` (default) -> uses authenticated API routes
+- `local` -> browser localStorage only
 
-`DATA_BACKEND` controls API persistence backend:
+`DATA_BACKEND` (server persistence):
 
-- `local` (default): stores data in `runtime-data/yan-study-os.json`
-- `dynamodb`: stores data in DynamoDB (requires table env vars)
+- `local` (default) -> writes to `runtime-data/yan-study-os.json`
+- `dynamodb` -> uses DynamoDB tables
 
-Required when `DATA_BACKEND=dynamodb`:
+Notes:
 
-- `YAN_STUDY_SESSIONS_TABLE`
-- `YAN_STUDY_TODOS_TABLE`
-- `YAN_STUDY_SETTINGS_TABLE`
-- `AWS_REGION` (default target `eu-central-1`)
+- `local` backend is not durable for serverless production hosting.
+- For production, use `dynamodb` (currently implemented) or add another durable backend.
 
-## Amplify Gen 2 (AWS)
+## Environment Variables
 
-Amplify resources are defined in `amplify/`.
-
-### Provision backend (sandbox/dev)
-
-```bash
-npx ampx sandbox --profile <your-aws-profile> --region eu-central-1
-```
-
-This creates:
-
-- Amplify Data API models (`StudySession`, `TodoItem`, `DashboardSettings`)
-- Custom DynamoDB tables for server API backend:
-  - `StudySessionsTable`
-  - `TodosTable`
-  - `SettingsTable`
-
-### Amplify Hosting (production)
-
-1. Push this repo to GitHub.
-2. Connect repo in Amplify Hosting.
-3. Set environment variables in Amplify app:
+### Required
 
 - `YAN_STUDY_PASSCODE_HASH`
 - `SESSION_SECRET`
+
+### Common
+
 - `NEXT_PUBLIC_DATA_MODE=api`
-- `DATA_BACKEND=dynamodb`
+- `DATA_BACKEND=local|dynamodb`
+
+### Required for `DATA_BACKEND=dynamodb`
+
 - `YAN_STUDY_SESSIONS_TABLE`
 - `YAN_STUDY_TODOS_TABLE`
 - `YAN_STUDY_SETTINGS_TABLE`
-- `AWS_REGION=eu-central-1`
+- Region (one of):
+  - `DYNAMO_REGION`
+  - `AWS_REGION`
+  - `AWS_DEFAULT_REGION`
 
-4. Deploy.
+### Optional ingestion auth
 
-Note for Next.js SSR routes on Amplify:
+- `HEALTH_EXPORT_BEARER_TOKEN` (CSV and mobile endpoint fallback token)
+- `MOBILE_HEALTH_SYNC_BEARER_TOKEN` (dedicated mobile token)
 
-- This repo includes `amplify.yml` that writes required server env vars into `.env.production` during build.
-- Keep auth/storage env vars configured in Amplify Console so API routes can read them at runtime.
+### Optional tooling
+
+- `HEALTH_IMPORT_BASE_URL` (default base URL for `scripts/import-health-folder.mjs`)
 
 ## API Routes
 
@@ -152,122 +150,90 @@ Note for Next.js SSR routes on Amplify:
 - `GET /api/dashboard/bootstrap`
 - `GET|POST /api/study-sessions`
 - `GET|POST /api/workouts`
+- `GET|PATCH|DELETE /api/workouts/:id`
 - `GET|POST|PATCH /api/todos`
 - `POST /api/todos/:id/archive`
 - `POST /api/todos/:id/restore`
 - `GET|PUT /api/settings/exams`
 - `GET|PUT /api/settings/goals`
-- `POST /api/integrations/health/csv` (Bearer auth via `HEALTH_EXPORT_BEARER_TOKEN` or session fallback)
+- `GET|POST /api/flashcards`
+- `POST /api/flashcards/review`
+- `GET /api/health/raw/files`
+- `POST /api/integrations/health/csv`
 - `POST /api/integrations/health/import-batch`
-- `POST /api/integrations/health/mobile-sync` (Bearer auth via `MOBILE_HEALTH_SYNC_BEARER_TOKEN` or `HEALTH_EXPORT_BEARER_TOKEN`, session fallback when no token is configured)
-- `GET /api/workouts/:id` (merged workout detail drill-down)
-- `GET /api/health/raw/files` (raw import file transparency)
+- `POST /api/integrations/health/mobile-sync`
 
-## Health Import V2
+## Health Ingestion
 
-### Supported CSV Patterns
+### CSV import
 
-- Daily aggregates: `HealthAutoExport-*.csv`
-- Workout summary anchor: `Workouts-*.csv`
-- Workout detail streams (split files):
-  - `*-Heart Rate-YYYYMMDD_HHmmss.csv`
-  - `*-Heart Rate Recovery-YYYYMMDD_HHmmss.csv`
-  - `*-Walking + Running Distance-YYYYMMDD_HHmmss.csv`
-  - `*-Step Count-YYYYMMDD_HHmmss.csv`
-  - `*-Active Energy-YYYYMMDD_HHmmss.csv`
-  - `*-Resting Energy-YYYYMMDD_HHmmss.csv`
-  - `*-Flights Climbed-YYYYMMDD_HHmmss.csv`
-- Explicitly ignored:
-  - route/GPS files (`*-Route-*.csv`, `*.gpx`)
+- Endpoint: `POST /api/integrations/health/csv`
+- Supports:
+  - `multipart/form-data` CSV upload
+  - JSON `{ csv, filename }`
+  - JSON `{ files: [{ filename, csv }] }`
+  - raw `text/csv`
 
-### Merge Behavior
-
-- `workoutKey` is derived from workout stem + timestamp token (`YYYYMMDD_HHmmss`).
-- Canonical source priority:
-  - `Workouts-*.csv` summary row is canonical when present.
-  - Stream files are attached by exact `workoutKey` first.
-  - Fallback match: nearest start time window (`±3 minutes`) + inferred workout type.
-- If no canonical summary exists, a workout is inferred from stream timestamps/metrics.
-- Metric precedence:
-  - Summary metrics win when positive/non-zero.
-  - Missing metrics are filled from stream aggregates.
-  - HR average is weighted by interval duration from stream rows.
-- Imports are idempotent by content hash; duplicate files are ignored.
-
-### Import Workflows
-
-- In dashboard UI:
-  - `Performance -> Health CSV Import -> Batch import folder files (.csv)` for multi-file upload.
-  - paste-single CSV is still supported.
-- Scripted batch import:
+Batch helper:
 
 ```bash
 node scripts/import-health-folder.mjs "/absolute/path/to/export/folder" "http://localhost:3000"
 ```
 
-Optional:
+### Native iOS import
 
-- `HEALTH_EXPORT_BEARER_TOKEN` for bearer-auth import mode.
-- `MOBILE_HEALTH_SYNC_BEARER_TOKEN` for native iOS JSON sync mode (optional fallback token for `/api/integrations/health/mobile-sync`).
-- `HEALTH_IMPORT_BASE_URL` to set default API base.
+- Endpoint: `POST /api/integrations/health/mobile-sync`
+- Payload: schema version `1`
+- Supports daily health + workouts + stream series + deletions
+- iOS app emits minute-resampled workout heart-rate series with gap carry-forward
 
-### Health Auto Export App Setup (REST API)
+## iOS App (StudyHealthSync)
 
-Set `HEALTH_EXPORT_BEARER_TOKEN` on your deployed server and use the same value in both automations as:
+Production project path:
 
-- Header key: `Authorization`
-- Header value: `Bearer <HEALTH_EXPORT_BEARER_TOKEN>`
+- `ios/StudyHealthSync/StudyHealthSync.xcodeproj`
 
-Use this endpoint:
+Quick setup:
 
-- `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
+1. Open project in Xcode.
+2. Ensure Signing team is set.
+3. Confirm capabilities on target:
+   - HealthKit
+   - Background Modes (`fetch`, `processing`)
+4. Create local config:
+   - copy `ios/health-sync-starter/Config/Env.sample.xcconfig`
+   - to `ios/StudyHealthSync/Config/Env.local.xcconfig`
+5. Fill at least:
+   - `SYNC_BASE_URL`
+   - `SYNC_BEARER_TOKEN`
+6. Run on physical iPhone and grant Health permissions.
 
-Create two automations in Health Auto Export:
+Main app behavior:
 
-1. `IB Health Metrics`
-- Enabled: `ON`
-- Automation Type: `REST API`
-- URL: `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
-- Timeout Interval: `60`
-- Data Type: `Health Metrics`
-- Select Health Metrics: `All Selected` (or at least sleep + HRV + resting HR + steps + distance + active/resting energy)
-- Export Format: `CSV`
-- Export Version: `v2`
-- Date Range: `Since Last Sync`
-- Time Grouping: `Default` (or `Day` if available)
-- Sync Cadence: `15 Minutes` (use `5` for faster updates)
-- Notify on Cache Update / Notify When Run: optional
+- Auto sync with adjustable interval (15-180 min)
+- Manual `Sync Now`
+- Manual range backfill (`Last 7..365 days`)
+- Queue/retry with recent sync logs
+- Connection settings stored separately from main sync controls
 
-2. `IB Workouts`
-- Enabled: `ON`
-- Automation Type: `REST API`
-- URL: `https://<YOUR_LIVE_DOMAIN>/api/integrations/health/csv`
-- Timeout Interval: `60`
-- Data Type: `Workouts`
-- Export Format: `CSV`
-- Export Version: `v2`
-- Date Range: `Since Last Sync`
-- Time Grouping: `Default`
-- Sync Cadence: `15 Minutes`
+## Deployment Notes
 
-Transport compatibility:
+### AWS Amplify (currently implemented path)
 
-- Supports `multipart/form-data` CSV uploads (Health Auto Export CSV mode).
-- Supports JSON body `{ csv, filename }`.
-- Supports JSON body `{ files: [{ filename, csv }] }`.
-- Supports raw `text/csv` payloads on `/api/integrations/health/csv`.
-- Supports native iOS JSON sync payloads on `/api/integrations/health/mobile-sync`.
+- `amplify/` contains infra definitions and `amplify.yml` build setup.
+- When using Dynamo backend, set table env vars + region env + auth env.
 
-Troubleshooting:
+### Vercel
 
-- `401 Unauthorized`: missing or incorrect `Authorization: Bearer ...` header, or wrong token in server env.
-- `400 Bad Request`: payload format is not one of the supported body shapes.
-- `200` with no visible data changes: CSV payload may be empty/unsupported, or file hash already imported (idempotent duplicate).
+- App deploys fine on Vercel.
+- Do not rely on local file persistence in serverless production.
+- Use a durable backend (DynamoDB currently supported in code, or add another DB backend before cutover).
 
 ## Quality Checks
 
 ```bash
 npm run lint
+npm run typecheck
 npm run test:health
 npm run build
 ```
