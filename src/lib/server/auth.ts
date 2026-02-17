@@ -34,6 +34,45 @@ function signPayload(payload: SessionPayload): string {
   return `${encoded}.${toBase64Url(signature)}`;
 }
 
+function verifyAndDecodeSessionToken(token: string): SessionPayload | null {
+  const [encodedPayload, encodedSignature] = token.split(".");
+  if (!encodedPayload || !encodedSignature) {
+    return null;
+  }
+
+  const expectedSignature = createHmac("sha256", getSessionSecret())
+    .update(encodedPayload)
+    .digest();
+  const providedSignature = fromBase64Url(encodedSignature);
+
+  if (
+    expectedSignature.length !== providedSignature.length ||
+    !timingSafeEqual(expectedSignature, providedSignature)
+  ) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(fromBase64Url(encodedPayload).toString("utf-8")) as SessionPayload;
+    if (
+      !payload ||
+      payload.sub !== "yan" ||
+      typeof payload.iat !== "number" ||
+      typeof payload.exp !== "number"
+    ) {
+      return null;
+    }
+
+    if (payload.exp <= Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 export function createSessionToken(): string {
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
@@ -46,34 +85,7 @@ export function createSessionToken(): string {
 }
 
 export function verifySessionToken(token: string): boolean {
-  const [encodedPayload, encodedSignature] = token.split(".");
-  if (!encodedPayload || !encodedSignature) {
-    return false;
-  }
-
-  const expectedSignature = createHmac("sha256", getSessionSecret())
-    .update(encodedPayload)
-    .digest();
-
-  const providedSignature = fromBase64Url(encodedSignature);
-
-  if (
-    expectedSignature.length !== providedSignature.length ||
-    !timingSafeEqual(expectedSignature, providedSignature)
-  ) {
-    return false;
-  }
-
-  try {
-    const payload = JSON.parse(fromBase64Url(encodedPayload).toString("utf-8")) as SessionPayload;
-    if (!payload.exp || typeof payload.exp !== "number") {
-      return false;
-    }
-
-    return payload.exp > Math.floor(Date.now() / 1000);
-  } catch {
-    return false;
-  }
+  return Boolean(verifyAndDecodeSessionToken(token));
 }
 
 function parseScryptHash(value: string): {
@@ -172,4 +184,13 @@ export function isAuthenticatedRequest(request: NextRequest): boolean {
   }
 
   return verifySessionToken(token);
+}
+
+export function getSessionFromRequest(request: NextRequest): SessionPayload | null {
+  const token = request.cookies.get(COOKIE_NAME)?.value;
+  if (!token) {
+    return null;
+  }
+
+  return verifyAndDecodeSessionToken(token);
 }

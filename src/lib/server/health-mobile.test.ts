@@ -1,0 +1,113 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createDefaultAppData } from "../constants";
+import { importMobileSyncPayload } from "./health-mobile";
+import type { MobileSyncRequest } from "../types";
+
+function buildPayload(batchId: string): MobileSyncRequest {
+  return {
+    schemaVersion: 1,
+    batchId,
+    generatedAt: "2026-02-16T08:00:00.000Z",
+    device: {
+      deviceId: "iphone-yan",
+      appVersion: "1.0.0",
+      osVersion: "iOS 26.2",
+      timezone: "Europe/Berlin",
+    },
+    settings: {
+      syncIntervalMinutes: 30,
+    },
+    dailyHealth: [
+      {
+        date: "2026-02-15",
+        sleepHours: 7.8,
+        hrvMs: 63,
+        restingHrBpm: 51,
+        steps: 12000,
+        walkRunDistanceKm: 8.2,
+        activeEnergyKj: 2400,
+      },
+    ],
+    workouts: [
+      {
+        hkWorkoutUuid: "D307C4CB-147B-4908-ACD2-7863AB42AA11",
+        workoutType: "Outdoor Run",
+        startedAt: "2026-02-15T06:10:00.000Z",
+        endedAt: "2026-02-15T06:55:00.000Z",
+        durationMin: 45,
+        distanceKm: 9.4,
+        activeEnergyKj: 2812,
+        avgHeartRate: 154,
+        hrMin: 118,
+        hrMax: 178,
+        hrAvg: 154,
+        stepCount: 8120,
+        streams: {
+          heartRateSeries: [
+            { timestamp: "2026-02-15T06:10:30.000Z", value: 128 },
+            { timestamp: "2026-02-15T06:11:30.000Z", value: 132 },
+          ],
+          distanceSeries: [
+            { timestamp: "2026-02-15T06:11:00.000Z", value: 0.2 },
+            { timestamp: "2026-02-15T06:12:00.000Z", value: 0.4 },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+test("imports mobile sync payload into daily health and workouts", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const payload = buildPayload("batch-1");
+
+  const imported = importMobileSyncPayload(seed, payload);
+
+  assert.equal(imported.summary.duplicateBatch, false);
+  assert.equal(imported.summary.importedHealthDays, 1);
+  assert.equal(imported.summary.importedWorkouts, 1);
+  assert.equal(imported.nextData.workouts.length, 1);
+  assert.equal(imported.nextData.workoutDetails.length, 1);
+  assert.equal(imported.nextData.healthRawFiles[0]?.fileType, "mobile_sync");
+  assert.ok((imported.nextData.workoutDetails[0]?.heartRateSeries?.length || 0) > 0);
+});
+
+test("skips duplicate mobile batch by hash", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const payload = buildPayload("batch-duplicate");
+
+  const first = importMobileSyncPayload(seed, payload);
+  const second = importMobileSyncPayload(first.nextData, payload);
+
+  assert.equal(first.summary.duplicateBatch, false);
+  assert.equal(second.summary.duplicateBatch, true);
+  assert.equal(second.summary.filesSkipped, 1);
+  assert.equal(second.nextData.workouts.length, 1);
+  assert.equal(second.nextData.healthRawFiles.length, 1);
+});
+
+test("applies workout deletions from mobile payload", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const payload = buildPayload("batch-delete-a");
+  const imported = importMobileSyncPayload(seed, payload);
+
+  const deletePayload: MobileSyncRequest = {
+    ...buildPayload("batch-delete-b"),
+    dailyHealth: [],
+    workouts: [],
+    deletions: [
+      {
+        sampleType: "HKWorkoutType",
+        uuid: "D307C4CB-147B-4908-ACD2-7863AB42AA11",
+        deletedAt: "2026-02-16T12:00:00.000Z",
+      },
+    ],
+  };
+
+  const afterDelete = importMobileSyncPayload(imported.nextData, deletePayload);
+
+  assert.equal(afterDelete.summary.duplicateBatch, false);
+  assert.equal(afterDelete.nextData.workouts.length, 0);
+  assert.equal(afterDelete.nextData.workoutDetails.length, 0);
+});

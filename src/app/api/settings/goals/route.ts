@@ -33,6 +33,10 @@ function isValidGoals(input: unknown): input is PerformanceGoals {
     isValidTime(candidate.weekdayWakeTime) &&
     typeof candidate.weekendWakeTime === "string" &&
     isValidTime(candidate.weekendWakeTime) &&
+    typeof candidate.preferredBedtimeStart === "string" &&
+    isValidTime(candidate.preferredBedtimeStart) &&
+    typeof candidate.preferredBedtimeEnd === "string" &&
+    isValidTime(candidate.preferredBedtimeEnd) &&
     typeof candidate.ageYears === "number" &&
     Number.isFinite(candidate.ageYears) &&
     candidate.ageYears >= 12 &&

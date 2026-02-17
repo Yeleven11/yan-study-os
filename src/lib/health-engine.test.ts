@@ -251,3 +251,204 @@ test("three consecutive target-plus nights strongly reduce debt and push score o
   assert.ok(readiness.sleepScore >= 80);
   assert.ok(readiness.sleepDebtHours <= 0.5);
 });
+
+test("user difficulty override drives effective difficulty and session load", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const data: AppData = {
+    ...seed,
+    dailyHealth: [
+      {
+        date: "2026-02-14",
+        sleepHours: 8.2,
+        sleepCoreHours: 4.4,
+        sleepDeepHours: 1.1,
+        sleepRemHours: 2.2,
+        sleepAwakeHours: 0.3,
+        restingHrBpm: 55,
+        source: "manual",
+        createdAt: "2026-02-14T00:00:00Z",
+      },
+    ],
+    workouts: [
+      {
+        id: "run-override",
+        type: "cardio",
+        workoutNameRaw: "Outdoor Run",
+        startedAt: "2026-02-14T08:00:00Z",
+        endedAt: "2026-02-14T09:00:00Z",
+        durationMin: 60,
+        distanceKm: 10,
+        avgHeartRate: 160,
+        difficultyUser: 9,
+        source: "manual",
+        createdAt: "2026-02-14T09:00:00Z",
+      },
+    ],
+    studySessions: [],
+    todos: [],
+  };
+
+  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
+  const workout = insights.workouts.find((item) => item.id === "run-override");
+  assert.ok(workout);
+  assert.equal(workout?.difficultyUser, 9);
+  assert.equal(workout?.difficultyEffective, 9);
+  assert.equal(workout?.trainingLoad, 540);
+});
+
+test("walk sessions are excluded from weekly run workload count", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const data: AppData = {
+    ...seed,
+    dailyHealth: [
+      {
+        date: "2026-02-14",
+        sleepHours: 8.0,
+        sleepCoreHours: 4.3,
+        sleepDeepHours: 1.0,
+        sleepRemHours: 2.1,
+        sleepAwakeHours: 0.3,
+        source: "manual",
+        createdAt: "2026-02-14T00:00:00Z",
+      },
+    ],
+    workouts: [
+      {
+        id: "weekly-run",
+        type: "cardio",
+        workoutNameRaw: "Outdoor Run",
+        startedAt: "2026-02-13T08:00:00Z",
+        endedAt: "2026-02-13T08:45:00Z",
+        durationMin: 45,
+        distanceKm: 8,
+        source: "manual",
+        createdAt: "2026-02-13T08:45:00Z",
+      },
+      {
+        id: "weekly-walk",
+        type: "recovery",
+        workoutNameRaw: "Outdoor Walk",
+        startedAt: "2026-02-14T10:00:00Z",
+        endedAt: "2026-02-14T10:50:00Z",
+        durationMin: 50,
+        distanceKm: 4,
+        source: "manual",
+        createdAt: "2026-02-14T10:50:00Z",
+      },
+    ],
+    studySessions: [],
+    todos: [],
+  };
+
+  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
+  assert.equal(insights.weeklyWorkoutCount, 1);
+});
+
+test("detraining guardrail blocks quality recommendation after 14-day run gap", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const data: AppData = {
+    ...seed,
+    dailyHealth: [
+      {
+        date: "2026-02-12",
+        sleepHours: 8.6,
+        sleepCoreHours: 4.6,
+        sleepDeepHours: 1.3,
+        sleepRemHours: 2.4,
+        sleepAwakeHours: 0.2,
+        restingHrBpm: 51,
+        hrvMs: 70,
+        sleepMidpointHour: 3.0,
+        source: "manual",
+        createdAt: "2026-02-12T00:00:00Z",
+      },
+      {
+        date: "2026-02-13",
+        sleepHours: 8.8,
+        sleepCoreHours: 4.7,
+        sleepDeepHours: 1.3,
+        sleepRemHours: 2.5,
+        sleepAwakeHours: 0.2,
+        restingHrBpm: 50,
+        hrvMs: 72,
+        sleepMidpointHour: 3.0,
+        source: "manual",
+        createdAt: "2026-02-13T00:00:00Z",
+      },
+      {
+        date: "2026-02-14",
+        sleepHours: 8.7,
+        sleepCoreHours: 4.7,
+        sleepDeepHours: 1.3,
+        sleepRemHours: 2.4,
+        sleepAwakeHours: 0.2,
+        restingHrBpm: 50,
+        hrvMs: 71,
+        sleepMidpointHour: 3.0,
+        source: "manual",
+        createdAt: "2026-02-14T00:00:00Z",
+      },
+    ],
+    workouts: [
+      {
+        id: "old-run",
+        type: "cardio",
+        workoutNameRaw: "Outdoor Run",
+        startedAt: "2026-01-27T08:00:00Z",
+        endedAt: "2026-01-27T09:00:00Z",
+        durationMin: 60,
+        distanceKm: 10,
+        avgHeartRate: 152,
+        source: "manual",
+        createdAt: "2026-01-27T09:00:00Z",
+      },
+    ],
+    studySessions: [],
+    todos: [],
+  };
+
+  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
+  const today = insights.todayRecommendation.trainingCategory;
+  assert.notEqual(today, "quality_run");
+  assert.notEqual(today, "steady_run");
+});
+
+test("bedtime recommendation center remains near preferred 21:00-22:00 baseline", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  const data: AppData = {
+    ...seed,
+    goals: {
+      ...seed.goals,
+      preferredBedtimeStart: "21:00",
+      preferredBedtimeEnd: "22:00",
+    },
+    dailyHealth: [
+      {
+        date: "2026-02-14",
+        sleepHours: 8.1,
+        sleepCoreHours: 4.4,
+        sleepDeepHours: 1.1,
+        sleepRemHours: 2.3,
+        sleepAwakeHours: 0.3,
+        restingHrBpm: 54,
+        hrvMs: 61,
+        sleepMidpointHour: 3.1,
+        source: "manual",
+        createdAt: "2026-02-14T00:00:00Z",
+      },
+    ],
+    workouts: [],
+    studySessions: [],
+    todos: [],
+  };
+
+  const insights = buildPerformanceInsights(data, new Date("2026-02-14T12:00:00Z"));
+  const [startLabel, endLabel] = insights.todayRecommendation.bedtimeRangeLabel.split("-");
+  const parseMinutes = (value: string): number => {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const centerMinutes = (parseMinutes(startLabel) + parseMinutes(endLabel)) / 2;
+  assert.ok(centerMinutes >= 20 * 60 + 45);
+  assert.ok(centerMinutes <= 22 * 60 + 15);
+});

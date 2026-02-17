@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.yanborovyk.studyhealthsync.refresh</string>
+		<string>com.yanborovyk.studyhealthsync.processing</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>SyncBaseURL</key>
+	<string>$(SYNC_BASE_URL)</string>
+	<key>SyncBearerToken</key>
+	<string>$(SYNC_BEARER_TOKEN)</string>
+	<key>SyncDefaultIntervalMinutes</key>
+	<string>$(SYNC_DEFAULT_INTERVAL_MIN)</string>
+	<key>SyncEndpointPath</key>
+	<string>$(SYNC_ENDPOINT_PATH)</string>
+	<key>SyncMaxIntervalMinutes</key>
+	<string>$(SYNC_MAX_INTERVAL_MIN)</string>
+	<key>SyncMinIntervalMinutes</key>
+	<string>$(SYNC_MIN_INTERVAL_MIN)</string>
+	<key>SyncRequestTimeoutSeconds</key>
+	<string>$(SYNC_REQUEST_TIMEOUT_SECONDS)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+</dict>
+</plist>

@@ -13,8 +13,8 @@ import type {
   PerformanceGoals,
   SleepDriverKey,
   StudySession,
+  TrainingCategory,
   WorkoutEntry,
-  WorkoutType,
 } from "@/lib/types";
 
 const A7 = 2 / (7 + 1);
@@ -25,6 +25,84 @@ const DEBT_PENALTY_PER_HOUR = 3.0;
 const RECOVERY_WINDOW_DAYS = 3;
 const RECOVERY_TARGET_TOLERANCE_HOURS = 0.25;
 const RECOVERY_DEBT_MULTIPLIER = 0.35;
+
+type TrainingPrescription = {
+  category: TrainingCategory;
+  label: string;
+  runMinutesMin: number;
+  runMinutesMax: number;
+  walkMinutesMin: number;
+  walkMinutesMax: number;
+  targetRpeMin: number;
+  targetRpeMax: number;
+  isRunRecommended: boolean;
+};
+
+const TRAINING_PRESCRIPTIONS: Record<TrainingCategory, TrainingPrescription> = {
+  rest_walk: {
+    category: "rest_walk",
+    label: "Rest + Walk",
+    runMinutesMin: 0,
+    runMinutesMax: 0,
+    walkMinutesMin: 35,
+    walkMinutesMax: 60,
+    targetRpeMin: 1,
+    targetRpeMax: 2,
+    isRunRecommended: false,
+  },
+  recovery: {
+    category: "recovery",
+    label: "Recovery Run",
+    runMinutesMin: 20,
+    runMinutesMax: 35,
+    walkMinutesMin: 20,
+    walkMinutesMax: 40,
+    targetRpeMin: 3,
+    targetRpeMax: 4,
+    isRunRecommended: true,
+  },
+  easy_run: {
+    category: "easy_run",
+    label: "Easy Run",
+    runMinutesMin: 35,
+    runMinutesMax: 55,
+    walkMinutesMin: 15,
+    walkMinutesMax: 30,
+    targetRpeMin: 4,
+    targetRpeMax: 5,
+    isRunRecommended: true,
+  },
+  steady_run: {
+    category: "steady_run",
+    label: "Steady Run",
+    runMinutesMin: 45,
+    runMinutesMax: 70,
+    walkMinutesMin: 10,
+    walkMinutesMax: 25,
+    targetRpeMin: 6,
+    targetRpeMax: 7,
+    isRunRecommended: true,
+  },
+  quality_run: {
+    category: "quality_run",
+    label: "Quality Run",
+    runMinutesMin: 50,
+    runMinutesMax: 80,
+    walkMinutesMin: 10,
+    walkMinutesMax: 20,
+    targetRpeMin: 7,
+    targetRpeMax: 9,
+    isRunRecommended: true,
+  },
+};
+
+const TRAINING_CATEGORY_RANK: Record<TrainingCategory, number> = {
+  rest_walk: 0,
+  recovery: 1,
+  easy_run: 2,
+  steady_run: 3,
+  quality_run: 4,
+};
 
 export type PerformanceInsights = {
   usingSampleData: boolean;
@@ -38,13 +116,11 @@ export type PerformanceInsights = {
   weeklyWorkoutCount: number;
   weeklyWorkoutTarget: number;
   daysSinceWorkout: number;
+  daysSinceRun: number;
   trendDelta7d: number;
 };
 
-function sentenceForDriver(
-  mode: "negative" | "positive",
-  key: SleepDriverKey,
-): string {
+function sentenceForDriver(mode: "negative" | "positive", key: SleepDriverKey): string {
   if (mode === "negative") {
     if (key === "debt") {
       return "Your score is mainly held down by accumulated sleep debt from recent nights.";
@@ -93,10 +169,10 @@ function round(value: number, digits = 2): number {
   return Math.round(value * factor) / factor;
 }
 
-function parseWakeTimeToMinutes(timeValue: string): number {
+function parseClockToMinutes(timeValue: string, fallbackMinutes: number): number {
   const match = /^(\d{1,2}):(\d{2})$/.exec(timeValue.trim());
   if (!match) {
-    return 6 * 60 + 30;
+    return fallbackMinutes;
   }
 
   const hours = Number(match[1]);
@@ -110,7 +186,7 @@ function parseWakeTimeToMinutes(timeValue: string): number {
     minutes < 0 ||
     minutes > 59
   ) {
-    return 6 * 60 + 30;
+    return fallbackMinutes;
   }
 
   return hours * 60 + minutes;
@@ -175,12 +251,6 @@ function buildDateWindow(endDateKey: string, totalDays: number): string[] {
   return result;
 }
 
-function isWeekendDate(dateKey: string): boolean {
-  const date = new Date(`${dateKey}T00:00:00`);
-  const day = date.getDay();
-  return day === 0 || day === 6;
-}
-
 function toIsoOnDate(dateKey: string, minutesFromMidnight: number): string {
   const date = new Date(`${dateKey}T00:00:00`);
   const safeMinutes = ((Math.floor(minutesFromMidnight) % 1440) + 1440) % 1440;
@@ -196,6 +266,16 @@ function formatClockLabel(minutesFromMidnight: number): string {
     .padStart(2, "0");
   const minutes = (safeMinutes % 60).toString().padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function windowCenterMinutes(startMinutes: number, endMinutes: number): number {
+  if (endMinutes >= startMinutes) {
+    return Math.round((startMinutes + endMinutes) / 2);
+  }
+
+  const wrappedEnd = endMinutes + 1440;
+  const centerWrapped = Math.round((startMinutes + wrappedEnd) / 2);
+  return centerWrapped % 1440;
 }
 
 function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
@@ -223,81 +303,19 @@ function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): Performan
       typeof goals?.weekendWakeTime === "string" && goals.weekendWakeTime.trim().length > 0
         ? goals.weekendWakeTime
         : defaults.weekendWakeTime,
+    preferredBedtimeStart:
+      typeof goals?.preferredBedtimeStart === "string" &&
+      goals.preferredBedtimeStart.trim().length > 0
+        ? goals.preferredBedtimeStart
+        : defaults.preferredBedtimeStart,
+    preferredBedtimeEnd:
+      typeof goals?.preferredBedtimeEnd === "string" && goals.preferredBedtimeEnd.trim().length > 0
+        ? goals.preferredBedtimeEnd
+        : defaults.preferredBedtimeEnd,
     ageYears:
       typeof goals?.ageYears === "number" && Number.isFinite(goals.ageYears)
         ? goals.ageYears
         : defaults.ageYears,
-  };
-}
-
-function stableNoise(seed: number): number {
-  const raw = Math.sin(seed * 12.9898) * 43758.5453;
-  return raw - Math.floor(raw);
-}
-
-function createSampleHealthDataset(
-  now: Date,
-  goals: PerformanceGoals,
-): {
-  dailyHealth: DailyHealthFact[];
-  workouts: WorkoutEntry[];
-} {
-  const todayKey = toDateKey(now);
-  const dates = buildDateWindow(todayKey, 42);
-  const dailyHealth: DailyHealthFact[] = [];
-  const workouts: WorkoutEntry[] = [];
-
-  for (let index = 0; index < dates.length; index += 1) {
-    const dateKey = dates[index];
-    const dayNoise = stableNoise(index + 17);
-    const weeklyWave = Math.sin(index / 3.8);
-
-    const sleepHours = clamp(
-      goals.sleepHoursTarget - 0.8 + weeklyWave * 0.7 + (dayNoise - 0.5) * 0.8,
-      6.4,
-      9.8,
-    );
-
-    const hrvMs = clamp(57 + weeklyWave * 10 + (dayNoise - 0.5) * 8, 34, 89);
-    const restingHrBpm = clamp(54 - weeklyWave * 3 + (dayNoise - 0.5) * 3, 47, 66);
-    const sleepMidpointHour = clamp(3.2 + (dayNoise - 0.5) * 0.9, 1.8, 4.8);
-
-    dailyHealth.push({
-      date: dateKey,
-      sleepHours: round(sleepHours, 2),
-      hrvMs: round(hrvMs, 1),
-      restingHrBpm: round(restingHrBpm, 1),
-      sleepMidpointHour: round(sleepMidpointHour, 2),
-      steps: Math.round(7800 + weeklyWave * 1900 + dayNoise * 1600),
-      source: "sample",
-      createdAt: now.toISOString(),
-    });
-
-    // Sample pattern: 4 workout sessions per week average.
-    if (index % 2 === 0 || (index + 1) % 7 === 0) {
-      const type: WorkoutType =
-        index % 6 === 0 ? "strength" : index % 5 === 0 ? "mobility" : "cardio";
-      const durationMin =
-        type === "strength" ? 40 : type === "mobility" ? 28 : Math.round(35 + dayNoise * 18);
-      const startMinutes = type === "cardio" ? 17 * 60 + 30 : 18 * 60 + 15;
-
-      workouts.push({
-        id: `sample-${dateKey}-${index}`,
-        type,
-        startedAt: toIsoOnDate(dateKey, startMinutes),
-        endedAt: toIsoOnDate(dateKey, startMinutes + durationMin),
-        durationMin,
-        avgHeartRate: type === "mobility" ? 98 : Math.round(132 + dayNoise * 24),
-        activeKcal: type === "mobility" ? 150 : Math.round(280 + dayNoise * 210),
-        source: "sample",
-        createdAt: now.toISOString(),
-      });
-    }
-  }
-
-  return {
-    dailyHealth,
-    workouts,
   };
 }
 
@@ -331,33 +349,80 @@ function getLateSessionCountByDate(studySessions: StudySession[]): Map<string, n
   return result;
 }
 
-function getDailyWorkoutLoad(
-  workouts: WorkoutEntry[],
+function getWorkoutAverageHeartRate(workout: WorkoutEntry): number | undefined {
+  if (typeof workout.hrAvg === "number" && Number.isFinite(workout.hrAvg)) {
+    return workout.hrAvg;
+  }
+
+  if (typeof workout.avgHeartRate === "number" && Number.isFinite(workout.avgHeartRate)) {
+    return workout.avgHeartRate;
+  }
+
+  return undefined;
+}
+
+function isWalkSession(workout: WorkoutEntry): boolean {
+  const label = `${workout.workoutNameRaw || ""} ${workout.workoutDisplayLabel || ""}`.toLowerCase();
+  return workout.type === "recovery" || label.includes("walk");
+}
+
+function isRunSession(workout: WorkoutEntry): boolean {
+  return workout.type === "cardio" && !isWalkSession(workout);
+}
+
+function computeWorkoutDifficultyAuto(
+  workout: WorkoutEntry,
   goals: PerformanceGoals,
-  restingHrByDate: Map<string, number | undefined>,
-): Map<string, number> {
+  restingHr: number,
+): number {
+  const durationNorm = clamp((workout.durationMin || 0) / 70, 0, 1);
+  const distanceNorm = clamp((workout.distanceKm || 0) / 12, 0, 1);
+
+  const avgHr = getWorkoutAverageHeartRate(workout);
+  const hrMax = 208 - 0.7 * goals.ageYears;
+  const hrr =
+    typeof avgHr === "number" && hrMax - restingHr > 1
+      ? clamp((avgHr - restingHr) / (hrMax - restingHr), 0, 1)
+      : undefined;
+
+  let intensityNorm = hrr;
+  if (typeof intensityNorm !== "number") {
+    if (typeof workout.avgSpeedKmh === "number" && Number.isFinite(workout.avgSpeedKmh)) {
+      intensityNorm = clamp(workout.avgSpeedKmh / 15, 0, 1);
+    } else if (distanceNorm > 0 && durationNorm > 0) {
+      intensityNorm = clamp(0.55 * durationNorm + 0.45 * distanceNorm, 0, 1);
+    } else {
+      intensityNorm = durationNorm;
+    }
+  }
+
+  if (isWalkSession(workout)) {
+    const walkIndex = clamp(0.65 * durationNorm + 0.35 * distanceNorm * 0.7, 0, 1);
+    return clamp(Math.round(1 + 9 * walkIndex), 1, 10);
+  }
+
+  const loadIndex = clamp(0.55 * intensityNorm + 0.25 * durationNorm + 0.2 * distanceNorm, 0, 1);
+  return clamp(Math.round(1 + 9 * loadIndex), 1, 10);
+}
+
+function getRunLoadByDate(workouts: WorkoutEntry[]): Map<string, number> {
   const result = new Map<string, number>();
-  const defaultRhr = 55;
 
   for (const workout of workouts) {
-    const dateKey = toDateKey(workout.startedAt);
-    const rhr = restingHrByDate.get(dateKey) ?? defaultRhr;
-    const hrMax = 208 - 0.7 * goals.ageYears;
-    const activeKcal =
-      workout.activeKcal ??
-      (typeof workout.activeEnergyKj === "number" ? workout.activeEnergyKj / 4.184 : 0);
-    const distanceBonus = (workout.distanceKm || 0) * 2.5;
-    const intensityBonus = (workout.intensityKcalHrKg || 0) * 0.4;
-
-    let load = 0;
-    if (typeof workout.avgHeartRate === "number" && hrMax - rhr > 1) {
-      const hrr = clamp((workout.avgHeartRate - rhr) / (hrMax - rhr), 0, 1);
-      load = workout.durationMin * hrr * Math.exp(1.67 * hrr) + distanceBonus + intensityBonus;
-    } else {
-      load = 0.2 * workout.durationMin + 0.05 * activeKcal + distanceBonus + intensityBonus;
+    if (!isRunSession(workout)) {
+      continue;
     }
 
-    result.set(dateKey, (result.get(dateKey) || 0) + load);
+    const effectiveDifficulty =
+      typeof workout.difficultyEffective === "number" && Number.isFinite(workout.difficultyEffective)
+        ? workout.difficultyEffective
+        : typeof workout.difficultyAuto === "number" && Number.isFinite(workout.difficultyAuto)
+        ? workout.difficultyAuto
+        : 5;
+
+    const sessionLoad = round(Math.max(0, workout.durationMin) * effectiveDifficulty, 2);
+    const dateKey = toDateKey(workout.startedAt);
+    result.set(dateKey, round((result.get(dateKey) || 0) + sessionLoad, 2));
   }
 
   return result;
@@ -387,64 +452,122 @@ function getWeekStartDate(dateKey: string): string {
   return toDateKey(date);
 }
 
-function computeDaysSinceWorkout(dateKey: string, workoutsByDate: Map<string, WorkoutEntry[]>): number {
-  for (let daysBack = 0; daysBack <= 30; daysBack += 1) {
+function computeDaysSinceRun(dateKey: string, workoutsByDate: Map<string, WorkoutEntry[]>): number {
+  for (let daysBack = 0; daysBack <= 60; daysBack += 1) {
     const candidate = shiftDate(dateKey, -daysBack);
-    if ((workoutsByDate.get(candidate) || []).length > 0) {
+    const dayWorkouts = workoutsByDate.get(candidate) || [];
+    if (dayWorkouts.some((workout) => isRunSession(workout))) {
       return daysBack;
     }
   }
 
-  return 31;
+  return 61;
 }
 
-function chooseWorkoutType(
-  workoutsThisWeek: WorkoutEntry[],
-  weeklyTarget: number,
-): WorkoutType {
-  const cardioCount = workoutsThisWeek.filter((workout) => workout.type === "cardio").length;
-  const strengthMobilityCount = workoutsThisWeek.filter(
-    (workout) => workout.type === "strength" || workout.type === "mobility",
-  ).length;
+function capTrainingCategory(
+  category: TrainingCategory,
+  maxCategory: TrainingCategory,
+): TrainingCategory {
+  return TRAINING_CATEGORY_RANK[category] <= TRAINING_CATEGORY_RANK[maxCategory]
+    ? category
+    : maxCategory;
+}
 
-  const cardioTarget = Math.ceil(weeklyTarget / 2);
-  const strengthTarget = weeklyTarget - cardioTarget;
+function pickTrainingCategory({
+  readinessScore,
+  sleepScore,
+  sleepHours,
+  runLoadRatio,
+  daysSinceRun,
+}: {
+  readinessScore: number;
+  sleepScore: number;
+  sleepHours: number;
+  runLoadRatio: number;
+  daysSinceRun: number;
+}): TrainingCategory {
+  let category: TrainingCategory;
 
-  const cardioDeficit = cardioTarget - cardioCount;
-  const strengthDeficit = strengthTarget - strengthMobilityCount;
-
-  if (strengthDeficit > cardioDeficit) {
-    return "strength";
+  if (readinessScore < 45 || sleepScore < 52 || sleepHours < 6.5 || runLoadRatio > 1.35) {
+    category = "rest_walk";
+  } else if (readinessScore < 60 || sleepScore < 60 || runLoadRatio > 1.2) {
+    category = "recovery";
+  } else if (readinessScore < 72 || sleepHours < 7.2 || runLoadRatio > 1.05) {
+    category = "easy_run";
+  } else if (readinessScore < 85 || runLoadRatio > 0.9) {
+    category = "steady_run";
+  } else {
+    category = "quality_run";
   }
 
-  if (cardioDeficit > strengthDeficit) {
-    return "cardio";
+  if (daysSinceRun >= 14) {
+    if (readinessScore >= 82 && sleepScore >= 75 && runLoadRatio < 0.95) {
+      category = capTrainingCategory(category, "easy_run");
+    } else {
+      category = capTrainingCategory(category, "recovery");
+    }
+  } else if (daysSinceRun >= 7) {
+    category = capTrainingCategory(category, "easy_run");
   }
 
-  const latestWorkout = workoutsThisWeek
-    .slice()
-    .sort(
-      (left, right) =>
-        new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime(),
-    )[0];
+  return category;
+}
 
-  if (!latestWorkout) {
-    return "cardio";
+function buildTrainingRationale({
+  category,
+  sleepScore,
+  sleepHours,
+  runLoadRatio,
+  daysSinceRun,
+}: {
+  category: TrainingCategory;
+  sleepScore: number;
+  sleepHours: number;
+  runLoadRatio: number;
+  daysSinceRun: number;
+}): string {
+  const reasons: string[] = [];
+
+  if (daysSinceRun >= 14) {
+    reasons.push("long running gap detected, so ramp-up is intentionally conservative");
+  } else if (daysSinceRun >= 7) {
+    reasons.push("recent running gap suggests a cautious re-entry");
   }
 
-  return latestWorkout.type === "cardio" ? "strength" : "cardio";
+  if (sleepScore < 60 || sleepHours < 7) {
+    reasons.push("sleep signal is not ideal for high intensity");
+  }
+
+  if (runLoadRatio > 1.2) {
+    reasons.push("recent run load is elevated versus baseline");
+  } else if (runLoadRatio < 0.8 && category !== "rest_walk") {
+    reasons.push("run load is controlled, allowing productive training");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("readiness and run-load balance support this training dose");
+  }
+
+  return reasons.join("; ") + ".";
+}
+
+function toWorkoutSuggestion(prescription: TrainingPrescription): string {
+  if (!prescription.isRunRecommended) {
+    return `Rest from running. Walk ${prescription.walkMinutesMin}-${prescription.walkMinutesMax}m outdoors at RPE ${prescription.targetRpeMin}-${prescription.targetRpeMax}.`;
+  }
+
+  return `${prescription.label}: run ${prescription.runMinutesMin}-${prescription.runMinutesMax}m at RPE ${prescription.targetRpeMin}-${prescription.targetRpeMax}, plus ${prescription.walkMinutesMin}-${prescription.walkMinutesMax}m walking.`;
 }
 
 export function buildPerformanceInsights(data: AppData, now = new Date()): PerformanceInsights {
   const goals = normalizeGoals(data.goals);
-  const usingSampleData = data.dailyHealth.length === 0 && data.workouts.length === 0;
-  const sampled = usingSampleData ? createSampleHealthDataset(now, goals) : null;
+  const usingSampleData = false;
 
-  const healthDays = (usingSampleData ? sampled?.dailyHealth || [] : data.dailyHealth)
+  const healthDays = data.dailyHealth
     .slice()
     .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
 
-  const workouts = (usingSampleData ? sampled?.workouts || [] : data.workouts)
+  const baseWorkouts = data.workouts
     .slice()
     .sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
@@ -458,6 +581,34 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     healthByDate.set(item.date, item);
   }
 
+  const restingHrByDate = new Map<string, number | undefined>();
+  for (const dateKey of dateWindow) {
+    restingHrByDate.set(dateKey, healthByDate.get(dateKey)?.restingHrBpm);
+  }
+
+  const workouts = baseWorkouts.map((workout) => {
+    const dateKey = toDateKey(workout.startedAt);
+    const restingHr = restingHrByDate.get(dateKey) ?? 55;
+    const difficultyAuto = computeWorkoutDifficultyAuto(workout, goals, restingHr);
+    const difficultyUser =
+      typeof workout.difficultyUser === "number" && Number.isFinite(workout.difficultyUser)
+        ? clamp(Math.round(workout.difficultyUser), 1, 10)
+        : undefined;
+    const difficultyEffective = difficultyUser ?? difficultyAuto;
+    const trainingLoad =
+      isRunSession(workout) && Number.isFinite(workout.durationMin)
+        ? round(Math.max(0, workout.durationMin) * difficultyEffective, 2)
+        : undefined;
+
+    return {
+      ...workout,
+      difficultyAuto,
+      difficultyUser,
+      difficultyEffective,
+      trainingLoad,
+    };
+  });
+
   const workoutsByDate = new Map<string, WorkoutEntry[]>();
   for (const workout of workouts) {
     const dateKey = toDateKey(workout.startedAt);
@@ -467,12 +618,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     workoutsByDate.get(dateKey)!.push(workout);
   }
 
-  const restingHrByDate = new Map<string, number | undefined>();
-  for (const dateKey of dateWindow) {
-    restingHrByDate.set(dateKey, healthByDate.get(dateKey)?.restingHrBpm);
-  }
-
-  const workoutLoadByDate = getDailyWorkoutLoad(workouts, goals, restingHrByDate);
+  const runLoadByDate = getRunLoadByDate(workouts);
   const studyHoursByDate = getSessionHoursByDate(data.studySessions);
   const lateSessionsByDate = getLateSessionCountByDate(data.studySessions);
 
@@ -615,31 +761,29 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     let zHrv = 0;
     let zRhr = 0;
     let autonomicComponent = 50;
-    let confidence = 1;
 
-    if (typeof health?.hrvMs === "number" && health.hrvMs > 0) {
-      zHrv = robustZ(Math.log(health.hrvMs), hrvHistory.slice(-28));
-      hrvHistory.push(Math.log(health.hrvMs));
-    } else {
-      confidence -= 0.2;
+    const hasHrvSignal = typeof health?.hrvMs === "number" && health.hrvMs > 0;
+    const hasRhrSignal = typeof health?.restingHrBpm === "number" && health.restingHrBpm > 0;
+
+    if (hasHrvSignal) {
+      zHrv = robustZ(Math.log(health!.hrvMs as number), hrvHistory.slice(-28));
+      hrvHistory.push(Math.log(health!.hrvMs as number));
     }
 
-    if (typeof health?.restingHrBpm === "number" && health.restingHrBpm > 0) {
-      zRhr = -robustZ(health.restingHrBpm, rhrHistory.slice(-28));
-      rhrHistory.push(health.restingHrBpm);
-    } else {
-      confidence -= 0.2;
+    if (hasRhrSignal) {
+      zRhr = -robustZ(health!.restingHrBpm as number, rhrHistory.slice(-28));
+      rhrHistory.push(health!.restingHrBpm as number);
     }
 
     autonomicComponent = clamp(50 + 18 * zHrv + 12 * zRhr, 0, 100);
 
-    const dailyLoad = workoutLoadByDate.get(dateKey) || 0;
+    const dailyLoad = runLoadByDate.get(dateKey) || 0;
     atl = A7 * dailyLoad + (1 - A7) * atl;
     ctl = A28 * dailyLoad + (1 - A28) * ctl;
 
-    const loadRatio = atl / Math.max(ctl, 1);
+    const runLoadRatio = atl / Math.max(ctl, 1);
     const loadComponent = clamp(
-      100 - 80 * Math.max(0, loadRatio - 1.15) - 25 * Math.max(0, 0.75 - loadRatio),
+      100 - 80 * Math.max(0, runLoadRatio - 1.15) - 25 * Math.max(0, 0.75 - runLoadRatio),
       0,
       100,
     );
@@ -668,7 +812,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       penalty += 10;
     }
 
-    if (loadRatio > 1.3) {
+    if (runLoadRatio > 1.3) {
       penalty += 8;
     }
 
@@ -680,15 +824,26 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
     const readinessScore = clamp(readinessRaw - penalty, 0, 100);
 
-    if (missingSleep) {
-      confidence -= 0.25;
-    }
+    const hasSleepStages = stageTotal > 0;
+    const hasWorkoutSignal = (workoutsByDate.get(dateKey) || []).length > 0;
+    const historicalDepth = clamp(index / 28, 0, 1);
+
+    const confidenceCompleteness =
+      (missingSleep ? 0 : 1) * 0.22 +
+      (hasSleepStages ? 1 : 0) * 0.12 +
+      (hasScheduleSignal ? 1 : 0) * 0.1 +
+      (hasHrvSignal ? 1 : 0) * 0.2 +
+      (hasRhrSignal ? 1 : 0) * 0.2 +
+      (hasWorkoutSignal ? 1 : 0) * 0.06 +
+      historicalDepth * 0.1;
+
+    const readinessConfidence = round(clamp(0.35 + 0.65 * confidenceCompleteness, 0.35, 0.99), 2);
 
     const readiness: DailyReadiness = {
       date: dateKey,
       score: round(readinessScore, 1),
       zone: zoneForScore(readinessScore),
-      confidence: round(clamp(confidence, 0.35, 1), 2),
+      confidence: readinessConfidence,
       sleepScore: round(sleepScore, 1),
       sleepDurationScore: round(durationScore, 1),
       sleepRegularityScore: round(regularityScore, 1),
@@ -706,7 +861,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
       penalty: round(penalty, 1),
       sleepDebtHours: round(debt, 2),
       sleepHours: round(sleepHours, 2),
-      loadRatio: round(loadRatio, 2),
+      loadRatio: round(runLoadRatio, 2),
       zHrv: round(zHrv, 2),
       zRhr: round(zRhr, 2),
     };
@@ -753,67 +908,78 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
         continue;
       }
 
-      const deficit = Math.max(0, goals.sleepHoursTarget - sleepEntry.hours);
-      debt7 += deficit * DEBT_DECAY ** i;
+      const debtDeficit = Math.max(0, goals.sleepHoursTarget - sleepEntry.hours);
+      debt7 += debtDeficit * DEBT_DECAY ** i;
     }
 
-    const repayTonight = Math.min(1, 0.3 * debt7);
-    const sleepOpportunityHours = goals.sleepHoursTarget + repayTonight + 0.25 + 0.25;
+    const preferredBedtimeStartMinutes = parseClockToMinutes(goals.preferredBedtimeStart, 21 * 60);
+    const preferredBedtimeEndMinutes = parseClockToMinutes(goals.preferredBedtimeEnd, 22 * 60);
+    const preferredBedtimeCenterMinutes = windowCenterMinutes(
+      preferredBedtimeStartMinutes,
+      preferredBedtimeEndMinutes,
+    );
 
-    const tomorrowKey = shiftDate(dateKey, 1);
-    const wakeMinutes = isWeekendDate(tomorrowKey)
-      ? parseWakeTimeToMinutes(goals.weekendWakeTime)
-      : parseWakeTimeToMinutes(goals.weekdayWakeTime);
-
-    let bedtimeMinutes = wakeMinutes - sleepOpportunityHours * 60;
+    let bedtimeMinutes = preferredBedtimeCenterMinutes;
+    bedtimeMinutes -= clamp(debt7, 0, 2.5) * 10;
+    bedtimeMinutes -= clamp((70 - readiness.score) / 30, 0, 1) * 12;
+    bedtimeMinutes += clamp((readiness.score - 82) / 18, 0, 1) * 8;
     if (midpointSd7 > 1) {
-      bedtimeMinutes -= 15;
+      bedtimeMinutes -= 8;
     }
 
-    const weekStart = getWeekStartDate(dateKey);
-    const workoutsThisWeek = workouts.filter((workout) => {
-      const workoutDate = toDateKey(workout.startedAt);
-      return workoutDate >= weekStart && workoutDate <= dateKey;
+    const readinessPressure = clamp((70 - readiness.score) / 40, 0, 1);
+    const debtPressure = clamp(debt7 / 2, 0, 1);
+    const regularityPressure = clamp(midpointSd7 / 1.4, 0, 1);
+    const stressIndex =
+      0.5 * readinessPressure + 0.3 * debtPressure + 0.2 * regularityPressure;
+    const bedtimeHalfRangeMinutes = Math.round(10 + stressIndex * 10);
+    const bedtimeRangeStartMinutes = bedtimeMinutes - bedtimeHalfRangeMinutes;
+    const bedtimeRangeEndMinutes = bedtimeMinutes + bedtimeHalfRangeMinutes;
+    const bedtimeRangeWidthMinutes = bedtimeHalfRangeMinutes * 2;
+
+    const daysSinceRun = computeDaysSinceRun(dateKey, workoutsByDate);
+    const trainingCategory = pickTrainingCategory({
+      readinessScore: readiness.score,
+      sleepScore,
+      sleepHours,
+      runLoadRatio,
+      daysSinceRun,
     });
-
-    const daysSinceWorkout = computeDaysSinceWorkout(dateKey, workoutsByDate);
-    const inactivity = 1 / (1 + Math.exp(-(daysSinceWorkout - 2)));
-    const quotaGap =
-      Math.max(0, goals.weeklyWorkoutTarget - workoutsThisWeek.length) /
-      Math.max(goals.weeklyWorkoutTarget, 1);
-    const underload = clamp((0.95 - readiness.loadRatio) / 0.95, 0, 1);
-    const workoutNeed = 0.4 * inactivity + 0.35 * quotaGap + 0.25 * underload;
-
-    let workoutType = chooseWorkoutType(workoutsThisWeek, goals.weeklyWorkoutTarget);
-    let workoutDurationMin = 0;
-    let workoutSuggestion = "No workout needed today.";
-
-    if (readiness.score < 45 || sleepHours < 7.5) {
-      workoutType = "recovery";
-      workoutDurationMin = 25;
-      workoutSuggestion = "Recovery day: 25m easy walk/run + 10m mobility.";
-    } else if (readiness.score < 70 || readiness.loadRatio > 1.15) {
-      workoutDurationMin = workoutNeed >= 0.25 ? 35 : 20;
-      workoutSuggestion =
-        workoutType === "cardio"
-          ? `Light cardio: ${workoutDurationMin}m conversational run.`
-          : `Light ${workoutType}: ${workoutDurationMin}m low-intensity session.`;
-    } else {
-      workoutDurationMin = workoutNeed >= 0.2 ? 45 : 30;
-      workoutSuggestion =
-        workoutType === "cardio"
-          ? `Moderate cardio: ${workoutDurationMin}m steady run.`
-          : `Moderate ${workoutType}: ${workoutDurationMin}m controlled session.`;
-    }
+    const prescription = TRAINING_PRESCRIPTIONS[trainingCategory];
+    const trainingRationale = buildTrainingRationale({
+      category: trainingCategory,
+      sleepScore,
+      sleepHours,
+      runLoadRatio,
+      daysSinceRun,
+    });
 
     const recommendation: DailyRecommendation = {
       date: dateKey,
       studyTargetHours: round(studyTargetHours, 2),
-      workoutType,
-      workoutDurationMin,
-      workoutSuggestion,
+      trainingCategory,
+      trainingLabel: prescription.label,
+      runMinutesMin: prescription.runMinutesMin,
+      runMinutesMax: prescription.runMinutesMax,
+      walkMinutesMin: prescription.walkMinutesMin,
+      walkMinutesMax: prescription.walkMinutesMax,
+      targetRpeMin: prescription.targetRpeMin,
+      targetRpeMax: prescription.targetRpeMax,
+      trainingRationale,
+      isRunRecommended: prescription.isRunRecommended,
+      workoutType: prescription.isRunRecommended ? "cardio" : "recovery",
+      workoutDurationMin: prescription.isRunRecommended ? prescription.runMinutesMax : 0,
+      workoutSuggestion: toWorkoutSuggestion(prescription),
       bedtimeIso: toIsoOnDate(dateKey, bedtimeMinutes),
       bedtimeLabel: formatClockLabel(bedtimeMinutes),
+      bedtimeRangeStartIso: toIsoOnDate(dateKey, bedtimeRangeStartMinutes),
+      bedtimeRangeEndIso: toIsoOnDate(dateKey, bedtimeRangeEndMinutes),
+      bedtimeRangeStartLabel: formatClockLabel(bedtimeRangeStartMinutes),
+      bedtimeRangeEndLabel: formatClockLabel(bedtimeRangeEndMinutes),
+      bedtimeRangeLabel: `${formatClockLabel(bedtimeRangeStartMinutes)}-${formatClockLabel(
+        bedtimeRangeEndMinutes,
+      )}`,
+      bedtimeRangeMinutes: bedtimeRangeWidthMinutes,
     };
 
     readinessByDate[dateKey] = readiness;
@@ -850,20 +1016,36 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
   const todayRecommendation = recommendationsByDate[todayKey] || {
     date: todayKey,
     studyTargetHours: goals.baselineStudyHours,
+    trainingCategory: "easy_run" as const,
+    trainingLabel: "Easy Run",
+    runMinutesMin: 35,
+    runMinutesMax: 50,
+    walkMinutesMin: 15,
+    walkMinutesMax: 25,
+    targetRpeMin: 4,
+    targetRpeMax: 5,
+    trainingRationale: "Default recommendation used because recent readiness data is limited.",
+    isRunRecommended: true,
     workoutType: "cardio" as const,
-    workoutDurationMin: 35,
-    workoutSuggestion: "35m light cardio session.",
+    workoutDurationMin: 50,
+    workoutSuggestion: "Easy Run: run 35-50m at RPE 4-5, plus 15-25m walking.",
     bedtimeIso: toIsoOnDate(todayKey, 21 * 60 + 30),
     bedtimeLabel: "21:30",
+    bedtimeRangeStartIso: toIsoOnDate(todayKey, 21 * 60 + 10),
+    bedtimeRangeEndIso: toIsoOnDate(todayKey, 21 * 60 + 50),
+    bedtimeRangeStartLabel: "21:10",
+    bedtimeRangeEndLabel: "21:50",
+    bedtimeRangeLabel: "21:10-21:50",
+    bedtimeRangeMinutes: 40,
   };
 
   const thisWeekStart = getWeekStartDate(todayKey);
   const weeklyWorkoutCount = workouts.filter((workout) => {
     const workoutDate = toDateKey(workout.startedAt);
-    return workoutDate >= thisWeekStart && workoutDate <= todayKey;
+    return workoutDate >= thisWeekStart && workoutDate <= todayKey && isRunSession(workout);
   }).length;
 
-  const daysSinceWorkout = computeDaysSinceWorkout(todayKey, workoutsByDate);
+  const daysSinceRun = computeDaysSinceRun(todayKey, workoutsByDate);
 
   const orderedScores = dateWindow
     .map((dateKey) => readinessByDate[dateKey]?.score)
@@ -893,7 +1075,8 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     todayRecommendation,
     weeklyWorkoutCount,
     weeklyWorkoutTarget: goals.weeklyWorkoutTarget,
-    daysSinceWorkout,
+    daysSinceWorkout: daysSinceRun,
+    daysSinceRun,
     trendDelta7d: round(avgRecent7 - avgPrevious7, 1),
   };
 }

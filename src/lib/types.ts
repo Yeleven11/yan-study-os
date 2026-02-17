@@ -42,6 +42,46 @@ export interface TodoItem {
   completedAt?: string;
 }
 
+export type FlashcardStatus = "new" | "learning" | "review" | "relearning";
+export type FlashcardOutcome = "correct" | "incorrect";
+
+export interface Flashcard {
+  id: string;
+  question: string;
+  answer: string;
+  status: FlashcardStatus;
+  dueAt: string;
+  createdAt: string;
+  updatedAt: string;
+  intervalDays: number;
+  easeFactor: number;
+  learningStepIndex?: number;
+  reviewCount: number;
+  lapseCount: number;
+  consecutiveCorrect: number;
+  lastReviewedAt?: string;
+  lastOutcome?: FlashcardOutcome;
+}
+
+export interface FlashcardGradeInput {
+  cardId: string;
+  outcome: FlashcardOutcome;
+  reviewedAt: string;
+}
+
+export interface FlashcardSessionSnapshot {
+  generatedAt: string;
+  timezone: string;
+  totalCards: number;
+  dueNowCount: number;
+  criticalTodayCount: number;
+  optionalCount: number;
+  nextDueAt?: string;
+  currentCardId?: string;
+  currentCardDueNow: boolean;
+  currentCardCritical: boolean;
+}
+
 export type SubjectTotals = Record<SubjectId, number>;
 
 export interface DayStudyAggregate {
@@ -58,6 +98,12 @@ export interface AppSettings {
 }
 
 export type WorkoutType = "cardio" | "strength" | "mobility" | "recovery";
+export type TrainingCategory =
+  | "rest_walk"
+  | "recovery"
+  | "easy_run"
+  | "steady_run"
+  | "quality_run";
 export type SleepDriverKey =
   | "debt"
   | "duration"
@@ -102,6 +148,10 @@ export interface WorkoutEntry {
   elevationAscM?: number;
   elevationDescM?: number;
   intensityKcalHrKg?: number;
+  difficultyAuto?: number;
+  difficultyUser?: number;
+  difficultyEffective?: number;
+  trainingLoad?: number;
   source: "manual" | "health_import" | "sample";
   createdAt: string;
 }
@@ -191,7 +241,13 @@ export interface HealthRawFile {
   id: string;
   hash: string;
   filename: string;
-  fileType: "aggregate" | "workout_summary" | "workout_stream" | "ignored" | "unknown";
+  fileType:
+    | "aggregate"
+    | "workout_summary"
+    | "workout_stream"
+    | "mobile_sync"
+    | "ignored"
+    | "unknown";
   rowCount: number;
   importedAt: string;
   ignoredReason?: string;
@@ -206,12 +262,107 @@ export interface HealthRawRow {
   values: Record<string, string>;
 }
 
+export interface MobileSyncSeriesPoint {
+  timestamp: string;
+  value: number;
+}
+
+export interface MobileSyncWorkoutStreams {
+  heartRateSeries?: MobileSyncSeriesPoint[];
+  distanceSeries?: MobileSyncSeriesPoint[];
+  stepSeries?: MobileSyncSeriesPoint[];
+  activeEnergySeries?: MobileSyncSeriesPoint[];
+  restingEnergySeries?: MobileSyncSeriesPoint[];
+}
+
+export interface MobileSyncWorkoutInput {
+  hkWorkoutUuid: string;
+  workoutType: string;
+  startedAt: string;
+  endedAt: string;
+  durationMin: number;
+  distanceKm?: number;
+  activeEnergyKj?: number;
+  restingEnergyKj?: number;
+  avgHeartRate?: number;
+  hrMin?: number;
+  hrMax?: number;
+  hrAvg?: number;
+  stepCount?: number;
+  streams?: MobileSyncWorkoutStreams;
+}
+
+export interface MobileSyncDailyHealthInput {
+  date: string;
+  sleepHours?: number;
+  sleepAsleepHours?: number;
+  sleepInBedHours?: number;
+  sleepCoreHours?: number;
+  sleepDeepHours?: number;
+  sleepRemHours?: number;
+  sleepAwakeHours?: number;
+  hrvMs?: number;
+  restingHrBpm?: number;
+  heartRateMinBpm?: number;
+  heartRateMaxBpm?: number;
+  heartRateAvgBpm?: number;
+  respiratoryRateBpm?: number;
+  steps?: number;
+  walkRunDistanceKm?: number;
+  activeEnergyKj?: number;
+  restingEnergyKj?: number;
+  exerciseTimeMin?: number;
+}
+
+export interface MobileSyncDeletion {
+  sampleType: string;
+  uuid: string;
+  deletedAt: string;
+}
+
+export interface MobileSyncRequest {
+  schemaVersion: 1;
+  batchId: string;
+  generatedAt: string;
+  device: {
+    deviceId: string;
+    appVersion: string;
+    osVersion: string;
+    timezone: string;
+  };
+  syncWindow?: {
+    from?: string;
+    to?: string;
+  };
+  settings?: {
+    syncIntervalMinutes?: number;
+  };
+  dailyHealth?: MobileSyncDailyHealthInput[];
+  workouts?: MobileSyncWorkoutInput[];
+  deletions?: MobileSyncDeletion[];
+}
+
+export interface MobileSyncResponse {
+  ok: true;
+  importedHealthDays: number;
+  importedWorkouts: number;
+  updatedWorkouts: number;
+  filesProcessed: number;
+  filesSkipped: number;
+  linkedStreams: number;
+  duplicateBatch: boolean;
+  serverTime: string;
+  nextSuggestedSyncSeconds: number;
+}
+
 export interface PerformanceGoals {
   sleepHoursTarget: number;
   baselineStudyHours: number;
   weeklyWorkoutTarget: number;
   weekdayWakeTime: string;
   weekendWakeTime: string;
+  preferredBedtimeStart: string;
+  preferredBedtimeEnd: string;
   ageYears: number;
 }
 
@@ -245,17 +396,34 @@ export interface DailyReadiness {
 export interface DailyRecommendation {
   date: string;
   studyTargetHours: number;
+  trainingCategory: TrainingCategory;
+  trainingLabel: string;
+  runMinutesMin: number;
+  runMinutesMax: number;
+  walkMinutesMin: number;
+  walkMinutesMax: number;
+  targetRpeMin: number;
+  targetRpeMax: number;
+  trainingRationale: string;
+  isRunRecommended: boolean;
   workoutType: WorkoutType;
   workoutDurationMin: number;
   workoutSuggestion: string;
   bedtimeIso: string;
   bedtimeLabel: string;
+  bedtimeRangeStartIso: string;
+  bedtimeRangeEndIso: string;
+  bedtimeRangeStartLabel: string;
+  bedtimeRangeEndLabel: string;
+  bedtimeRangeLabel: string;
+  bedtimeRangeMinutes: number;
 }
 
 export interface AppData {
   exams: Exam[];
   studySessions: StudySession[];
   todos: TodoItem[];
+  flashcards: Flashcard[];
   dailyHealth: DailyHealthFact[];
   workouts: WorkoutEntry[];
   workoutDetails: WorkoutDetail[];
@@ -312,5 +480,17 @@ export type OfflineAction =
       id: string;
       type: "updateExams";
       payload: { exams: Exam[] };
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "createFlashcard";
+      payload: Flashcard;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "gradeFlashcard";
+      payload: FlashcardGradeInput;
       createdAt: string;
     };

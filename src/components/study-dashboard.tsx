@@ -28,6 +28,12 @@ import {
   toDateKey,
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
+import {
+  applyFlashcardGrade,
+  buildFlashcardSessionSnapshot,
+  createFlashcard,
+  pickNextFlashcard,
+} from "@/lib/flashcards/scheduler";
 import { buildPerformanceInsights } from "@/lib/health-engine";
 import {
   buildDayHoverModel,
@@ -42,6 +48,9 @@ import type {
   DailyReadiness,
   DashboardBootstrap,
   Exam,
+  Flashcard,
+  FlashcardOutcome,
+  FlashcardSessionSnapshot,
   OfflineAction,
   PerformanceGoals,
   StudySession,
@@ -50,7 +59,6 @@ import type {
   WorkoutDetail,
   WorkoutEntry,
   WorkoutStreamPoint,
-  WorkoutType,
 } from "@/lib/types";
 
 type AuthStatus = "checking" | "signedOut" | "signedIn";
@@ -62,11 +70,25 @@ const EXAM_BACKUP_KEY = "yan-study-os:exam-backup:v1";
 const COUNTDOWN_BASELINES_KEY = "yan-study-os:countdown-baselines:v1";
 const INITIAL_NOW_MS = Date.now();
 const CALENDAR_MIN_START_DATE = "2026-02-10";
+const STUDY_STREAK_THRESHOLD_SECONDS = 90 * 60;
 type ExamTimeSlot = "09:00" | "13:00";
 type ExamDraftRow = Exam & {
   monthDay: string;
   timeSlot: ExamTimeSlot;
 };
+type GoalsDraftState = {
+  sleepHoursTarget: string;
+  baselineStudyHours: string;
+  weeklyWorkoutTarget: string;
+  weekdayWakeTime: string;
+  weekendWakeTime: string;
+  preferredBedtimeStart: string;
+  preferredBedtimeEnd: string;
+  ageYears: string;
+};
+type GoalsDraftErrors = Partial<Record<keyof GoalsDraftState, string>>;
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 function createOfflineAction(
   action: Omit<OfflineAction, "id" | "createdAt">,
@@ -76,6 +98,91 @@ function createOfflineAction(
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
   } as OfflineAction;
+}
+
+function toDateKeyInTimezone(dateLike: string | Date, timezone: string): string {
+  const date = typeof dateLike === "string" ? new Date(dateLike) : dateLike;
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // Fall back to local formatter if timezone is invalid.
+  }
+
+  return toDateKey(date);
+}
+
+function shiftDateKeyByDays(dateKey: string, offsetDays: number): string {
+  const base = new Date(`${dateKey}T00:00:00Z`);
+  if (!Number.isFinite(base.getTime())) {
+    return dateKey;
+  }
+
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return base.toISOString().slice(0, 10);
+}
+
+function computeStudyStreakDays(
+  sessions: StudySession[],
+  timezone: string,
+  now = new Date(),
+): number {
+  if (sessions.length === 0) {
+    return 0;
+  }
+
+  const totalByDate = new Map<string, number>();
+  for (const session of sessions) {
+    if (!session || !Number.isFinite(session.durationSec) || session.durationSec <= 0) {
+      continue;
+    }
+
+    const dateKey = toDateKeyInTimezone(session.startedAt, timezone);
+    if (!dateKey) {
+      continue;
+    }
+
+    totalByDate.set(
+      dateKey,
+      (totalByDate.get(dateKey) || 0) + Math.max(0, Math.floor(session.durationSec)),
+    );
+  }
+
+  const todayKey = toDateKeyInTimezone(now, timezone);
+  if (!todayKey) {
+    return 0;
+  }
+
+  let streakDays = 0;
+  let cursor = todayKey;
+
+  for (let safety = 0; safety < 4000; safety += 1) {
+    const totalSeconds = totalByDate.get(cursor) || 0;
+    if (totalSeconds < STUDY_STREAK_THRESHOLD_SECONDS) {
+      break;
+    }
+
+    streakDays += 1;
+    cursor = shiftDateKeyByDays(cursor, -1);
+  }
+
+  return streakDays;
 }
 
 function getActiveElapsedSeconds(timer: ActiveTimerState | null, nowMs: number): number {
@@ -92,6 +199,112 @@ function getActiveElapsedSeconds(timer: ActiveTimerState | null, nowMs: number):
       : 0;
 
   return timer.elapsedBeforePauseSec + currentRunSeconds;
+}
+
+function toGoalsDraft(goals: PerformanceGoals): GoalsDraftState {
+  return {
+    sleepHoursTarget: goals.sleepHoursTarget.toString(),
+    baselineStudyHours: goals.baselineStudyHours.toString(),
+    weeklyWorkoutTarget: goals.weeklyWorkoutTarget.toString(),
+    weekdayWakeTime: goals.weekdayWakeTime,
+    weekendWakeTime: goals.weekendWakeTime,
+    preferredBedtimeStart: goals.preferredBedtimeStart,
+    preferredBedtimeEnd: goals.preferredBedtimeEnd,
+    ageYears: goals.ageYears.toString(),
+  };
+}
+
+function parseGoalsDraft(draft: GoalsDraftState): {
+  parsed: PerformanceGoals | null;
+  errors: GoalsDraftErrors;
+} {
+  const errors: GoalsDraftErrors = {};
+  const parseBoundedNumber = (
+    key: keyof GoalsDraftState,
+    label: string,
+    min: number,
+    max: number,
+    roundToInt = false,
+  ): number | null => {
+    const raw = draft[key].trim().replace(",", ".");
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      errors[key] = `${label} must be a valid number.`;
+      return null;
+    }
+    if (value < min || value > max) {
+      errors[key] = `${label} must be between ${min} and ${max}.`;
+      return null;
+    }
+    return roundToInt ? Math.round(value) : value;
+  };
+
+  const sleepHoursTarget = parseBoundedNumber(
+    "sleepHoursTarget",
+    "Sleep target",
+    4,
+    12,
+  );
+  const baselineStudyHours = parseBoundedNumber(
+    "baselineStudyHours",
+    "Study target",
+    0.5,
+    12,
+  );
+  const weeklyWorkoutTarget = parseBoundedNumber(
+    "weeklyWorkoutTarget",
+    "Weekly run target",
+    0,
+    14,
+    true,
+  );
+  const ageYears = parseBoundedNumber("ageYears", "Age", 12, 90, true);
+
+  if (!TIME_PATTERN.test(draft.weekdayWakeTime.trim())) {
+    errors.weekdayWakeTime = "Weekday wake time must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.weekendWakeTime.trim())) {
+    errors.weekendWakeTime = "Weekend wake time must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.preferredBedtimeStart.trim())) {
+    errors.preferredBedtimeStart = "Preferred bedtime start must use HH:mm.";
+  }
+  if (!TIME_PATTERN.test(draft.preferredBedtimeEnd.trim())) {
+    errors.preferredBedtimeEnd = "Preferred bedtime end must use HH:mm.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { parsed: null, errors };
+  }
+
+  return {
+    parsed: {
+      sleepHoursTarget: sleepHoursTarget as number,
+      baselineStudyHours: baselineStudyHours as number,
+      weeklyWorkoutTarget: weeklyWorkoutTarget as number,
+      weekdayWakeTime: draft.weekdayWakeTime.trim(),
+      weekendWakeTime: draft.weekendWakeTime.trim(),
+      preferredBedtimeStart: draft.preferredBedtimeStart.trim(),
+      preferredBedtimeEnd: draft.preferredBedtimeEnd.trim(),
+      ageYears: ageYears as number,
+    },
+    errors,
+  };
+}
+
+function getExamSubjectIds(exams: Exam[]): SubjectId[] {
+  const seen = new Set<SubjectId>();
+  const ordered: SubjectId[] = [];
+
+  for (const exam of exams) {
+    if (seen.has(exam.subjectId)) {
+      continue;
+    }
+    seen.add(exam.subjectId);
+    ordered.push(exam.subjectId);
+  }
+
+  return ordered;
 }
 
 function applyOfflineAction(data: AppData, action: OfflineAction): AppData {
@@ -165,6 +378,23 @@ function applyOfflineAction(data: AppData, action: OfflineAction): AppData {
         (left, right) =>
           new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
       ),
+    };
+  }
+
+  if (action.type === "createFlashcard") {
+    const exists = data.flashcards.some((card) => card.id === action.payload.id);
+    return {
+      ...data,
+      flashcards: exists ? data.flashcards : [...data.flashcards, action.payload],
+    };
+  }
+
+  if (action.type === "gradeFlashcard") {
+    const timezone = data.settings?.timezone || "Europe/Berlin";
+    const result = applyFlashcardGrade(data.flashcards, action.payload, timezone);
+    return {
+      ...data,
+      flashcards: result.cards,
     };
   }
 
@@ -366,6 +596,7 @@ function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
     exams: bootstrap.exams,
     studySessions: bootstrap.studySessions,
     todos: bootstrap.todos,
+    flashcards: Array.isArray(bootstrap.flashcards) ? bootstrap.flashcards : [],
     dailyHealth: Array.isArray(bootstrap.dailyHealth) ? bootstrap.dailyHealth : [],
     workouts: Array.isArray(bootstrap.workouts) ? bootstrap.workouts : [],
     workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
@@ -486,6 +717,7 @@ export default function StudyDashboard() {
   const repository = useMemo(() => createDashboardRepository(), []);
 
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [sessionIssuedAt, setSessionIssuedAt] = useState<string | null>(null);
   const [passcode, setPasscode] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -524,7 +756,9 @@ export default function StudyDashboard() {
   const [countdownBaselines, setCountdownBaselines] = useState<Record<string, number>>(
     () => readCountdownBaselines(),
   );
-  const [goalsDraft, setGoalsDraft] = useState<PerformanceGoals | null>(null);
+  const [goalsDraft, setGoalsDraft] = useState<GoalsDraftState | null>(null);
+  const [goalsDirty, setGoalsDirty] = useState(false);
+  const [goalsErrors, setGoalsErrors] = useState<GoalsDraftErrors>({});
   const [goalsSaving, setGoalsSaving] = useState(false);
   const [csvInput, setCsvInput] = useState("");
   const [csvImporting, setCsvImporting] = useState(false);
@@ -535,9 +769,6 @@ export default function StudyDashboard() {
     filesSkipped: number;
     linkedStreams?: number;
   } | null>(null);
-  const [workoutTypeDraft, setWorkoutTypeDraft] = useState<WorkoutType>("cardio");
-  const [workoutDurationDraft, setWorkoutDurationDraft] = useState("35");
-  const [workoutKcalDraft, setWorkoutKcalDraft] = useState("");
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
   const [selectedWorkoutDetail, setSelectedWorkoutDetail] = useState<WorkoutDetail | null>(null);
   const [loadingWorkoutDetail, setLoadingWorkoutDetail] = useState(false);
@@ -545,18 +776,26 @@ export default function StudyDashboard() {
   useEffect(() => {
     let isMounted = true;
 
-    request<{ authenticated: boolean }>("/api/auth/session")
+    request<{ authenticated: boolean; issuedAt?: string; expiresAt?: string }>(
+      "/api/auth/session",
+    )
       .then((payload) => {
         if (!isMounted) {
           return;
         }
         setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
+        setSessionIssuedAt(
+          payload.authenticated && typeof payload.issuedAt === "string"
+            ? payload.issuedAt
+            : null,
+        );
       })
       .catch(() => {
         if (!isMounted) {
           return;
         }
         setAuthStatus("signedOut");
+        setSessionIssuedAt(null);
       });
 
     return () => {
@@ -656,6 +895,14 @@ export default function StudyDashboard() {
         if (action.type === "updateExams") {
           await repository.updateExams(action.payload.exams);
         }
+
+        if (action.type === "createFlashcard") {
+          await repository.createFlashcard(action.payload);
+        }
+
+        if (action.type === "gradeFlashcard") {
+          await repository.gradeFlashcard(action.payload);
+        }
       } catch {
         remaining.push(action);
       }
@@ -738,8 +985,13 @@ export default function StudyDashboard() {
       return;
     }
 
-    setGoalsDraft(data.goals);
-  }, [data]);
+    if (goalsDirty) {
+      return;
+    }
+
+    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsErrors({});
+  }, [data, goalsDirty]);
 
   useEffect(() => {
     if (!data || !selectedWorkoutId) {
@@ -874,6 +1126,73 @@ export default function StudyDashboard() {
 
     return sortTodos(data.todos.filter((todo) => todo.archived));
   }, [data]);
+
+  const flashcardSnapshot = useMemo<FlashcardSessionSnapshot | null>(() => {
+    if (!data) {
+      return null;
+    }
+
+    return buildFlashcardSessionSnapshot(
+      data.flashcards,
+      new Date(timePulse),
+      data.settings.timezone || "Europe/Berlin",
+    );
+  }, [data, timePulse]);
+
+  const nextFlashcard = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    return pickNextFlashcard(
+      data.flashcards,
+      new Date(timePulse),
+      data.settings.timezone || "Europe/Berlin",
+    );
+  }, [data, timePulse]);
+
+  const latestHealthUpdateIso = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    const fromRawFiles = data.healthRawFiles
+      .map((item) => item.importedAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+
+    if (fromRawFiles) {
+      return fromRawFiles;
+    }
+
+    return data.dailyHealth
+      .map((item) => item.createdAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+  }, [data]);
+
+  const latestWorkoutUpdateIso = useMemo(() => {
+    if (!data) {
+      return null;
+    }
+
+    return data.workouts
+      .map((item) => item.createdAt || item.startedAt)
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+  }, [data]);
+
+  const studyStreakDays = useMemo(() => {
+    if (!data) {
+      return 0;
+    }
+
+    return computeStudyStreakDays(
+      data.studySessions,
+      data.settings.timezone || "Europe/Berlin",
+      new Date(timePulse),
+    );
+  }, [data, timePulse]);
 
   const todosByDate = useMemo(() => {
     return activeTodos.reduce<Record<string, TodoItem[]>>((accumulator, todo) => {
@@ -1019,7 +1338,44 @@ export default function StudyDashboard() {
     };
   }, [healthDaysSorted, readinessByDate]);
 
-  const todayKey = useMemo(() => toDateKey(new Date(timePulse)), [timePulse]);
+  const dashboardTimezone = data?.settings.timezone || "Europe/Berlin";
+  const todayKey = useMemo(
+    () => toDateKeyInTimezone(new Date(timePulse), dashboardTimezone),
+    [dashboardTimezone, timePulse],
+  );
+  const todayLoggedStudySeconds = useMemo(() => {
+    if (!data || !todayKey) {
+      return 0;
+    }
+
+    return data.studySessions.reduce((sum, session) => {
+      if (toDateKeyInTimezone(session.startedAt, dashboardTimezone) !== todayKey) {
+        return sum;
+      }
+      return sum + Math.max(0, session.durationSec);
+    }, 0);
+  }, [dashboardTimezone, data, todayKey]);
+  const liveTimerTodaySeconds = useMemo(() => {
+    if (!activeTimer || !todayKey) {
+      return 0;
+    }
+    if (toDateKeyInTimezone(activeTimer.startedAt, dashboardTimezone) !== todayKey) {
+      return 0;
+    }
+    return getActiveElapsedSeconds(activeTimer, clockNowMs);
+  }, [activeTimer, clockNowMs, dashboardTimezone, todayKey]);
+  const todayStudyHoursLive = useMemo(
+    () => (todayLoggedStudySeconds + liveTimerTodaySeconds) / 3600,
+    [liveTimerTodaySeconds, todayLoggedStudySeconds],
+  );
+  const todayStudyTargetHours = todayRecommendation?.studyTargetHours || 0;
+  const todayStudyProgressRatio = useMemo(() => {
+    if (todayStudyTargetHours <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, todayStudyHoursLive / todayStudyTargetHours));
+  }, [todayStudyHoursLive, todayStudyTargetHours]);
+  const todayStudyProgressPercent = Math.round(todayStudyProgressRatio * 100);
 
   const dayHoverByDate = useMemo(() => {
     const result: Record<string, DayHoverModel> = {};
@@ -1127,8 +1483,17 @@ export default function StudyDashboard() {
         method: "POST",
         body: JSON.stringify({ passcode }),
       });
+      const sessionPayload: { authenticated: boolean; issuedAt?: string } = await request<{
+        authenticated: boolean;
+        issuedAt?: string;
+      }>("/api/auth/session").catch(() => ({ authenticated: true }));
       setPasscode("");
       setAuthStatus("signedIn");
+      setSessionIssuedAt(
+        sessionPayload.authenticated && typeof sessionPayload.issuedAt === "string"
+          ? sessionPayload.issuedAt
+          : new Date().toISOString(),
+      );
     } catch (error) {
       setAuthError(
         error instanceof Error ? error.message : "Unable to verify passcode",
@@ -1139,6 +1504,7 @@ export default function StudyDashboard() {
   const handleLogout = async () => {
     await request<{ ok: true }>("/api/auth/logout", { method: "POST" }).catch(() => null);
     setAuthStatus("signedOut");
+    setSessionIssuedAt(null);
     setData(null);
   };
 
@@ -1147,11 +1513,12 @@ export default function StudyDashboard() {
       optimisticUpdate: (prev: AppData) => AppData,
       remoteAction: () => Promise<void>,
       fallbackAction?: OfflineAction,
-    ) => {
+    ): Promise<boolean> => {
       setData((previous) => (previous ? optimisticUpdate(previous) : previous));
 
       try {
         await remoteAction();
+        return true;
       } catch {
         if (fallbackAction && repository.mode === "api") {
           queueOfflineAction(fallbackAction);
@@ -1159,6 +1526,7 @@ export default function StudyDashboard() {
         } else {
           setStatusMessage("Action failed and was not synced.");
         }
+        return false;
       }
     },
     [queueOfflineAction, repository.mode],
@@ -1296,6 +1664,74 @@ export default function StudyDashboard() {
     );
   };
 
+  const handleCreateFlashcard = async (question: string, answer: string) => {
+    if (!data) {
+      return;
+    }
+
+    const trimmedQuestion = question.trim();
+    const trimmedAnswer = answer.trim();
+    if (!trimmedQuestion || !trimmedAnswer) {
+      setStatusMessage("Flashcard needs both a question and an answer.");
+      return;
+    }
+
+    const flashcard = createFlashcard(trimmedQuestion, trimmedAnswer);
+
+    const saved = await applyMutation(
+      (previous) => ({
+        ...previous,
+        flashcards: [...previous.flashcards, flashcard],
+      }),
+      () => repository.createFlashcard(flashcard),
+      createOfflineAction({ type: "createFlashcard", payload: flashcard }),
+    );
+
+    if (saved || repository.mode !== "api") {
+      setStatusMessage("Flashcard added and ready for review.");
+    }
+  };
+
+  const handleGradeFlashcard = async (cardId: string, outcome: FlashcardOutcome) => {
+    if (!data) {
+      return;
+    }
+
+    const reviewInput = {
+      cardId,
+      outcome,
+      reviewedAt: new Date().toISOString(),
+    };
+
+    const timezone = data.settings?.timezone || "Europe/Berlin";
+    const optimistic = applyFlashcardGrade(data.flashcards, reviewInput, timezone);
+    if (!optimistic.updatedCard) {
+      setStatusMessage("Flashcard could not be found.");
+      return;
+    }
+
+    const saved = await applyMutation(
+      (previous) => ({
+        ...previous,
+        flashcards: applyFlashcardGrade(
+          previous.flashcards,
+          reviewInput,
+          previous.settings?.timezone || timezone,
+        ).cards,
+      }),
+      () => repository.gradeFlashcard(reviewInput),
+      createOfflineAction({ type: "gradeFlashcard", payload: reviewInput }),
+    );
+
+    if (saved || repository.mode !== "api") {
+      setStatusMessage(
+        outcome === "correct"
+          ? "Flashcard marked correct and saved."
+          : "Flashcard marked incorrect and saved.",
+      );
+    }
+  };
+
   const handleArchiveTodo = async (todoId: string) => {
     await applyMutation(
       (previous) => ({
@@ -1379,20 +1815,54 @@ export default function StudyDashboard() {
       return;
     }
 
+    const { parsed, errors } = parseGoalsDraft(goalsDraft);
+    setGoalsErrors(errors);
+    if (!parsed) {
+      setStatusMessage("Fix goal field errors before saving.");
+      return;
+    }
+
     setGoalsSaving(true);
 
     try {
-      await applyMutation(
+      const saved = await applyMutation(
         (previous) => ({
           ...previous,
-          goals: goalsDraft,
+          goals: parsed,
         }),
-        () => repository.updateGoals(goalsDraft),
+        () => repository.updateGoals(parsed),
       );
-      setStatusMessage("Performance goals updated.");
+      if (saved || repository.mode !== "api") {
+        setGoalsDirty(false);
+        setGoalsDraft(toGoalsDraft(parsed));
+        setStatusMessage("Performance goals updated.");
+      }
     } finally {
       setGoalsSaving(false);
     }
+  };
+
+  const handleGoalFieldChange = (field: keyof GoalsDraftState, value: string) => {
+    setGoalsDirty(true);
+    setGoalsDraft((current) => (current ? { ...current, [field]: value } : current));
+    setGoalsErrors((current) => {
+      if (!current[field]) {
+        return current;
+      }
+      return {
+        ...current,
+        [field]: undefined,
+      };
+    });
+  };
+
+  const handleResetGoalsDraft = () => {
+    if (!data) {
+      return;
+    }
+    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsErrors({});
+    setGoalsDirty(false);
   };
 
   const handleImportCsv = async () => {
@@ -1456,47 +1926,6 @@ export default function StudyDashboard() {
     }
   };
 
-  const handleAddWorkout = async () => {
-    if (!data) {
-      return;
-    }
-
-    const durationMin = Number(workoutDurationDraft);
-    if (!Number.isFinite(durationMin) || durationMin < 10) {
-      setStatusMessage("Workout duration must be at least 10 minutes.");
-      return;
-    }
-
-    const activeKcal = Number(workoutKcalDraft);
-    const endedAt = new Date().toISOString();
-    const startedAt = new Date(Date.now() - durationMin * 60_000).toISOString();
-    const workout: WorkoutEntry = {
-      id: crypto.randomUUID(),
-      type: workoutTypeDraft,
-      startedAt,
-      endedAt,
-      durationMin,
-      activeKcal: Number.isFinite(activeKcal) && activeKcal > 0 ? activeKcal : undefined,
-      source: "manual",
-      createdAt: endedAt,
-    };
-
-    await applyMutation(
-      (previous) => ({
-        ...previous,
-        workouts: [...previous.workouts, workout].sort(
-          (left, right) =>
-            new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
-        ),
-      }),
-      () => repository.createWorkout(workout),
-    );
-
-    setWorkoutDurationDraft("35");
-    setWorkoutKcalDraft("");
-    setStatusMessage(`${workout.type} workout logged (${durationMin} min).`);
-  };
-
   const handleSelectWorkout = useCallback(
     async (workoutId: string) => {
       if (!data) {
@@ -1521,6 +1950,39 @@ export default function StudyDashboard() {
       }
     },
     [data, repository],
+  );
+
+  const handleUpdateWorkoutDifficulty = useCallback(
+    async (workoutId: string, difficultyUser: number | null) => {
+      const normalizedDifficulty =
+        typeof difficultyUser === "number"
+          ? Math.max(1, Math.min(10, Math.round(difficultyUser)))
+          : null;
+
+      const saved = await applyMutation(
+        (previous) => ({
+          ...previous,
+          workouts: previous.workouts.map((workout) =>
+            workout.id === workoutId
+              ? {
+                  ...workout,
+                  difficultyUser: normalizedDifficulty === null ? undefined : normalizedDifficulty,
+                }
+              : workout,
+          ),
+        }),
+        () => repository.updateWorkout(workoutId, { difficultyUser: normalizedDifficulty }),
+      );
+
+      if (saved || repository.mode !== "api") {
+        setStatusMessage(
+          normalizedDifficulty === null
+            ? "Workout difficulty override cleared."
+            : `Workout difficulty set to ${normalizedDifficulty}/10.`,
+        );
+      }
+    },
+    [applyMutation, repository],
   );
 
   useEffect(() => {
@@ -1593,30 +2055,51 @@ export default function StudyDashboard() {
 
   return (
     <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-      <div className="h-full w-full p-3 md:p-4">
-        <div
-          className="grid h-full min-h-0 gap-4"
-          style={{
-            gridTemplateColumns: "320px minmax(0, 1fr) 320px",
-          }}
-        >
-          <TodoRail
-            activeTodos={activeTodos}
-            archivedTodos={archivedTodos}
-            onAddTodo={handleAddTodo}
-            onArchive={handleArchiveTodo}
-            onRestore={handleRestoreTodo}
-          />
-
-          <main
-            className="grid h-full min-h-0 gap-4 overflow-hidden"
+      <div className="flex h-full min-h-0 flex-col">
+        <StatusStrip
+          healthUpdatedAt={latestHealthUpdateIso}
+          workoutsUpdatedAt={latestWorkoutUpdateIso}
+          lastLoginAt={sessionIssuedAt}
+          studyStreakDays={studyStreakDays}
+          nowMs={timePulse}
+        />
+        <div className="min-h-0 flex-1 p-3 md:p-4">
+          <div
+            className="grid h-full min-h-0 gap-4"
             style={{
-              gridTemplateRows: isCountdownExpanded
-                ? "1fr 0fr 0fr"
-                : "220px minmax(0, 1fr) 280px",
-              transition: "grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1)",
+              gridTemplateColumns: "320px minmax(0, 1fr) 320px",
             }}
           >
+            <aside
+              className="grid h-full min-h-0 gap-4"
+              style={{ gridTemplateRows: "minmax(0, 1fr) minmax(0, 1fr)" }}
+            >
+              <TodoRail
+                activeTodos={activeTodos}
+                archivedTodos={archivedTodos}
+                onAddTodo={handleAddTodo}
+                onArchive={handleArchiveTodo}
+                onRestore={handleRestoreTodo}
+              />
+              <FlashcardRail
+                currentCard={nextFlashcard?.card || null}
+                cardDueNow={Boolean(nextFlashcard?.dueNow)}
+                cardCritical={Boolean(nextFlashcard?.critical)}
+                snapshot={flashcardSnapshot}
+                onCreateFlashcard={handleCreateFlashcard}
+                onGradeFlashcard={handleGradeFlashcard}
+              />
+            </aside>
+
+            <main
+              className="grid h-full min-h-0 gap-4 overflow-hidden"
+              style={{
+                gridTemplateRows: isCountdownExpanded
+                  ? "1fr 0fr 0fr"
+                  : "220px minmax(0, 1fr) 280px",
+                transition: "grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+            >
             <section
               className="h-full min-h-0 overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4"
               onClick={() => {
@@ -1790,25 +2273,40 @@ export default function StudyDashboard() {
                           Readiness {Math.round(todayReadiness.score)} / 100
                         </p>
                         <p className="text-xs text-[var(--muted)]">
-                          Zone: {todayReadiness.zone.toUpperCase()} • Confidence{" "}
+                          Zone: {todayReadiness.zone.toUpperCase()} • Confidence (readiness data){" "}
                           {Math.round(todayReadiness.confidence * 100)}%
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                      <div className="flex min-w-[260px] flex-1 flex-wrap items-center justify-end gap-2 text-xs text-[var(--muted)]">
+                        <div className="min-w-[220px] rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                            Study Progress
+                          </p>
+                          <div className="mt-1 h-1.5 rounded bg-black/35">
+                            <div
+                              className="h-full rounded bg-[#5BC0EB] transition-all duration-300"
+                              style={{ width: `${Math.max(0, Math.min(100, todayStudyProgressPercent))}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-[11px] text-[var(--muted)]">
+                            {todayStudyHoursLive.toFixed(1)}h / {todayStudyTargetHours.toFixed(1)}h (
+                            {todayStudyProgressPercent}%)
+                          </p>
+                        </div>
                         <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-                          Study target: {todayRecommendation.studyTargetHours.toFixed(1)}h
-                        </span>
-                        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-                          Bedtime: {todayRecommendation.bedtimeLabel}
+                          Bedtime: {todayRecommendation.bedtimeRangeLabel}
                         </span>
                       </div>
                     </div>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <p className="text-xs text-[var(--muted)]">
-                        {todayRecommendation.workoutSuggestion}
+                        {todayRecommendation.trainingLabel}: {todayRecommendation.workoutSuggestion}
                       </p>
                       <p className="text-xs text-[var(--muted)]">
-                        7-day trend: {performanceInsights?.trendDelta7d && performanceInsights.trendDelta7d > 0 ? "+" : ""}
+                        {todayRecommendation.trainingRationale} 7-day trend:{" "}
+                        {performanceInsights?.trendDelta7d && performanceInsights.trendDelta7d > 0
+                          ? "+"
+                          : ""}
                         {performanceInsights?.trendDelta7d || 0}
                       </p>
                     </div>
@@ -1927,15 +2425,7 @@ export default function StudyDashboard() {
                           {dayOfMonth}
                         </span>
 
-                        {dayModel.tests.length > 0 ? (
-                          <span
-                            className="pointer-events-none absolute inset-[-2px] rounded-[6px] border"
-                            style={{
-                              borderColor: data.settings.examHighlightColor,
-                              boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
-                            }}
-                          />
-                        ) : null}
+                        <ExamSubjectRings exams={dayModel.tests} roundedClassName="rounded-[4px]" />
 
                         {isPast ? (
                           <span className="pointer-events-none absolute inset-0 rounded-[4px] border border-black/55" />
@@ -2040,7 +2530,7 @@ export default function StudyDashboard() {
               ) : null}
               <p className="mt-3 text-xs text-[var(--muted)]">
                 120-day calendar. Fill color = most studied subject. Top-left dot = readiness zone.
-                Blue badge = workout count.
+                Blue badge = workout count. Inner rings = exam subjects.
               </p>
             </section>
 
@@ -2211,118 +2701,180 @@ export default function StudyDashboard() {
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Workout Tracker
+                    Training Readiness
                   </p>
                   <p className="text-xs text-[var(--muted)]">
                     This week: {performanceInsights?.weeklyWorkoutCount || 0}/
-                    {performanceInsights?.weeklyWorkoutTarget || 0} • Last workout{" "}
-                    {performanceInsights?.daysSinceWorkout ?? 0}d ago
+                    {performanceInsights?.weeklyWorkoutTarget || 0} run sessions • Last run{" "}
+                    {performanceInsights?.daysSinceRun ?? 0}d ago
                   </p>
-                  <div className="grid grid-cols-[1fr_86px_86px_auto] gap-2">
-                    <select
-                      value={workoutTypeDraft}
-                      onChange={(event) => setWorkoutTypeDraft(event.target.value as WorkoutType)}
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    >
-                      <option value="cardio">Cardio</option>
-                      <option value="strength">Strength</option>
-                      <option value="mobility">Mobility</option>
-                      <option value="recovery">Recovery</option>
-                    </select>
-                    <input
-                      value={workoutDurationDraft}
-                      onChange={(event) => setWorkoutDurationDraft(event.target.value)}
-                      placeholder="min"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={workoutKcalDraft}
-                      onChange={(event) => setWorkoutKcalDraft(event.target.value)}
-                      placeholder="kcal"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddWorkout}
-                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                    >
-                      Log
-                    </button>
-                  </div>
+                  {todayRecommendation ? (
+                    <p className="text-xs text-[var(--muted)]">
+                      {todayRecommendation.trainingLabel}: run {todayRecommendation.runMinutesMin}-
+                      {todayRecommendation.runMinutesMax}m, walk{" "}
+                      {todayRecommendation.walkMinutesMin}-{todayRecommendation.walkMinutesMax}m, RPE{" "}
+                      {todayRecommendation.targetRpeMin}-{todayRecommendation.targetRpeMax}.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                    Goals
-                  </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      value={goalsDraft?.sleepHoursTarget ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, sleepHoursTarget: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Sleep h"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.baselineStudyHours ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, baselineStudyHours: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Study h"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.weeklyWorkoutTarget ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current
-                            ? { ...current, weeklyWorkoutTarget: Number(event.target.value) || 0 }
-                            : current,
-                        )
-                      }
-                      placeholder="Weekly WO"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Goals
+                    </p>
+                    {goalsDirty ? (
+                      <span className="text-[10px] uppercase tracking-[0.14em] text-[#facc15]">
+                        Unsaved
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      value={goalsDraft?.weekdayWakeTime ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current ? { ...current, weekdayWakeTime: event.target.value } : current,
-                        )
-                      }
-                      placeholder="Weekday wake"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={goalsDraft?.weekendWakeTime ?? ""}
-                      onChange={(event) =>
-                        setGoalsDraft((current) =>
-                          current ? { ...current, weekendWakeTime: event.target.value } : current,
-                        )
-                      }
-                      placeholder="Weekend wake"
-                      className="rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
-                    />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="text-xs text-[var(--muted)]">
+                      Sleep Target (hours)
+                      <input
+                        value={goalsDraft?.sleepHoursTarget ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("sleepHoursTarget", event.target.value)
+                        }
+                        inputMode="decimal"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.sleepHoursTarget ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.sleepHoursTarget}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Study Baseline (hours)
+                      <input
+                        value={goalsDraft?.baselineStudyHours ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("baselineStudyHours", event.target.value)
+                        }
+                        inputMode="decimal"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.baselineStudyHours ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.baselineStudyHours}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekly Run Target
+                      <input
+                        value={goalsDraft?.weeklyWorkoutTarget ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weeklyWorkoutTarget", event.target.value)
+                        }
+                        inputMode="numeric"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weeklyWorkoutTarget ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weeklyWorkoutTarget}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Age
+                      <input
+                        value={goalsDraft?.ageYears ?? ""}
+                        onChange={(event) => handleGoalFieldChange("ageYears", event.target.value)}
+                        inputMode="numeric"
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.ageYears ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.ageYears}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekday Wake Time
+                      <input
+                        type="time"
+                        value={goalsDraft?.weekdayWakeTime ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weekdayWakeTime", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weekdayWakeTime ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weekdayWakeTime}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Weekend Wake Time
+                      <input
+                        type="time"
+                        value={goalsDraft?.weekendWakeTime ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("weekendWakeTime", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.weekendWakeTime ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.weekendWakeTime}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Preferred Bedtime Start
+                      <input
+                        type="time"
+                        value={goalsDraft?.preferredBedtimeStart ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("preferredBedtimeStart", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.preferredBedtimeStart ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.preferredBedtimeStart}
+                        </span>
+                      ) : null}
+                    </label>
+                    <label className="text-xs text-[var(--muted)]">
+                      Preferred Bedtime End
+                      <input
+                        type="time"
+                        value={goalsDraft?.preferredBedtimeEnd ?? ""}
+                        onChange={(event) =>
+                          handleGoalFieldChange("preferredBedtimeEnd", event.target.value)
+                        }
+                        className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                      />
+                      {goalsErrors.preferredBedtimeEnd ? (
+                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                          {goalsErrors.preferredBedtimeEnd}
+                        </span>
+                      ) : null}
+                    </label>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveGoals}
-                    disabled={!goalsDraft || goalsSaving}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
-                  >
-                    {goalsSaving ? "Saving..." : "Save Goals"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveGoals}
+                      disabled={!goalsDraft || goalsSaving || !goalsDirty}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      {goalsSaving ? "Saving..." : "Save Goals"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetGoalsDraft}
+                      disabled={!goalsDraft || goalsSaving || !goalsDirty}
+                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    >
+                      Reset
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
@@ -2483,15 +3035,7 @@ export default function StudyDashboard() {
                           {workouts.length}
                         </span>
                       ) : null}
-                      {examList.length > 0 ? (
-                        <span
-                          className="pointer-events-none absolute inset-[-2px] rounded border"
-                          style={{
-                            borderColor: data.settings.examHighlightColor,
-                            boxShadow: `0 0 10px ${data.settings.examHighlightColor}`,
-                          }}
-                        />
-                      ) : null}
+                      <ExamSubjectRings exams={examList} roundedClassName="rounded" />
                       {isPast ? (
                         <span className="pointer-events-none absolute inset-0 rounded border border-black/55" />
                       ) : null}
@@ -2515,14 +3059,17 @@ export default function StudyDashboard() {
                 </div>
               ))}
               <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                <span
-                  className="inline-block h-3 w-3 rounded border"
-                  style={{
-                    borderColor: data.settings.examHighlightColor,
-                    boxShadow: `0 0 8px ${data.settings.examHighlightColor}`,
-                  }}
-                />
-                <span>Exam Day Highlight</span>
+                <span className="relative inline-block h-3.5 w-3.5 rounded border border-white/15 bg-black/20">
+                  <span
+                    className="absolute rounded border"
+                    style={{ inset: "1px", borderColor: SUBJECTS[0].color }}
+                  />
+                  <span
+                    className="absolute rounded border"
+                    style={{ inset: "3px", borderColor: SUBJECTS[2].color }}
+                  />
+                </span>
+                <span>Exam Rings (subject colors)</span>
               </div>
             </div>
           </div>
@@ -2568,10 +3115,12 @@ export default function StudyDashboard() {
             selectedWorkoutDetail={selectedWorkoutDetail}
             loadingWorkoutDetail={loadingWorkoutDetail}
             onSelectWorkout={(workoutId) => void handleSelectWorkout(workoutId)}
+            onUpdateWorkoutDifficulty={handleUpdateWorkoutDifficulty}
             rawFiles={data.healthRawFiles}
           />
         ) : null}
       </FocusModal>
+      </div>
     </div>
   );
 }
@@ -2594,6 +3143,311 @@ function MetricBar({ label, value }: { label: string; value: number }) {
         />
       </div>
     </div>
+  );
+}
+
+function formatRelativeTimestamp(value: string | null, nowMs: number): string {
+  if (!value) {
+    return "Never";
+  }
+
+  const timestampMs = new Date(value).getTime();
+  if (!Number.isFinite(timestampMs)) {
+    return "Never";
+  }
+
+  const diffMs = nowMs - timestampMs;
+  const absDiffMs = Math.abs(diffMs);
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (absDiffMs < minuteMs) {
+    return "just now";
+  }
+
+  if (absDiffMs < hourMs) {
+    const minutes = Math.round(absDiffMs / minuteMs);
+    return diffMs >= 0 ? `${minutes}m ago` : `in ${minutes}m`;
+  }
+
+  if (absDiffMs < dayMs) {
+    const hours = Math.round(absDiffMs / hourMs);
+    return diffMs >= 0 ? `${hours}h ago` : `in ${hours}h`;
+  }
+
+  const days = Math.round(absDiffMs / dayMs);
+  return diffMs >= 0 ? `${days}d ago` : `in ${days}d`;
+}
+
+function StatusStrip({
+  healthUpdatedAt,
+  workoutsUpdatedAt,
+  lastLoginAt,
+  studyStreakDays,
+  nowMs,
+}: {
+  healthUpdatedAt: string | null;
+  workoutsUpdatedAt: string | null;
+  lastLoginAt: string | null;
+  studyStreakDays: number;
+  nowMs: number;
+}) {
+  return (
+    <header className="h-6 border-b border-[var(--panel-border)] bg-[var(--panel)] px-3 md:px-4">
+      <div className="flex h-full items-center gap-4 overflow-x-auto text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+        <StatusStripItem
+          label="Health Updated"
+          value={formatRelativeTimestamp(healthUpdatedAt, nowMs)}
+          absoluteValue={healthUpdatedAt}
+        />
+        <StatusStripItem
+          label="Workouts Updated"
+          value={formatRelativeTimestamp(workoutsUpdatedAt, nowMs)}
+          absoluteValue={workoutsUpdatedAt}
+        />
+        <StatusStripItem
+          label="Last Login"
+          value={formatRelativeTimestamp(lastLoginAt, nowMs)}
+          absoluteValue={lastLoginAt}
+        />
+        <StatusStripItem label="Study Streak" value={`${studyStreakDays}d`} />
+      </div>
+    </header>
+  );
+}
+
+function StatusStripItem({
+  label,
+  value,
+  absoluteValue,
+}: {
+  label: string;
+  value: string;
+  absoluteValue?: string | null;
+}) {
+  return (
+    <span
+      className="whitespace-nowrap"
+      title={absoluteValue ? formatDateTime(absoluteValue) : undefined}
+    >
+      {label}: {value}
+    </span>
+  );
+}
+
+function FlashcardRail({
+  currentCard,
+  cardDueNow,
+  cardCritical,
+  snapshot,
+  onCreateFlashcard,
+  onGradeFlashcard,
+}: {
+  currentCard: Flashcard | null;
+  cardDueNow: boolean;
+  cardCritical: boolean;
+  snapshot: FlashcardSessionSnapshot | null;
+  onCreateFlashcard: (question: string, answer: string) => Promise<void>;
+  onGradeFlashcard: (cardId: string, outcome: FlashcardOutcome) => Promise<void>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [questionDraft, setQuestionDraft] = useState("");
+  const [answerDraft, setAnswerDraft] = useState("");
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [cardUi, setCardUi] = useState<{
+    cardId: string | null;
+    flipped: boolean;
+    grading: boolean;
+  }>({
+    cardId: null,
+    flipped: false,
+    grading: false,
+  });
+
+  const activeCardId = currentCard?.id ?? null;
+  const flipped = cardUi.cardId === activeCardId ? cardUi.flipped : false;
+  const grading = cardUi.cardId === activeCardId ? cardUi.grading : false;
+
+  const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = questionDraft.trim();
+    const answer = answerDraft.trim();
+
+    if (!question || !answer) {
+      setPanelError("Question and answer are required.");
+      return;
+    }
+
+    setPanelError(null);
+    await onCreateFlashcard(question, answer);
+    setQuestionDraft("");
+    setAnswerDraft("");
+    setAdding(false);
+  };
+
+  const handleGrade = async (outcome: FlashcardOutcome) => {
+    if (!currentCard || grading) {
+      return;
+    }
+
+    const currentCardId = currentCard.id;
+    setCardUi({
+      cardId: currentCardId,
+      flipped: true,
+      grading: true,
+    });
+
+    try {
+      await onGradeFlashcard(currentCardId, outcome);
+    } finally {
+      setCardUi((previous) =>
+        previous.cardId === currentCardId
+          ? {
+              ...previous,
+              grading: false,
+            }
+          : previous,
+      );
+    }
+  };
+
+  return (
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Flashcards</p>
+          <h2 className="text-sm font-semibold">Always Ready Review</h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAdding((current) => !current)}
+          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+        >
+          {adding ? "Cancel" : "+ Add"}
+        </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+          Critical Today: {snapshot?.criticalTodayCount ?? 0}
+        </span>
+        <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+          Due Now: {snapshot?.dueNowCount ?? 0}
+        </span>
+        {snapshot && snapshot.optionalCount > 0 ? (
+          <span className="rounded border border-[var(--panel-border)] px-2 py-1">
+            Optional: {snapshot.optionalCount}
+          </span>
+        ) : null}
+      </div>
+
+      {adding ? (
+        <form
+          onSubmit={handleCreate}
+          className="mb-3 space-y-2 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
+        >
+          <input
+            value={questionDraft}
+            onChange={(event) => setQuestionDraft(event.target.value)}
+            placeholder="Question"
+            className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+          />
+          <textarea
+            value={answerDraft}
+            onChange={(event) => setAnswerDraft(event.target.value)}
+            placeholder="Answer"
+            className="h-16 w-full resize-none rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+          />
+          {panelError ? (
+            <p className="text-xs text-[#ff9896]">{panelError}</p>
+          ) : (
+            <p className="text-xs text-[var(--muted)]">
+              This card becomes reviewable instantly after save.
+            </p>
+          )}
+          <button
+            type="submit"
+            className="w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+          >
+            Save Flashcard
+          </button>
+        </form>
+      ) : null}
+
+      <div className="min-h-0 flex-1">
+        {currentCard ? (
+          <div className="flex h-full min-h-0 flex-col">
+            <button
+              type="button"
+              onClick={() =>
+                setCardUi({
+                  cardId: activeCardId,
+                  flipped: true,
+                  grading: false,
+                })
+              }
+              className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-4 text-left transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+            >
+              {!cardCritical ? (
+                <span className="absolute right-3 top-3 rounded border border-[var(--panel-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Optional
+                </span>
+              ) : null}
+              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                {flipped ? "Answer" : "Question"}
+              </p>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
+                {flipped ? currentCard.answer : currentCard.question}
+              </p>
+              {!flipped ? (
+                <p className="mt-4 text-xs text-[var(--muted)]">
+                  Click to flip and reveal the answer.
+                </p>
+              ) : null}
+              {flipped ? (
+                <p className="mt-4 text-xs text-[var(--muted)]">
+                  Grade only after you genuinely tried to recall.
+                </p>
+              ) : null}
+            </button>
+
+            {flipped ? (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleGrade("incorrect")}
+                  disabled={grading}
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#ff8787] hover:text-[#ffb0b0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                >
+                  Incorrect
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleGrade("correct")}
+                  disabled={grading}
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#7de9a1] hover:text-[#b8ffd0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                >
+                  Correct
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-[var(--muted)]">
+                {cardDueNow
+                  ? "Due now. Flip to answer and grade."
+                  : "Not due yet. Optional review only."}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-[var(--panel-border)] bg-[var(--panel-soft)] p-4 text-center">
+            <p className="text-sm text-[var(--muted)]">
+              Add your first flashcard. Your next question will always be ready here.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2655,7 +3509,7 @@ function TodoRail({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
@@ -2791,7 +3645,7 @@ function TodoRail({
           <p className="text-sm text-[var(--muted)]">No todos in this view.</p>
         ) : null}
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -2904,7 +3758,12 @@ function HealthRail({
               <p className="mt-1 text-xs text-[var(--muted)]">
                 {formatOptionalNumber(workout.distanceKm, "km", 2)} •{" "}
                 {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "bpm", 0)} •{" "}
-                Confidence {Math.round((workout.mergeConfidence || 0) * 100)}%
+                Data Quality {Math.round((workout.mergeConfidence || 0) * 100)}%
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Difficulty {(workout.difficultyEffective ?? workout.difficultyAuto ?? 0).toFixed(0)}
+                /10
+                {typeof workout.difficultyUser === "number" ? " (manual)" : " (auto)"}
               </p>
             </button>
           ))
@@ -2924,6 +3783,7 @@ function HealthExplorer({
   selectedWorkoutDetail,
   loadingWorkoutDetail,
   onSelectWorkout,
+  onUpdateWorkoutDifficulty,
   rawFiles,
 }: {
   todayReadiness: DailyReadiness | null;
@@ -2935,12 +3795,81 @@ function HealthExplorer({
   selectedWorkoutDetail: WorkoutDetail | null;
   loadingWorkoutDetail: boolean;
   onSelectWorkout: (workoutId: string) => void;
+  onUpdateWorkoutDifficulty: (workoutId: string, difficultyUser: number | null) => Promise<void>;
   rawFiles: AppData["healthRawFiles"];
 }) {
   const sleepScores30 = sleepTrend30.map((item) => readinessByDate[item.date]?.sleepScore || 0);
   const workouts30 = workouts.slice(0, 30);
   const selectedWorkout =
     workouts.find((workout) => workout.id === selectedWorkoutId) || workouts[0] || null;
+  const detailForSelectedWorkout =
+    selectedWorkout && selectedWorkoutDetail?.workoutId === selectedWorkout.id
+      ? selectedWorkoutDetail
+      : null;
+  const [difficultyDraft, setDifficultyDraft] = useState("");
+  const [difficultyDirty, setDifficultyDirty] = useState(false);
+  const [difficultySaving, setDifficultySaving] = useState(false);
+  const [difficultyError, setDifficultyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedWorkout) {
+      setDifficultyDraft("");
+      setDifficultyDirty(false);
+      setDifficultyError(null);
+      return;
+    }
+
+    setDifficultyDraft(
+      typeof selectedWorkout.difficultyUser === "number"
+        ? Math.round(selectedWorkout.difficultyUser).toString()
+        : "",
+    );
+    setDifficultyDirty(false);
+    setDifficultyError(null);
+  }, [selectedWorkout]);
+
+  const handleSaveDifficulty = async () => {
+    if (!selectedWorkout) {
+      return;
+    }
+
+    const raw = difficultyDraft.trim();
+    let parsed: number | null = null;
+
+    if (raw.length > 0) {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 1 || value > 10) {
+        setDifficultyError("Difficulty must be between 1 and 10.");
+        return;
+      }
+      parsed = Math.round(value);
+    }
+
+    setDifficultyError(null);
+    setDifficultySaving(true);
+    try {
+      await onUpdateWorkoutDifficulty(selectedWorkout.id, parsed);
+      setDifficultyDirty(false);
+      setDifficultyDraft(parsed === null ? "" : parsed.toString());
+    } finally {
+      setDifficultySaving(false);
+    }
+  };
+
+  const handleClearDifficulty = async () => {
+    if (!selectedWorkout) {
+      return;
+    }
+    setDifficultyError(null);
+    setDifficultySaving(true);
+    try {
+      await onUpdateWorkoutDifficulty(selectedWorkout.id, null);
+      setDifficultyDraft("");
+      setDifficultyDirty(false);
+    } finally {
+      setDifficultySaving(false);
+    }
+  };
 
   return (
     <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[1.6fr_minmax(0,1fr)]">
@@ -2949,7 +3878,10 @@ function HealthExplorer({
           <MetricTile label="Readiness" value={`${Math.round(todayReadiness?.score || 0)} / 100`} />
           <MetricTile label="Sleep Score" value={`${Math.round(todayReadiness?.sleepScore || 0)}`} />
           <MetricTile label="Sleep Debt" value={`${(todayReadiness?.sleepDebtHours || 0).toFixed(2)}h`} />
-          <MetricTile label="Tonight Bedtime" value={todayRecommendation?.bedtimeLabel || "--:--"} />
+          <MetricTile
+            label="Tonight Bedtime"
+            value={todayRecommendation?.bedtimeRangeLabel || "--:--"}
+          />
         </section>
 
         <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
@@ -3011,7 +3943,7 @@ function HealthExplorer({
               Workout Timeline
             </p>
             <p className="text-xs text-[var(--muted)]">
-              Study target {todayRecommendation?.studyTargetHours?.toFixed(1) || "0.0"}h
+              {todayRecommendation?.trainingLabel || "Training recommendation unavailable"}
             </p>
           </div>
           <div className="overflow-auto">
@@ -3023,7 +3955,9 @@ function HealthExplorer({
                   <th className="px-1 py-1 text-right">Duration</th>
                   <th className="px-1 py-1 text-right">Distance</th>
                   <th className="px-1 py-1 text-right">Avg HR</th>
-                  <th className="px-1 py-1 text-right">Energy</th>
+                  <th className="px-1 py-1 text-right">Auto</th>
+                  <th className="px-1 py-1 text-right">Your</th>
+                  <th className="px-1 py-1 text-right">Effective</th>
                 </tr>
               </thead>
               <tbody>
@@ -3042,12 +3976,24 @@ function HealthExplorer({
                     <td className="px-1 py-1 text-right">
                       {formatOptionalNumber(workout.hrAvg || workout.avgHeartRate, "", 0)}
                     </td>
-                    <td className="px-1 py-1 text-right">{formatOptionalNumber(workout.activeEnergyKj, "kJ", 0)}</td>
+                    <td className="px-1 py-1 text-right">
+                      {formatOptionalNumber(workout.difficultyAuto, "", 0)}
+                    </td>
+                    <td className="px-1 py-1 text-right">
+                      {typeof workout.difficultyUser === "number"
+                        ? Math.round(workout.difficultyUser).toString()
+                        : "--"}
+                    </td>
+                    <td className="px-1 py-1 text-right">
+                      {(workout.difficultyEffective ?? workout.difficultyAuto ?? 0).toFixed(0)}
+                      {typeof workout.difficultyUser === "number" ? "*" : ""}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="mt-1 text-[11px] text-[var(--muted)]">* = manual difficulty override</p>
         </section>
       </div>
 
@@ -3057,70 +4003,177 @@ function HealthExplorer({
         </p>
         {loadingWorkoutDetail ? (
           <p className="mt-2 text-sm text-[var(--muted)]">Loading workout details...</p>
-        ) : selectedWorkoutDetail ? (
+        ) : selectedWorkout ? (
           <div className="mt-2 space-y-3">
             <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2 text-xs">
-              <p className="font-semibold text-[var(--text)]">{formatWorkoutDetailLabel(selectedWorkoutDetail)}</p>
-              <p className="mt-1 text-[var(--muted)]">
-                {formatDateTime(selectedWorkoutDetail.startedAt)} to{" "}
-                {formatDateTime(selectedWorkoutDetail.endedAt)}
+              <p className="font-semibold text-[var(--text)]">
+                {detailForSelectedWorkout
+                  ? formatWorkoutDetailLabel(detailForSelectedWorkout)
+                  : formatWorkoutLabel(selectedWorkout)}
               </p>
               <p className="mt-1 text-[var(--muted)]">
-                {selectedWorkoutDetail.durationMin.toFixed(0)}m • Stream count{" "}
-                {selectedWorkoutDetail.streamCount} • Confidence{" "}
-                {Math.round(selectedWorkoutDetail.mergeConfidence * 100)}%
+                {formatDateTime(selectedWorkout.startedAt)} to{" "}
+                {formatDateTime(selectedWorkout.endedAt)}
               </p>
               <p className="mt-1 text-[var(--muted)]">
-                {formatOptionalNumber(selectedWorkoutDetail.distanceKm, "km", 2)} •{" "}
-                {formatOptionalNumber(selectedWorkoutDetail.hrAvg, "bpm", 0)} •{" "}
-                {formatOptionalNumber(selectedWorkoutDetail.activeEnergyKj, "kJ", 0)}
+                {selectedWorkout.durationMin.toFixed(0)}m
+                {detailForSelectedWorkout ? (
+                  <>
+                    {" "}
+                    • Stream count {detailForSelectedWorkout.streamCount} • Data Quality{" "}
+                    {Math.round(detailForSelectedWorkout.mergeConfidence * 100)}%
+                  </>
+                ) : (
+                  <>
+                    {" "}
+                    • Data Quality {Math.round((selectedWorkout.mergeConfidence || 0) * 100)}%
+                  </>
+                )}
               </p>
+              <p className="mt-1 text-[var(--muted)]">
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.distanceKm ?? selectedWorkout.distanceKm,
+                  "km",
+                  2,
+                )}{" "}
+                •{" "}
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.hrAvg ??
+                    selectedWorkout.hrAvg ??
+                    selectedWorkout.avgHeartRate,
+                  "bpm",
+                  0,
+                )}{" "}
+                •{" "}
+                {formatOptionalNumber(
+                  detailForSelectedWorkout?.activeEnergyKj ?? selectedWorkout.activeEnergyKj,
+                  "kJ",
+                  0,
+                )}
+              </p>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--muted)]">
+                <span>
+                  Auto:{" "}
+                  {formatOptionalNumber(
+                    selectedWorkout?.difficultyAuto,
+                    "",
+                    0,
+                  )}
+                </span>
+                <span>
+                  Your:{" "}
+                  {typeof selectedWorkout?.difficultyUser === "number"
+                    ? Math.round(selectedWorkout.difficultyUser).toString()
+                    : "--"}
+                </span>
+                <span>
+                  Effective:{" "}
+                  {(selectedWorkout?.difficultyEffective ??
+                    selectedWorkout?.difficultyAuto ??
+                    0).toFixed(0)}
+                  /10
+                </span>
+              </div>
+              <div className="mt-2 rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                  Your Difficulty Override (1-10)
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <input
+                    value={difficultyDraft}
+                    onChange={(event) => {
+                      setDifficultyDraft(event.target.value);
+                      setDifficultyDirty(true);
+                      setDifficultyError(null);
+                    }}
+                    inputMode="numeric"
+                    placeholder="Auto"
+                    className="w-20 rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDifficulty()}
+                    disabled={!selectedWorkout || difficultySaving || !difficultyDirty}
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    {difficultySaving ? "Saving..." : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleClearDifficulty()}
+                    disabled={
+                      !selectedWorkout ||
+                      difficultySaving ||
+                      typeof selectedWorkout.difficultyUser !== "number"
+                    }
+                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  >
+                    Clear Override
+                  </button>
+                </div>
+                {difficultyError ? (
+                  <p className="mt-1 text-[11px] text-[#ff9896]">{difficultyError}</p>
+                ) : (
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">
+                    Effective difficulty feeds future training-load recommendations.
+                  </p>
+                )}
+              </div>
             </div>
 
-            <SeriesPanel
-              title="Heart Rate Series"
-              rows={selectedWorkoutDetail.heartRateSeries || []}
-              extractValue={(row) => row.avg ?? row.max ?? row.min}
-              color="#ff8f8f"
-              unit="bpm"
-            />
-            <SeriesPanel
-              title="Distance Series"
-              rows={selectedWorkoutDetail.distanceSeries || []}
-              extractValue={(row) => row.value}
-              color="#6bd4ff"
-              unit="km"
-            />
-            <SeriesPanel
-              title="Step Series"
-              rows={selectedWorkoutDetail.stepSeries || []}
-              extractValue={(row) => row.value}
-              color="#ffe27a"
-              unit="steps"
-            />
-            <SeriesPanel
-              title="Active Energy Series"
-              rows={selectedWorkoutDetail.activeEnergySeries || []}
-              extractValue={(row) => row.value}
-              color="#8af58b"
-              unit="kJ"
-            />
+            {detailForSelectedWorkout ? (
+              <>
+                <SeriesPanel
+                  title="Heart Rate Series"
+                  rows={detailForSelectedWorkout.heartRateSeries || []}
+                  extractValue={(row) => row.avg ?? row.max ?? row.min}
+                  color="#ff8f8f"
+                  unit="bpm"
+                />
+                <SeriesPanel
+                  title="Distance Series"
+                  rows={detailForSelectedWorkout.distanceSeries || []}
+                  extractValue={(row) => row.value}
+                  color="#6bd4ff"
+                  unit="km"
+                />
+                <SeriesPanel
+                  title="Step Series"
+                  rows={detailForSelectedWorkout.stepSeries || []}
+                  extractValue={(row) => row.value}
+                  color="#ffe27a"
+                  unit="steps"
+                />
+                <SeriesPanel
+                  title="Active Energy Series"
+                  rows={detailForSelectedWorkout.activeEnergySeries || []}
+                  extractValue={(row) => row.value}
+                  color="#8af58b"
+                  unit="kJ"
+                />
 
-            <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
-                Stream Provenance
+                <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Stream Provenance
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Key: {detailForSelectedWorkout.workoutKey}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                    {detailForSelectedWorkout.sourceFiles.map((file) => (
+                      <li key={`source-${file}`} className="truncate">
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-[var(--muted)]">
+                Detailed workout streams are unavailable for this session, but difficulty override
+                and recommendation logic still work.
               </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Key: {selectedWorkoutDetail.workoutKey}
-              </p>
-              <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
-                {selectedWorkoutDetail.sourceFiles.map((file) => (
-                  <li key={`source-${file}`} className="truncate">
-                    {file}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            )}
           </div>
         ) : (
           <p className="mt-2 text-sm text-[var(--muted)]">
@@ -3429,6 +4482,34 @@ function formatWorkoutDetailLabel(workout: WorkoutDetail): string {
     workout.workoutDisplayLabel ||
     workout.workoutNameRaw ||
     `${workout.workoutType[0].toUpperCase()}${workout.workoutType.slice(1)} Workout`
+  );
+}
+
+function ExamSubjectRings({
+  exams,
+  roundedClassName,
+}: {
+  exams: Exam[];
+  roundedClassName: string;
+}) {
+  const subjectIds = getExamSubjectIds(exams);
+  if (subjectIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className={`pointer-events-none absolute inset-0 ${roundedClassName}`}>
+      {subjectIds.map((subjectId, index) => (
+        <span
+          key={`exam-ring-${subjectId}-${index}`}
+          className={`absolute border-2 ${roundedClassName}`}
+          style={{
+            inset: `${1 + index * 2}px`,
+            borderColor: SUBJECT_BY_ID[subjectId].color,
+          }}
+        />
+      ))}
+    </span>
   );
 }
 

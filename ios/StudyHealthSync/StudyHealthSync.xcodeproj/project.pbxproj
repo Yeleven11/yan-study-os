@@ -1,0 +1,608 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		1C9877D42F4281BC00ECEA7F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1C9877BC2F4281B900ECEA7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1C9877C32F4281B900ECEA7F;
+			remoteInfo = StudyHealthSync;
+		};
+		1C9877DE2F4281BC00ECEA7F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1C9877BC2F4281B900ECEA7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1C9877C32F4281B900ECEA7F;
+			remoteInfo = StudyHealthSync;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1C9877C42F4281B900ECEA7F /* StudyHealthSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StudyHealthSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1C9877D32F4281BC00ECEA7F /* StudyHealthSyncTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudyHealthSyncTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1C9877DD2F4281BC00ECEA7F /* StudyHealthSyncUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudyHealthSyncUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2A9000012F4281B900ECEA7F /* Config/Env.shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Env.shared.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		1C9877F22F42868300ECEA7F /* Exceptions for "StudyHealthSync" folder in "StudyHealthSync" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 1C9877C32F4281B900ECEA7F /* StudyHealthSync */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		1C9877C62F4281B900ECEA7F /* StudyHealthSync */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1C9877F22F42868300ECEA7F /* Exceptions for "StudyHealthSync" folder in "StudyHealthSync" target */,
+			);
+			path = StudyHealthSync;
+			sourceTree = "<group>";
+		};
+		1C9877D62F4281BC00ECEA7F /* StudyHealthSyncTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StudyHealthSyncTests;
+			sourceTree = "<group>";
+		};
+		1C9877E02F4281BC00ECEA7F /* StudyHealthSyncUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StudyHealthSyncUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C9877C12F4281B900ECEA7F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877D02F4281BC00ECEA7F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877DA2F4281BC00ECEA7F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1C9877BB2F4281B900ECEA7F = {
+			isa = PBXGroup;
+			children = (
+				2A9000012F4281B900ECEA7F /* Config/Env.shared.xcconfig */,
+				1C9877C62F4281B900ECEA7F /* StudyHealthSync */,
+				1C9877D62F4281BC00ECEA7F /* StudyHealthSyncTests */,
+				1C9877E02F4281BC00ECEA7F /* StudyHealthSyncUITests */,
+				1C9877C52F4281B900ECEA7F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1C9877C52F4281B900ECEA7F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1C9877C42F4281B900ECEA7F /* StudyHealthSync.app */,
+				1C9877D32F4281BC00ECEA7F /* StudyHealthSyncTests.xctest */,
+				1C9877DD2F4281BC00ECEA7F /* StudyHealthSyncUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1C9877C32F4281B900ECEA7F /* StudyHealthSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C9877E72F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSync" */;
+			buildPhases = (
+				1C9877C02F4281B900ECEA7F /* Sources */,
+				1C9877C12F4281B900ECEA7F /* Frameworks */,
+				1C9877C22F4281B900ECEA7F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1C9877C62F4281B900ECEA7F /* StudyHealthSync */,
+			);
+			name = StudyHealthSync;
+			packageProductDependencies = (
+			);
+			productName = StudyHealthSync;
+			productReference = 1C9877C42F4281B900ECEA7F /* StudyHealthSync.app */;
+			productType = "com.apple.product-type.application";
+		};
+		1C9877D22F4281BC00ECEA7F /* StudyHealthSyncTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C9877EA2F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSyncTests" */;
+			buildPhases = (
+				1C9877CF2F4281BC00ECEA7F /* Sources */,
+				1C9877D02F4281BC00ECEA7F /* Frameworks */,
+				1C9877D12F4281BC00ECEA7F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1C9877D52F4281BC00ECEA7F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1C9877D62F4281BC00ECEA7F /* StudyHealthSyncTests */,
+			);
+			name = StudyHealthSyncTests;
+			packageProductDependencies = (
+			);
+			productName = StudyHealthSyncTests;
+			productReference = 1C9877D32F4281BC00ECEA7F /* StudyHealthSyncTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		1C9877DC2F4281BC00ECEA7F /* StudyHealthSyncUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C9877ED2F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSyncUITests" */;
+			buildPhases = (
+				1C9877D92F4281BC00ECEA7F /* Sources */,
+				1C9877DA2F4281BC00ECEA7F /* Frameworks */,
+				1C9877DB2F4281BC00ECEA7F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1C9877DF2F4281BC00ECEA7F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1C9877E02F4281BC00ECEA7F /* StudyHealthSyncUITests */,
+			);
+			name = StudyHealthSyncUITests;
+			packageProductDependencies = (
+			);
+			productName = StudyHealthSyncUITests;
+			productReference = 1C9877DD2F4281BC00ECEA7F /* StudyHealthSyncUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1C9877BC2F4281B900ECEA7F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					1C9877C32F4281B900ECEA7F = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					1C9877D22F4281BC00ECEA7F = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 1C9877C32F4281B900ECEA7F;
+					};
+					1C9877DC2F4281BC00ECEA7F = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 1C9877C32F4281B900ECEA7F;
+					};
+				};
+			};
+			buildConfigurationList = 1C9877BF2F4281B900ECEA7F /* Build configuration list for PBXProject "StudyHealthSync" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1C9877BB2F4281B900ECEA7F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1C9877C52F4281B900ECEA7F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1C9877C32F4281B900ECEA7F /* StudyHealthSync */,
+				1C9877D22F4281BC00ECEA7F /* StudyHealthSyncTests */,
+				1C9877DC2F4281BC00ECEA7F /* StudyHealthSyncUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1C9877C22F4281B900ECEA7F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877D12F4281BC00ECEA7F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877DB2F4281BC00ECEA7F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1C9877C02F4281B900ECEA7F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877CF2F4281BC00ECEA7F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C9877D92F4281BC00ECEA7F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1C9877D52F4281BC00ECEA7F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1C9877C32F4281B900ECEA7F /* StudyHealthSync */;
+			targetProxy = 1C9877D42F4281BC00ECEA7F /* PBXContainerItemProxy */;
+		};
+		1C9877DF2F4281BC00ECEA7F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1C9877C32F4281B900ECEA7F /* StudyHealthSync */;
+			targetProxy = 1C9877DE2F4281BC00ECEA7F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1C9877E52F4281BC00ECEA7F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1C9877E62F4281BC00ECEA7F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		1C9877E82F4281BC00ECEA7F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9000012F4281B900ECEA7F /* Config/Env.shared.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = StudyHealthSync/StudyHealthSync.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StudyHealthSync/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads your health data to sync training metrics to your private server.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app writes health-related sync metadata for your private workflow.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSync;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1C9877E92F4281BC00ECEA7F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 2A9000012F4281B900ECEA7F /* Config/Env.shared.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = StudyHealthSync/StudyHealthSync.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StudyHealthSync/Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads your health data to sync training metrics to your private server.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app writes health-related sync metadata for your private workflow.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSync;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1C9877EB2F4281BC00ECEA7F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSyncTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StudyHealthSync.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StudyHealthSync";
+			};
+			name = Debug;
+		};
+		1C9877EC2F4281BC00ECEA7F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSyncTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StudyHealthSync.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StudyHealthSync";
+			};
+			name = Release;
+		};
+		1C9877EE2F4281BC00ECEA7F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSyncUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = StudyHealthSync;
+			};
+			name = Debug;
+		};
+		1C9877EF2F4281BC00ECEA7F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = VS63K6WG2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yanborovyk.StudyHealthSyncUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = StudyHealthSync;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1C9877BF2F4281B900ECEA7F /* Build configuration list for PBXProject "StudyHealthSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C9877E52F4281BC00ECEA7F /* Debug */,
+				1C9877E62F4281BC00ECEA7F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1C9877E72F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C9877E82F4281BC00ECEA7F /* Debug */,
+				1C9877E92F4281BC00ECEA7F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1C9877EA2F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSyncTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C9877EB2F4281BC00ECEA7F /* Debug */,
+				1C9877EC2F4281BC00ECEA7F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1C9877ED2F4281BC00ECEA7F /* Build configuration list for PBXNativeTarget "StudyHealthSyncUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C9877EE2F4281BC00ECEA7F /* Debug */,
+				1C9877EF2F4281BC00ECEA7F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1C9877BC2F4281B900ECEA7F /* Project object */;
+}

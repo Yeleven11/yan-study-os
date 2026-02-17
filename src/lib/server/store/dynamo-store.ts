@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
+import { normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
   AppData,
   DailyHealthFact,
@@ -23,14 +24,19 @@ import type {
 import type { DashboardStore } from "./types";
 
 const SETTINGS_PK = "settings";
-const MAX_DAILY_HEALTH_DAYS = 730;
-const MAX_WORKOUTS = 1000;
-const MAX_WORKOUT_DETAILS = 240;
+const MAX_DAILY_HEALTH_DAYS = 180;
+const MAX_WORKOUTS = 240;
+const MAX_WORKOUT_DETAILS = 60;
 const MAX_HEALTH_RAW_FILES = 1000;
-const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 480;
-const MAX_SERIES_POINTS = 480;
+const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 0;
+const MAX_SERIES_POINTS = 180;
+const MAX_SETTINGS_ITEM_BYTES = 330_000;
 
 function takeTail<T>(items: T[], max: number): T[] {
+  if (max <= 0) {
+    return [];
+  }
+
   if (items.length <= max) {
     return items;
   }
@@ -62,6 +68,15 @@ function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): Performan
       typeof goals?.weekendWakeTime === "string" && goals.weekendWakeTime.trim().length > 0
         ? goals.weekendWakeTime
         : defaults.weekendWakeTime,
+    preferredBedtimeStart:
+      typeof goals?.preferredBedtimeStart === "string" &&
+      goals.preferredBedtimeStart.trim().length > 0
+        ? goals.preferredBedtimeStart
+        : defaults.preferredBedtimeStart,
+    preferredBedtimeEnd:
+      typeof goals?.preferredBedtimeEnd === "string" && goals.preferredBedtimeEnd.trim().length > 0
+        ? goals.preferredBedtimeEnd
+        : defaults.preferredBedtimeEnd,
     ageYears:
       typeof goals?.ageYears === "number" && Number.isFinite(goals.ageYears)
         ? goals.ageYears
@@ -257,6 +272,7 @@ function normalizeData(data: AppData): AppData {
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
+    flashcards: normalizeFlashcards(data.flashcards),
     dailyHealth: takeTail(dailyHealth, MAX_DAILY_HEALTH_DAYS),
     workouts: takeTail(workouts, MAX_WORKOUTS),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
@@ -267,6 +283,58 @@ function normalizeData(data: AppData): AppData {
       timezone: data.settings.timezone || "Europe/Berlin",
       examHighlightColor: data.settings.examHighlightColor || "#00F0FF",
     },
+  };
+}
+
+function buildSettingsItem(data: AppData): Record<string, unknown> {
+  return {
+    pk: SETTINGS_PK,
+    timezone: data.settings.timezone,
+    examHighlightColor: data.settings.examHighlightColor,
+    exams: data.exams,
+    flashcards: data.flashcards,
+    dailyHealth: data.dailyHealth,
+    workouts: data.workouts,
+    workoutDetails: data.workoutDetails,
+    healthRawFiles: data.healthRawFiles,
+    healthRawRows: data.healthRawRows,
+    goals: data.goals,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function settingsItemSizeBytes(data: AppData): number {
+  return Buffer.byteLength(JSON.stringify(buildSettingsItem(data)), "utf8");
+}
+
+function compactForSettingsItem(data: AppData): AppData {
+  const compactionPlans = [
+    { dailyHealth: 180, workouts: 240, workoutDetails: 60 },
+    { dailyHealth: 120, workouts: 160, workoutDetails: 40 },
+    { dailyHealth: 90, workouts: 120, workoutDetails: 30 },
+    { dailyHealth: 60, workouts: 80, workoutDetails: 20 },
+    { dailyHealth: 30, workouts: 50, workoutDetails: 10 },
+    { dailyHealth: 0, workouts: 30, workoutDetails: 0 },
+  ] as const;
+
+  for (const plan of compactionPlans) {
+    const candidate: AppData = {
+      ...data,
+      dailyHealth: takeTail(data.dailyHealth, plan.dailyHealth),
+      workouts: takeTail(data.workouts, plan.workouts),
+      workoutDetails: takeTail(data.workoutDetails, plan.workoutDetails),
+    };
+
+    if (settingsItemSizeBytes(candidate) <= MAX_SETTINGS_ITEM_BYTES) {
+      return candidate;
+    }
+  }
+
+  return {
+    ...data,
+    dailyHealth: [],
+    workouts: [],
+    workoutDetails: [],
   };
 }
 
@@ -303,6 +371,9 @@ function createDynamoStore(): DashboardStore {
       : defaults.exams;
 
     const goals = normalizeGoals(settingsResult.Item?.goals as Partial<PerformanceGoals>);
+    const flashcards = normalizeFlashcards(
+      settingsResult.Item?.flashcards as AppData["flashcards"],
+    );
     const dailyHealth = normalizeDailyHealth(settingsResult.Item?.dailyHealth as DailyHealthFact[]);
     const workouts = normalizeWorkouts(settingsResult.Item?.workouts as WorkoutEntry[]);
     const workoutDetails = normalizeWorkoutDetails(
@@ -315,6 +386,7 @@ function createDynamoStore(): DashboardStore {
       exams,
       studySessions: (sessionsResult.Items || []) as StudySession[],
       todos: (todosResult.Items || []) as TodoItem[],
+      flashcards,
       dailyHealth,
       workouts,
       workoutDetails,
@@ -326,22 +398,16 @@ function createDynamoStore(): DashboardStore {
   }
 
   async function persistSettings(data: AppData): Promise<void> {
+    const compacted = compactForSettingsItem(data);
+    const payloadBytes = settingsItemSizeBytes(compacted);
+    if (payloadBytes > MAX_SETTINGS_ITEM_BYTES) {
+      throw new Error("Dynamo settings item is still too large after compaction");
+    }
+
     await doc.send(
       new PutCommand({
         TableName: settingsTable,
-        Item: {
-          pk: SETTINGS_PK,
-          timezone: data.settings.timezone,
-          examHighlightColor: data.settings.examHighlightColor,
-          exams: data.exams,
-          dailyHealth: data.dailyHealth,
-          workouts: data.workouts,
-          workoutDetails: data.workoutDetails,
-          healthRawFiles: data.healthRawFiles,
-          healthRawRows: data.healthRawRows,
-          goals: data.goals,
-          updatedAt: new Date().toISOString(),
-        },
+        Item: buildSettingsItem(compacted),
       }),
     );
   }

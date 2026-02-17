@@ -159,6 +159,7 @@ Note for Next.js SSR routes on Amplify:
 - `GET|PUT /api/settings/goals`
 - `POST /api/integrations/health/csv` (Bearer auth via `HEALTH_EXPORT_BEARER_TOKEN` or session fallback)
 - `POST /api/integrations/health/import-batch`
+- `POST /api/integrations/health/mobile-sync` (Bearer auth via `MOBILE_HEALTH_SYNC_BEARER_TOKEN` or `HEALTH_EXPORT_BEARER_TOKEN`, session fallback when no token is configured)
 - `GET /api/workouts/:id` (merged workout detail drill-down)
 - `GET /api/health/raw/files` (raw import file transparency)
 
@@ -207,6 +208,7 @@ node scripts/import-health-folder.mjs "/absolute/path/to/export/folder" "http://
 Optional:
 
 - `HEALTH_EXPORT_BEARER_TOKEN` for bearer-auth import mode.
+- `MOBILE_HEALTH_SYNC_BEARER_TOKEN` for native iOS JSON sync mode (optional fallback token for `/api/integrations/health/mobile-sync`).
 - `HEALTH_IMPORT_BASE_URL` to set default API base.
 
 ### Health Auto Export App Setup (REST API)
@@ -254,6 +256,7 @@ Transport compatibility:
 - Supports JSON body `{ csv, filename }`.
 - Supports JSON body `{ files: [{ filename, csv }] }`.
 - Supports raw `text/csv` payloads on `/api/integrations/health/csv`.
+- Supports native iOS JSON sync payloads on `/api/integrations/health/mobile-sync`.
 
 Troubleshooting:
 

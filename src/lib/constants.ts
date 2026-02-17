@@ -235,6 +235,8 @@ export function createDefaultPerformanceGoals(): PerformanceGoals {
     weeklyWorkoutTarget: DEFAULT_WEEKLY_WORKOUT_TARGET,
     weekdayWakeTime: "06:30",
     weekendWakeTime: "08:30",
+    preferredBedtimeStart: "21:00",
+    preferredBedtimeEnd: "22:00",
     ageYears: 18,
   };
 }
@@ -244,6 +246,7 @@ export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
     exams: STARTER_EXAMS,
     studySessions: [],
     todos: [],
+    flashcards: [],
     dailyHealth: [],
     workouts: [],
     workoutDetails: [],
