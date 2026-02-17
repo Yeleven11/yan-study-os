@@ -280,3 +280,73 @@ test("TIB fallback imputes sleep when TST is absent", () => {
   assert.ok(insights.todayScientific.sleepScore > 40);
   assert.ok(insights.todayScientific.fallbackFlags.includes("sleep_tst_from_tib"));
 });
+
+test("scientific output exposes explainability, chart payloads, states, and study guidance", () => {
+  const start = "2026-01-01";
+  const totalDays = 28;
+  const data = makeBaseData(start, totalDays);
+
+  const today = addDays(start, totalDays - 1);
+  addWorkout(data, {
+    id: "schema-run",
+    date: today,
+    durationMin: 42,
+    avgHr: 152,
+    distanceKm: 8,
+  });
+  addStudySession(data, {
+    id: "schema-study",
+    date: today,
+    startHour: 18,
+    durationMin: 140,
+  });
+
+  data.exams = [
+    {
+      id: "schema-exam",
+      subjectId: "math_aa_hl",
+      title: "Math HL",
+      paper: "Paper 2",
+      startsAt: `${addDays(today, 2)}T09:00:00Z`,
+      importance: 5,
+    },
+  ];
+
+  const insights = buildPerformanceInsights(data, new Date(`${today}T12:00:00Z`));
+  const scientific = insights.todayScientific;
+  const recommendation = insights.todayRecommendation;
+
+  assert.ok(typeof scientific.cardioLoad.state === "string");
+  assert.ok(typeof scientific.cardioLoad.stateScore === "number");
+  assert.ok(Object.keys(scientific.cardioLoad.stateThresholds).length > 0);
+  assert.ok(typeof scientific.cardioLoad.stateRationale === "string");
+
+  assert.ok(typeof scientific.studyTargetLow === "number");
+  assert.ok(typeof scientific.studyTargetHigh === "number");
+  assert.ok(scientific.studyTargetHigh >= scientific.studyTargetLow);
+  assert.ok(scientific.studyRationale.length > 0);
+
+  assert.ok(scientific.chartPayloads.physicalStrain.timestamp.length > 0);
+  assert.ok(
+    typeof scientific.chartPayloads.physicalStrain.rawValue === "number",
+  );
+  assert.ok(
+    typeof scientific.chartPayloads.physicalStrain.normalizedValue === "number",
+  );
+  assert.ok(
+    typeof scientific.chartPayloads.physicalStrain.confidence === "number",
+  );
+  assert.ok(
+    Object.keys(scientific.chartPayloads.physicalStrain.componentContributions).length > 0,
+  );
+
+  assert.ok(scientific.explainability.sleep.reasonCodes.length >= 0);
+  assert.ok(scientific.explainability.sleep.userMessages.length > 0);
+  assert.ok(scientific.explainability.physicalRecovery.reasons.length >= 0);
+  assert.ok(scientific.explainability.mentalRecovery.reasons.length >= 0);
+  assert.ok(scientific.explainability.targetRange.studyRationale.length > 0);
+
+  assert.equal(recommendation.studyTargetLow, scientific.studyTargetLow);
+  assert.equal(recommendation.studyTargetHigh, scientific.studyTargetHigh);
+  assert.equal(recommendation.studyRationale, scientific.studyRationale);
+});

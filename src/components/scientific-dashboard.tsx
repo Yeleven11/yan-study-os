@@ -1,6 +1,7 @@
 import type {
   DailyRecommendation,
   DailyReadiness,
+  ScientificChartPointPayload,
   ScientificDailyMetrics,
   WorkoutEntry,
 } from "@/lib/types";
@@ -11,6 +12,13 @@ type ScientificDashboardProps = {
   todayScientific: ScientificDailyMetrics | null;
   scientificSeries: ScientificDailyMetrics[];
   sortedWorkouts: WorkoutEntry[];
+  onExitScientificMode?: () => void;
+};
+
+type TrendPoint = {
+  date: string;
+  value: number;
+  payload: ScientificChartPointPayload;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -30,18 +38,34 @@ function scoreColor(score: number): string {
   return "#f87171";
 }
 
+function formatStateLabel(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatContributionMap(map: Record<string, number>): string {
+  const entries = Object.entries(map);
+  if (entries.length === 0) {
+    return "None";
+  }
+  return entries
+    .map(([key, value]) => `${key}: ${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`)
+    .join(", ");
+}
+
 function GaugeRing({
   label,
   value,
   max,
-  color,
   sublabel,
+  title,
 }: {
   label: string;
   value: number;
   max: number;
-  color?: string;
   sublabel?: string;
+  title?: string;
 }) {
   const normalized = clamp(value / Math.max(max, 1), 0, 1);
   const radius = 30;
@@ -49,7 +73,10 @@ function GaugeRing({
   const stroke = circumference * normalized;
 
   return (
-    <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2">
+    <article
+      className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2"
+      title={title}
+    >
       <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{label}</p>
       <div className="mt-1 flex items-center gap-3">
         <svg width="76" height="76" viewBox="0 0 76 76" role="img" aria-label={`${label} ${value}`}>
@@ -58,7 +85,7 @@ function GaugeRing({
             cx="38"
             cy="38"
             r={radius}
-            stroke={color || scoreColor((value / max) * 100)}
+            stroke={scoreColor((value / max) * 100)}
             strokeWidth="8"
             fill="none"
             strokeLinecap="round"
@@ -83,18 +110,25 @@ function RangeBar({
   low,
   center,
   high,
+  max = 100,
+  title,
 }: {
   label: string;
   low: number;
   center: number;
   high: number;
+  max?: number;
+  title?: string;
 }) {
-  const left = clamp((low / 21) * 100, 0, 100);
-  const mid = clamp((center / 21) * 100, 0, 100);
-  const right = clamp((high / 21) * 100, 0, 100);
+  const left = clamp((low / max) * 100, 0, 100);
+  const mid = clamp((center / max) * 100, 0, 100);
+  const right = clamp((high / max) * 100, 0, 100);
 
   return (
-    <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2">
+    <article
+      className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2"
+      title={title}
+    >
       <div className="flex items-center justify-between">
         <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</p>
         <p className="text-xs text-[var(--muted)]">
@@ -120,15 +154,17 @@ function MetricBar({
   value,
   max,
   color,
+  title,
 }: {
   label: string;
   value: number;
   max?: number;
   color?: string;
+  title?: string;
 }) {
   const ratio = clamp(value / Math.max(max || 100, 1), 0, 1);
   return (
-    <div>
+    <div title={title}>
       <div className="mb-1 flex items-center justify-between text-xs text-[var(--muted)]">
         <span>{label}</span>
         <span>{value.toFixed(2)}</span>
@@ -143,18 +179,35 @@ function MetricBar({
   );
 }
 
+function ReasonList({ label, reasons }: { label: string; reasons: string[] }) {
+  return (
+    <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</p>
+      {reasons.length === 0 ? (
+        <p className="mt-1 text-xs text-[var(--muted)]">No specific reasons triggered.</p>
+      ) : (
+        <div className="mt-1 space-y-1 text-xs text-[var(--muted)]">
+          {reasons.map((reason) => (
+            <p key={`${label}-${reason}`}>• {reason}</p>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function TrendChart({
   title,
-  values,
+  points,
   max,
   color,
 }: {
   title: string;
-  values: number[];
+  points: TrendPoint[];
   max: number;
   color: string;
 }) {
-  if (values.length === 0) {
+  if (points.length === 0) {
     return (
       <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
         <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{title}</p>
@@ -164,25 +217,46 @@ function TrendChart({
   }
 
   const width = 360;
-  const height = 92;
+  const height = 120;
   const padX = 10;
   const padY = 12;
   const plotWidth = width - padX * 2;
   const plotHeight = height - padY * 2;
 
-  const points = values.map((value, index) => {
-    const x = padX + (index / Math.max(values.length - 1, 1)) * plotWidth;
-    const y = padY + (1 - clamp(value / Math.max(max, 1), 0, 1)) * plotHeight;
-    return `${x},${y}`;
+  const chartPoints = points.map((point, index) => {
+    const x = padX + (index / Math.max(points.length - 1, 1)) * plotWidth;
+    const y = padY + (1 - clamp(point.value / Math.max(max, 1), 0, 1)) * plotHeight;
+    return { x, y, ...point };
   });
+
+  const polyline = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
 
   return (
     <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
       <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{title}</p>
-      <svg className="mt-2 h-[92px] w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <polyline fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="1" points={`${padX},${height - padY} ${width - padX},${height - padY}`} />
-        <polyline fill="none" stroke={color} strokeWidth="2" points={points.join(" ")} />
+      <svg className="mt-2 h-[120px] w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <polyline
+          fill="none"
+          stroke="rgba(255,255,255,0.14)"
+          strokeWidth="1"
+          points={`${padX},${height - padY} ${width - padX},${height - padY}`}
+        />
+        <polyline fill="none" stroke={color} strokeWidth="2" points={polyline} />
+        {chartPoints.map((point) => (
+          <circle key={`${title}-${point.date}`} cx={point.x} cy={point.y} r="3" fill={color}>
+            <title>{`${point.date}\nscore: ${point.value.toFixed(2)}\nraw: ${point.payload.rawValue.toFixed(2)}\nnormalized: ${point.payload.normalizedValue.toFixed(3)}\nconfidence: ${(point.payload.confidence * 100).toFixed(0)}%\ncomponents: ${formatContributionMap(point.payload.componentContributions)}`}</title>
+          </circle>
+        ))}
       </svg>
+      <div className="mt-2 grid grid-cols-3 gap-1 text-[11px] text-[var(--muted)]">
+        <p>Min {min.toFixed(1)}</p>
+        <p>Avg {avg.toFixed(1)}</p>
+        <p className="text-right">Max {maxValue.toFixed(1)}</p>
+      </div>
     </article>
   );
 }
@@ -193,6 +267,7 @@ export function ScientificDashboard({
   todayScientific,
   scientificSeries,
   sortedWorkouts,
+  onExitScientificMode,
 }: ScientificDashboardProps) {
   const latest = todayScientific;
   const latestReadiness = todayReadiness;
@@ -214,11 +289,28 @@ export function ScientificDashboard({
     );
   }
 
+  const physicalTrendPoints: TrendPoint[] = tail14.map((item) => ({
+    date: item.date,
+    value: item.physicalStrain,
+    payload: item.chartPayloads.physicalStrain,
+  }));
+
+  const mentalTrendPoints: TrendPoint[] = tail14.map((item) => ({
+    date: item.date,
+    value: item.mentalStrain,
+    payload: item.chartPayloads.mentalStrain,
+  }));
+
+  const sleepExplain = latest.explainability.sleep;
+  const physicalRecoveryExplain = latest.explainability.physicalRecovery;
+  const mentalRecoveryExplain = latest.explainability.mentalRecovery;
+  const targetExplain = latest.explainability.targetRange;
+
   return (
     <>
       <main
         className="grid h-full min-h-0 gap-4 overflow-hidden"
-        style={{ gridTemplateRows: "220px minmax(0, 1fr) 280px" }}
+        style={{ gridTemplateRows: "240px minmax(0, 1fr) 300px" }}
       >
         <section className="overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -226,9 +318,21 @@ export function ScientificDashboard({
               <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Scientific View</p>
               <h2 className="text-sm font-semibold">Systems Snapshot</h2>
             </div>
-            <span className="rounded border border-[var(--panel-border)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Confidence {Math.round(latest.confidence.overall * 100)}%
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded border border-[var(--panel-border)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                Confidence {Math.round(latest.confidence.overall * 100)}%
+              </span>
+              {onExitScientificMode ? (
+                <button
+                  type="button"
+                  onClick={onExitScientificMode}
+                  className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                  title="Return to default dashboard"
+                >
+                  Default View
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid gap-2 lg:grid-cols-5">
@@ -237,20 +341,33 @@ export function ScientificDashboard({
               value={latest.sleepScore}
               max={100}
               sublabel={`${latest.sleepHours.toFixed(1)}h vs need ${latest.sleepNeedHours.toFixed(1)}h`}
+              title={sleepExplain.userMessages.join(" ")}
             />
-            <GaugeRing label="Recovery" value={latest.recoveryScore} max={100} />
-            <GaugeRing label="Mental Recovery" value={latest.mentalRecovery} max={100} />
+            <GaugeRing
+              label="Recovery"
+              value={latest.recoveryScore}
+              max={100}
+              title={physicalRecoveryExplain.userMessages.join(" ")}
+            />
+            <GaugeRing
+              label="Mental Recovery"
+              value={latest.mentalRecovery}
+              max={100}
+              title={mentalRecoveryExplain.userMessages.join(" ")}
+            />
             <RangeBar
-              label="Physical Target (0-21)"
+              label="Physical Target (0-100)"
               low={latest.physicalTarget.low}
               center={latest.physicalTarget.center}
               high={latest.physicalTarget.high}
+              title={targetExplain.physicalReasons.join(" ")}
             />
             <RangeBar
-              label="Mental Target (0-21)"
+              label="Mental Target (0-100)"
               low={latest.mentalTarget.low}
               center={latest.mentalTarget.center}
               high={latest.mentalTarget.high}
+              title={targetExplain.mentalReasons.join(" ")}
             />
           </div>
         </section>
@@ -277,42 +394,61 @@ export function ScientificDashboard({
           <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
             <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
               <p className="text-xs text-[var(--muted)]">{latest.narrative}</p>
-              {latestRecommendation ? (
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Study Range</p>
-                    <p className="mt-1 text-sm font-semibold">
-                      {(latestRecommendation.studyTargetHoursLow || latestRecommendation.studyTargetHours - 0.8).toFixed(1)}-
-                      {(latestRecommendation.studyTargetHoursHigh || latestRecommendation.studyTargetHours + 0.8).toFixed(1)}h
-                    </p>
-                  </div>
-                  <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Workout</p>
-                    <p className="mt-1 text-sm font-semibold">{latestRecommendation.trainingLabel}</p>
-                    <p className="text-[11px] text-[var(--muted)]">{latestRecommendation.workoutSuggestion}</p>
-                  </div>
-                  <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Recovery Ritual</p>
-                    <p className="mt-1 text-sm font-semibold">
-                      {latestRecommendation.recommendedFreshAirMinutes || 30}m outside
-                    </p>
-                    <p className="text-[11px] text-[var(--muted)]">Bedtime {latestRecommendation.bedtimeRangeLabel}</p>
-                  </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2" title={latest.studyRationale}>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Study Guidance</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {latest.studyTargetLow.toFixed(1)}-{latest.studyTargetHigh.toFixed(1)}h
+                  </p>
+                  <p className="text-[11px] text-[var(--muted)]">{latest.studyRationale}</p>
                 </div>
-              ) : null}
+                <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2" title={latest.cardioLoad.stateRationale}>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cardio Load State</p>
+                  <p className="mt-1 text-sm font-semibold">{formatStateLabel(latest.cardioLoad.state)}</p>
+                  <p className="text-[11px] text-[var(--muted)]">State score {latest.cardioLoad.stateScore.toFixed(1)}</p>
+                </div>
+                <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2" title={latest.mentalLoadState.stateRationale}>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Mental Load State</p>
+                  <p className="mt-1 text-sm font-semibold">{formatStateLabel(latest.mentalLoadState.state)}</p>
+                  <p className="text-[11px] text-[var(--muted)]">State score {latest.mentalLoadState.stateScore.toFixed(1)}</p>
+                </div>
+              </div>
             </article>
+
+            <div className="grid gap-2 lg:grid-cols-2">
+              <ReasonList
+                label="Sleep: Why It Is Low/High"
+                reasons={
+                  sleepExplain.lowReasons.length > 0
+                    ? sleepExplain.lowReasons
+                    : sleepExplain.highReasons
+                }
+              />
+              <ReasonList
+                label="Physical Recovery Reasons"
+                reasons={physicalRecoveryExplain.reasons}
+              />
+              <ReasonList
+                label="Mental Recovery Reasons"
+                reasons={mentalRecoveryExplain.reasons}
+              />
+              <ReasonList
+                label="Target Range Reasons"
+                reasons={[...targetExplain.physicalReasons, ...targetExplain.mentalReasons]}
+              />
+            </div>
 
             <div className="grid gap-2 lg:grid-cols-2">
               <TrendChart
                 title="Physical Strain (14d)"
-                values={tail14.map((item) => item.physicalStrain)}
-                max={21}
+                points={physicalTrendPoints}
+                max={100}
                 color="#5BC0EB"
               />
               <TrendChart
                 title="Mental Strain (14d)"
-                values={tail14.map((item) => item.mentalStrain)}
-                max={21}
+                points={mentalTrendPoints}
+                max={100}
                 color="#FDE74C"
               />
             </div>
@@ -328,18 +464,18 @@ export function ScientificDashboard({
 
             <div className="space-y-2">
               <MetricBar label="Raw load" value={latest.physicalRawLoad} max={Math.max(latest.physicalCap, 1)} color="#5BC0EB" />
-              <MetricBar label="Acute load (7d EWMA)" value={latest.physicalAcuteLoad} max={Math.max(latest.physicalCap, 1)} color="#7dd3fc" />
-              <MetricBar label="Chronic load (28d EWMA)" value={latest.physicalChronicLoad} max={Math.max(latest.physicalCap, 1)} color="#38bdf8" />
-              <MetricBar label="Acute:chronic ratio" value={latest.physicalLoadRatio} max={2} color="#fb923c" />
+              <MetricBar label="ATL (7d)" value={latest.physicalAcuteLoad} max={Math.max(latest.physicalCap, 1)} color="#7dd3fc" />
+              <MetricBar label="CTL (42d)" value={latest.physicalChronicLoad} max={Math.max(latest.physicalCap, 1)} color="#38bdf8" />
+              <MetricBar label="AI ((ATL-CTL)/CTLref)" value={latest.components.ai} max={1} color="#fb923c" />
+              <MetricBar label="FI (CTL/CTLref)" value={latest.components.fi} max={2} color="#4ade80" />
             </div>
 
             <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Recovery Inputs (z)</p>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Recovery Inputs</p>
               <div className="mt-2 space-y-2">
-                <MetricBar label="z(LHRV)" value={latest.components.zLhrv + 4} max={8} color="#4ade80" />
+                <MetricBar label="z(HRV)" value={latest.components.zLhrv + 4} max={8} color="#4ade80" />
                 <MetricBar label="z(RHR)" value={latest.components.zRhr + 4} max={8} color="#f87171" />
                 <MetricBar label="z(RR)" value={latest.components.zRr + 4} max={8} color="#fb923c" />
-                <MetricBar label="z(APL)" value={latest.components.zApl + 4} max={8} color="#facc15" />
               </div>
             </div>
           </section>
@@ -352,16 +488,17 @@ export function ScientificDashboard({
 
             <div className="space-y-2">
               <MetricBar label="Raw mental load" value={latest.mentalRawLoad} max={Math.max(latest.mentalCap, 1)} color="#FDE74C" />
-              <MetricBar label="Acute mental (7d EWMA)" value={latest.mentalAcuteLoad} max={Math.max(latest.mentalCap, 1)} color="#fde68a" />
-              <MetricBar label="Chronic mental (28d EWMA)" value={latest.mentalChronicLoad} max={Math.max(latest.mentalCap, 1)} color="#facc15" />
-              <MetricBar label="Pressure scalar" value={latest.pressure} max={1} color="#f97316" />
+              <MetricBar label="MAL (3d)" value={latest.mentalAcuteLoad} max={Math.max(latest.mentalCap, 1)} color="#fde68a" />
+              <MetricBar label="MCL (21d)" value={latest.mentalChronicLoad} max={Math.max(latest.mentalCap, 1)} color="#facc15" />
+              <MetricBar label="Exam urgency" value={latest.pressure} max={1} color="#f97316" />
+              <MetricBar label="MAI ((MAL-MCL)/MCLref)" value={latest.components.mai} max={1} color="#f87171" />
             </div>
 
             <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Underload Boost Terms</p>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Target Boost Terms</p>
               <div className="mt-2 space-y-2">
                 <MetricBar label="Underload" value={latest.components.underload} max={1} color="#facc15" />
-                <MetricBar label="Gate (MRec>=70)" value={latest.components.gate} max={1} color="#22d3ee" />
+                <MetricBar label="Gate" value={latest.components.gate} max={1} color="#22d3ee" />
                 <MetricBar label="G_under" value={latest.components.gUnder} max={1.3} color="#4ade80" />
               </div>
             </div>
@@ -400,6 +537,11 @@ export function ScientificDashboard({
               </div>
             )}
           </div>
+
+          <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-xs text-[var(--muted)]">
+            <p>Cardio thresholds: {formatContributionMap(latest.cardioLoad.stateThresholds)}</p>
+            <p className="mt-1">Mental thresholds: {formatContributionMap(latest.mentalLoadState.stateThresholds)}</p>
+          </div>
         </section>
 
         <section className="min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
@@ -416,6 +558,7 @@ export function ScientificDashboard({
                 <article
                   key={`trace-${item.date}`}
                   className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-1.5"
+                  title={item.narrative}
                 >
                   <p className="font-semibold text-[var(--text)]">{item.date}</p>
                   <p>
@@ -439,6 +582,13 @@ export function ScientificDashboard({
               </div>
             )}
           </div>
+
+          {latestRecommendation ? (
+            <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-xs text-[var(--muted)]">
+              <p>Workout suggestion: {latestRecommendation.workoutSuggestion}</p>
+              <p className="mt-1">Bedtime window: {latestRecommendation.bedtimeRangeLabel}</p>
+            </div>
+          ) : null}
         </section>
       </aside>
     </>
