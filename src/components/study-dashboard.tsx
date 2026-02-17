@@ -24,6 +24,7 @@ import {
   getCountdown,
   getGreetingBucket,
   getNearestExams,
+  OPERATIONAL_DAY_START_HOUR,
   sortTodos,
   toDateKey,
 } from "@/lib/dashboard-utils";
@@ -102,11 +103,17 @@ function createOfflineAction(
   } as OfflineAction;
 }
 
-function toDateKeyInTimezone(dateLike: string | Date, timezone: string): string {
+function toDateKeyInTimezone(
+  dateLike: string | Date,
+  timezone: string,
+  dayStartHour = 0,
+): string {
   const date = typeof dateLike === "string" ? new Date(dateLike) : dateLike;
   if (!Number.isFinite(date.getTime())) {
     return "";
   }
+
+  const shifted = new Date(date.getTime() - dayStartHour * 60 * 60 * 1000);
 
   try {
     const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -115,7 +122,7 @@ function toDateKeyInTimezone(dateLike: string | Date, timezone: string): string 
       month: "2-digit",
       day: "2-digit",
     });
-    const parts = formatter.formatToParts(date);
+    const parts = formatter.formatToParts(shifted);
     const year = parts.find((part) => part.type === "year")?.value;
     const month = parts.find((part) => part.type === "month")?.value;
     const day = parts.find((part) => part.type === "day")?.value;
@@ -127,7 +134,7 @@ function toDateKeyInTimezone(dateLike: string | Date, timezone: string): string 
     // Fall back to local formatter if timezone is invalid.
   }
 
-  return toDateKey(date);
+  return toDateKey(shifted);
 }
 
 function shiftDateKeyByDays(dateKey: string, offsetDays: number): string {
@@ -155,7 +162,11 @@ function computeStudyStreakDays(
       continue;
     }
 
-    const dateKey = toDateKeyInTimezone(session.startedAt, timezone);
+    const dateKey = toDateKeyInTimezone(
+      session.startedAt,
+      timezone,
+      OPERATIONAL_DAY_START_HOUR,
+    );
     if (!dateKey) {
       continue;
     }
@@ -166,7 +177,11 @@ function computeStudyStreakDays(
     );
   }
 
-  const todayKey = toDateKeyInTimezone(now, timezone);
+  const todayKey = toDateKeyInTimezone(
+    now,
+    timezone,
+    OPERATIONAL_DAY_START_HOUR,
+  );
   if (!todayKey) {
     return 0;
   }
@@ -1368,7 +1383,12 @@ export default function StudyDashboard() {
 
   const dashboardTimezone = data?.settings.timezone || "Europe/Berlin";
   const todayKey = useMemo(
-    () => toDateKeyInTimezone(new Date(timePulse), dashboardTimezone),
+    () =>
+      toDateKeyInTimezone(
+        new Date(timePulse),
+        dashboardTimezone,
+        OPERATIONAL_DAY_START_HOUR,
+      ),
     [dashboardTimezone, timePulse],
   );
   const todayLoggedStudySeconds = useMemo(() => {
@@ -1377,7 +1397,13 @@ export default function StudyDashboard() {
     }
 
     return data.studySessions.reduce((sum, session) => {
-      if (toDateKeyInTimezone(session.startedAt, dashboardTimezone) !== todayKey) {
+      if (
+        toDateKeyInTimezone(
+          session.startedAt,
+          dashboardTimezone,
+          OPERATIONAL_DAY_START_HOUR,
+        ) !== todayKey
+      ) {
         return sum;
       }
       return sum + Math.max(0, session.durationSec);
@@ -1387,7 +1413,13 @@ export default function StudyDashboard() {
     if (!activeTimer || !todayKey) {
       return 0;
     }
-    if (toDateKeyInTimezone(activeTimer.startedAt, dashboardTimezone) !== todayKey) {
+    if (
+      toDateKeyInTimezone(
+        activeTimer.startedAt,
+        dashboardTimezone,
+        OPERATIONAL_DAY_START_HOUR,
+      ) !== todayKey
+    ) {
       return 0;
     }
     return getActiveElapsedSeconds(activeTimer, clockNowMs);

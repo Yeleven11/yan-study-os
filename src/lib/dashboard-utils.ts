@@ -16,12 +16,23 @@ import type {
   TodoItem,
 } from "./types";
 
+export const OPERATIONAL_DAY_START_HOUR = 4;
+
 export function toDateKey(dateLike: string | Date): string {
   const date = typeof dateLike === "string" ? new Date(dateLike) : dateLike;
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+export function toOperationalDateKey(
+  dateLike: string | Date,
+  dayStartHour = OPERATIONAL_DAY_START_HOUR,
+): string {
+  const date = typeof dateLike === "string" ? new Date(dateLike) : dateLike;
+  const shifted = new Date(date.getTime() - dayStartHour * 60 * 60 * 1000);
+  return toDateKey(shifted);
 }
 
 export function parseDateKey(dateKey: string): Date {
@@ -141,7 +152,7 @@ export function buildDayAggregates(
   const result: Record<string, DayStudyAggregate> = {};
 
   for (const session of studySessions) {
-    const dateKey = toDateKey(session.startedAt);
+    const dateKey = toOperationalDateKey(session.startedAt);
 
     if (!result[dateKey]) {
       result[dateKey] = {

@@ -4,7 +4,7 @@ import {
   DEFAULT_SLEEP_HOURS_TARGET,
   DEFAULT_WEEKLY_WORKOUT_TARGET,
 } from "@/lib/constants";
-import { toDateKey } from "@/lib/dashboard-utils";
+import { toDateKey, toOperationalDateKey } from "@/lib/dashboard-utils";
 import type {
   AppData,
   DailyHealthFact,
@@ -961,7 +961,7 @@ function extractSeriesHr(detail: WorkoutDetail | undefined): number[] {
 }
 
 function workoutDayKey(workout: WorkoutEntry): string {
-  return toDateKey(workout.startedAt);
+  return toOperationalDateKey(workout.startedAt);
 }
 
 function runModel({
@@ -2349,14 +2349,14 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
   const sessionsByDate = new Map<string, StudySession[]>();
   for (const session of data.studySessions) {
-    const dateKey = toDateKey(session.startedAt);
+    const dateKey = toOperationalDateKey(session.startedAt);
     if (!sessionsByDate.has(dateKey)) {
       sessionsByDate.set(dateKey, []);
     }
     sessionsByDate.get(dateKey)!.push(session);
   }
 
-  const todayKey = toDateKey(now);
+  const todayKey = toOperationalDateKey(now);
   const minimumStart = shiftDate(todayKey, -365);
 
   const dataDateCandidates: string[] = [minimumStart];
@@ -2364,10 +2364,10 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     dataDateCandidates.push(healthDays[0].date);
   }
   if (enrichedWorkouts.length > 0) {
-    dataDateCandidates.push(toDateKey(enrichedWorkouts[0].startedAt));
+    dataDateCandidates.push(workoutDayKey(enrichedWorkouts[0]));
   }
   if (data.studySessions.length > 0) {
-    dataDateCandidates.push(toDateKey(data.studySessions[0].startedAt));
+    dataDateCandidates.push(toOperationalDateKey(data.studySessions[0].startedAt));
   }
 
   dataDateCandidates.sort();
@@ -2720,7 +2720,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
 
   const thisWeekStart = getWeekStartDate(todayKey);
   const weeklyWorkoutCount = enrichedWorkouts.filter((workout) => {
-    const workoutDate = toDateKey(workout.startedAt);
+    const workoutDate = workoutDayKey(workout);
     return workoutDate >= thisWeekStart && workoutDate <= todayKey && isRunSession(workout);
   }).length;
 
