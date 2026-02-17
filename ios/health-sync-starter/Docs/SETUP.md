@@ -46,7 +46,7 @@ In target `Info`, confirm these keys exist:
    - from `ios/health-sync-starter/Config/Env.sample.xcconfig`
    - to `ios/StudyHealthSync/Config/Env.local.xcconfig`
 2. Set values:
-   - `SYNC_BASE_URL=https://<your-domain>`
+   - `SYNC_BASE_URL=https://www.ibdp.study`
    - `SYNC_BEARER_TOKEN=<your-token>`
 3. Keep `Env.shared.xcconfig` committed; keep `Env.local.xcconfig` local.
 

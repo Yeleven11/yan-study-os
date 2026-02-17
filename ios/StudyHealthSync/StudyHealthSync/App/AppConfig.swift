@@ -7,7 +7,7 @@ enum AppConfig {
         if let value = info["SyncBaseURL"] as? String, !value.trimmingCharacters(in: .whitespaces).isEmpty {
             return value
         }
-        return "http://localhost:3000"
+        return "https://www.ibdp.study"
     }()
 
     static let syncEndpointPath: String = {
