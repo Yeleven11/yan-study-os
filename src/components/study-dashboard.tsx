@@ -29,7 +29,7 @@ import {
   toDateKey,
 } from "@/lib/dashboard-utils";
 import { createDashboardRepository } from "@/lib/client/repository";
-import { ScientificDashboard } from "@/components/scientific-dashboard";
+import { ScientificDashboard, ScientificTrendsRail } from "@/components/scientific-dashboard";
 import {
   applyFlashcardGrade,
   buildFlashcardSessionSnapshot,
@@ -2134,21 +2134,30 @@ export default function StudyDashboard() {
               className="grid h-full min-h-0 gap-4"
               style={{ gridTemplateRows: "minmax(0, 1fr) minmax(0, 1fr)" }}
             >
-              <TodoRail
-                activeTodos={activeTodos}
-                archivedTodos={archivedTodos}
-                onAddTodo={handleAddTodo}
-                onArchive={handleArchiveTodo}
-                onRestore={handleRestoreTodo}
-              />
-              <FlashcardRail
-                currentCard={nextFlashcard?.card || null}
-                cardDueNow={Boolean(nextFlashcard?.dueNow)}
-                cardCritical={Boolean(nextFlashcard?.critical)}
-                snapshot={flashcardSnapshot}
-                onCreateFlashcard={handleCreateFlashcard}
-                onGradeFlashcard={handleGradeFlashcard}
-              />
+              {scientificMode ? (
+                <ScientificTrendsRail
+                  scientificSeries={scientificSeries}
+                  healthDaysSorted={healthDaysSorted}
+                />
+              ) : (
+                <>
+                  <TodoRail
+                    activeTodos={activeTodos}
+                    archivedTodos={archivedTodos}
+                    onAddTodo={handleAddTodo}
+                    onArchive={handleArchiveTodo}
+                    onRestore={handleRestoreTodo}
+                  />
+                  <FlashcardRail
+                    currentCard={nextFlashcard?.card || null}
+                    cardDueNow={Boolean(nextFlashcard?.dueNow)}
+                    cardCritical={Boolean(nextFlashcard?.critical)}
+                    snapshot={flashcardSnapshot}
+                    onCreateFlashcard={handleCreateFlashcard}
+                    onGradeFlashcard={handleGradeFlashcard}
+                  />
+                </>
+              )}
             </aside>
 
             {scientificMode ? (
