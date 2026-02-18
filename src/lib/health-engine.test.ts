@@ -350,3 +350,87 @@ test("scientific output exposes explainability, chart payloads, states, and stud
   assert.equal(recommendation.studyTargetHigh, scientific.studyTargetHigh);
   assert.equal(recommendation.studyRationale, scientific.studyRationale);
 });
+
+test("sleep timing drift lowers timing component with stable duration", () => {
+  const start = "2026-01-01";
+  const totalDays = 30;
+  const stable = makeBaseData(start, totalDays);
+  const drift = makeBaseData(start, totalDays);
+
+  for (let i = 0; i < totalDays; i += 1) {
+    const date = addDays(start, i);
+    const stableIdx = stable.dailyHealth.findIndex((item) => item.date === date);
+    const driftIdx = drift.dailyHealth.findIndex((item) => item.date === date);
+
+    stable.dailyHealth[stableIdx] = makeHealthDay(date, {
+      sleepBedtimeAt: `${date}T23:00:00`,
+      sleepWakeupAt: `${addDays(date, 1)}T07:20:00`,
+      sleepBedtimeHour: 23,
+      sleepMidpointHour: 3.2,
+    });
+
+    const bedtimeHour = 23 + (i * 0.5) / 60; // +30 min/day drift
+    const wakeHour = 7.3333 + (i * 0.5) / 60;
+    drift.dailyHealth[driftIdx] = makeHealthDay(date, {
+      sleepBedtimeAt: `${date}T${Math.floor(23 + (i * 0.5) / 60)
+        .toString()
+        .padStart(2, "0")}:${Math.round((i * 0.5) % 60)
+        .toString()
+        .padStart(2, "0")}:00`,
+      sleepWakeupAt: `${addDays(date, 1)}T${Math.floor(7 + (20 + i * 0.5) / 60)
+        .toString()
+        .padStart(2, "0")}:${Math.round((20 + i * 0.5) % 60)
+        .toString()
+        .padStart(2, "0")}:00`,
+      sleepBedtimeHour: bedtimeHour,
+      sleepMidpointHour: ((bedtimeHour + wakeHour + 24) / 2) % 24,
+    });
+  }
+
+  const today = addDays(start, totalDays - 1);
+  const stableInsights = buildPerformanceInsights(stable, new Date(`${today}T12:00:00Z`));
+  const driftInsights = buildPerformanceInsights(drift, new Date(`${today}T12:00:00Z`));
+
+  assert.ok(
+    stableInsights.todayScientific.components.sleepTiming >
+      driftInsights.todayScientific.components.sleepTiming,
+  );
+});
+
+test("MAI stabilization clamps sparse-history spikes and gates mental state", () => {
+  const start = "2026-01-01";
+  const totalDays = 24;
+  const data = makeBaseData(start, totalDays);
+
+  const spikeDay = addDays(start, totalDays - 1);
+  addStudySession(data, {
+    id: "sparse-spike",
+    date: spikeDay,
+    startHour: 12,
+    durationMin: 360,
+  });
+
+  const insights = buildPerformanceInsights(data, new Date(`${spikeDay}T12:00:00Z`));
+  const scientific = insights.todayScientific;
+
+  assert.ok(Math.abs(scientific.components.mai || 0) <= 0.75);
+  assert.ok((scientific.components.maiShrinkFactor || 0) < 0.5);
+  assert.ok(Boolean(scientific.denominatorDiagnostics?.mental.floored));
+  assert.ok(
+    scientific.mentalState === "underloaded" || scientific.mentalState === "maintaining",
+  );
+});
+
+test("physical calibration uninitialized emits no_status and confidence cap", () => {
+  const start = "2026-01-01";
+  const totalDays = 20;
+  const data = makeBaseData(start, totalDays);
+  const today = addDays(start, totalDays - 1);
+
+  const insights = buildPerformanceInsights(data, new Date(`${today}T12:00:00Z`));
+  const scientific = insights.todayScientific;
+
+  assert.equal(scientific.physicalState, "no_status");
+  assert.equal(scientific.calibrationStatus?.physical.phase, "uninitialized");
+  assert.ok(scientific.confidence.physicalStrain <= 0.4);
+});

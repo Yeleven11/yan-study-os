@@ -33,6 +33,12 @@ final class SyncCoordinator: ObservableObject {
     private var isRepairBackfillRunning = false
     private let repairBackfillDays = 90
     private let initialLookbackDays = 120
+    private let maxRangePayloadBytes = 600_000
+
+    private struct RangePayloadChunk {
+        let payload: MobileSyncPayload
+        let estimatedBytes: Int
+    }
 
     private enum Keys {
         static let repairBackfillCompleted = "sync.healthkit.repairBackfillCompleted"
@@ -304,13 +310,43 @@ final class SyncCoordinator: ObservableObject {
                 to: now,
                 intervalMinutes: settings.syncIntervalMinutes
             ) {
-                await queueStore.appendLog("Prepared range payload (\(boundedDays)d): \(payloadDiagnostics(payload))")
-                _ = try await uploadBatch(
-                    payload: payload,
-                    anchorSnapshots: [],
-                    baseURL: baseURL,
-                    trigger: .manualRange
-                )
+                let payloadChunks = chunkRangePayload(payload, maxBytes: maxRangePayloadBytes)
+                if payloadChunks.count > 1 {
+                    await queueStore.appendLog(
+                        "Prepared range payload (\(boundedDays)d): \(payloadDiagnostics(payload)). Split into \(payloadChunks.count) chunks (<= \(maxRangePayloadBytes / 1024) KB each)."
+                    )
+                } else {
+                    await queueStore.appendLog("Prepared range payload (\(boundedDays)d): \(payloadDiagnostics(payload))")
+                }
+
+                var importedHealthDays = 0
+                var importedWorkouts = 0
+                var updatedWorkouts = 0
+
+                for (index, chunk) in payloadChunks.enumerated() {
+                    if payloadChunks.count > 1 {
+                        let estimatedKb = max(1, Int(round(Double(chunk.estimatedBytes) / 1024.0)))
+                        await queueStore.appendLog(
+                            "Uploading range chunk \(index + 1)/\(payloadChunks.count): \(payloadDiagnostics(chunk.payload)), ~\(estimatedKb) KB"
+                        )
+                    }
+
+                    let response = try await uploadBatch(
+                        payload: chunk.payload,
+                        anchorSnapshots: [],
+                        baseURL: baseURL,
+                        trigger: .manualRange
+                    )
+                    importedHealthDays += response.importedHealthDays
+                    importedWorkouts += response.importedWorkouts
+                    updatedWorkouts += response.updatedWorkouts
+                }
+
+                if payloadChunks.count > 1 {
+                    await queueStore.appendLog(
+                        "Range upload complete (\(boundedDays)d): +\(importedHealthDays) days, +\(importedWorkouts) workouts, updated \(updatedWorkouts)."
+                    )
+                }
             } else {
                 await queueStore.appendLog("No health data found for manual range (\(boundedDays) days)")
             }
@@ -660,6 +696,159 @@ final class SyncCoordinator: ObservableObject {
         }.count
 
         return "days \(payload.dailyHealth.count) (\(daysWithHeartRate) HR), workouts \(payload.workouts.count) (\(workoutsWithHeartRate) HR), deletions \(payload.deletions.count)"
+    }
+
+    private func chunkRangePayload(
+        _ payload: MobileSyncPayload,
+        maxBytes: Int
+    ) -> [RangePayloadChunk] {
+        let fullPayloadBytes = payloadByteCount(payload) ?? 0
+        if fullPayloadBytes > 0 && fullPayloadBytes <= maxBytes {
+            return [RangePayloadChunk(payload: payload, estimatedBytes: fullPayloadBytes)]
+        }
+
+        enum PayloadItem {
+            case workout(WorkoutPayload)
+            case dailyHealth(DailyHealthPayload)
+        }
+
+        let items: [PayloadItem] =
+            payload.workouts.map { .workout($0) } +
+            payload.dailyHealth.map { .dailyHealth($0) }
+        if items.isEmpty {
+            return [RangePayloadChunk(payload: payload, estimatedBytes: fullPayloadBytes)]
+        }
+
+        var chunks: [RangePayloadChunk] = []
+        var currentWorkouts: [WorkoutPayload] = []
+        var currentDailyHealth: [DailyHealthPayload] = []
+        var partNumber = 1
+
+        func buildChunkPayload(
+            part: Int,
+            workouts: [WorkoutPayload],
+            dailyHealth: [DailyHealthPayload]
+        ) -> MobileSyncPayload {
+            MobileSyncPayload(
+                schemaVersion: payload.schemaVersion,
+                batchId: "\(payload.batchId)-p\(part)",
+                generatedAt: payload.generatedAt,
+                device: payload.device,
+                syncWindow: payload.syncWindow,
+                settings: payload.settings,
+                dailyHealth: dailyHealth,
+                workouts: workouts,
+                deletions: []
+            )
+        }
+
+        func appendCurrentChunk() {
+            guard !currentWorkouts.isEmpty || !currentDailyHealth.isEmpty else {
+                return
+            }
+
+            let chunkPayload = buildChunkPayload(
+                part: partNumber,
+                workouts: currentWorkouts,
+                dailyHealth: currentDailyHealth
+            )
+            chunks.append(
+                RangePayloadChunk(
+                    payload: chunkPayload,
+                    estimatedBytes: payloadByteCount(chunkPayload) ?? 0
+                )
+            )
+            partNumber += 1
+            currentWorkouts.removeAll(keepingCapacity: true)
+            currentDailyHealth.removeAll(keepingCapacity: true)
+        }
+
+        for item in items {
+            switch item {
+            case let .workout(workout):
+                let nextWorkouts = currentWorkouts + [workout]
+                let candidatePayload = buildChunkPayload(
+                    part: partNumber,
+                    workouts: nextWorkouts,
+                    dailyHealth: currentDailyHealth
+                )
+                if let candidateBytes = payloadByteCount(candidatePayload), candidateBytes <= maxBytes {
+                    currentWorkouts = nextWorkouts
+                    continue
+                }
+
+                appendCurrentChunk()
+
+                let singlePayload = buildChunkPayload(
+                    part: partNumber,
+                    workouts: [workout],
+                    dailyHealth: []
+                )
+                let singleBytes = payloadByteCount(singlePayload) ?? 0
+                if singleBytes <= maxBytes {
+                    currentWorkouts = [workout]
+                    continue
+                }
+
+                chunks.append(
+                    RangePayloadChunk(
+                        payload: singlePayload,
+                        estimatedBytes: singleBytes
+                    )
+                )
+                partNumber += 1
+
+            case let .dailyHealth(day):
+                let nextDailyHealth = currentDailyHealth + [day]
+                let candidatePayload = buildChunkPayload(
+                    part: partNumber,
+                    workouts: currentWorkouts,
+                    dailyHealth: nextDailyHealth
+                )
+                if let candidateBytes = payloadByteCount(candidatePayload), candidateBytes <= maxBytes {
+                    currentDailyHealth = nextDailyHealth
+                    continue
+                }
+
+                appendCurrentChunk()
+
+                let singlePayload = buildChunkPayload(
+                    part: partNumber,
+                    workouts: [],
+                    dailyHealth: [day]
+                )
+                let singleBytes = payloadByteCount(singlePayload) ?? 0
+                if singleBytes <= maxBytes {
+                    currentDailyHealth = [day]
+                    continue
+                }
+
+                chunks.append(
+                    RangePayloadChunk(
+                        payload: singlePayload,
+                        estimatedBytes: singleBytes
+                    )
+                )
+                partNumber += 1
+            }
+        }
+
+        appendCurrentChunk()
+
+        if chunks.isEmpty {
+            return [RangePayloadChunk(payload: payload, estimatedBytes: fullPayloadBytes)]
+        }
+
+        return chunks
+    }
+
+    private func payloadByteCount(_ payload: MobileSyncPayload) -> Int? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(payload) else {
+            return nil
+        }
+        return data.count
     }
 
     private func openAppSettings() {

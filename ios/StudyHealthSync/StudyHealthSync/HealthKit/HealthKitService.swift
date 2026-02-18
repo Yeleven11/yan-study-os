@@ -520,6 +520,8 @@ actor HealthKitService {
                 sleepAwakeHours: sleep.awakeHours,
                 sleepMidpointHour: sleep.midpointHour,
                 sleepBedtimeHour: sleep.bedtimeHour,
+                sleepBedtimeAt: sleep.bedtimeAt,
+                sleepWakeupAt: sleep.wakeupAt,
                 sleepRegularitySRI: sleep.regularitySRI,
                 hrvMs: quantities.hrvMs,
                 restingHrBpm: quantities.restingHr,
@@ -782,10 +784,12 @@ actor HealthKitService {
         awakeHours: Double?,
         midpointHour: Double?,
         bedtimeHour: Double?,
+        bedtimeAt: String?,
+        wakeupAt: String?,
         regularitySRI: Double?
     ) {
         guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            return (nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
         }
 
         let start = Calendar.current.date(byAdding: .hour, value: -12, to: dayStart) ?? dayStart
@@ -855,6 +859,8 @@ actor HealthKitService {
         let mainInterval = longestMergedInterval(from: asleepIntervals)
         let bedtimeHour = mainInterval.map { decimalHour($0.start) }
         let midpointHour = mainInterval.map { decimalHour($0.start.addingTimeInterval($0.end.timeIntervalSince($0.start) / 2)) }
+        let bedtimeAt = mainInterval.map { $0.start.isoTimestamp }
+        let wakeupAt = mainInterval.map { $0.end.isoTimestamp }
 
         return (
             totalSleepHours,
@@ -866,6 +872,8 @@ actor HealthKitService {
             awakeSeconds > 0 ? awakeSeconds / 3600.0 : nil,
             midpointHour,
             bedtimeHour,
+            bedtimeAt,
+            wakeupAt,
             nil
         )
     }

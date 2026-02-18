@@ -1,116 +1,146 @@
-# Scientific Output Schema (Practical Reference)
+# Scientific Output Schema (Deterministic Audit Version)
 
-This file documents the most important fields exposed to the frontend.
+This describes the high-value backend contract emitted by `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/src/lib/health-engine.ts`.
 
-## `ScientificDailyMetrics`
+## ScientificDailyMetrics
 
-Core score fields:
-
+Core:
 - `sleepScore`
 - `recoveryScore`
 - `mentalRecovery`
 - `physicalStrain`
 - `mentalStrain`
 
-Raw/load dynamics:
+Load dynamics:
+- `physicalRawLoad`
+- `mentalRawLoad`
+- `physicalAcuteLoad` (`ATL` on qualifying impulse)
+- `physicalChronicLoad` (`CTL` on qualifying impulse)
+- `mentalAcuteLoad` (`MAL`)
+- `mentalChronicLoad` (`MCL`)
+- `physicalLoadRatio` (AI)
+- `mentalLoadRatio` (stabilized MAI)
 
-- `physicalRawLoad`, `mentalRawLoad`
-- `physicalChronicLoad`, `physicalAcuteLoad`
-- `mentalChronicLoad`, `mentalAcuteLoad`
-- `physicalLoadRatio` (AI proxy), `mentalLoadRatio` (MAI proxy)
-
-State outputs:
-
-- `physicalState`
-- `mentalState`
-- `cardioLoad`:
-- `state`
-- `stateScore`
-- `stateThresholds`
-- `stateRationale`
-- `mentalLoadState`:
-- `state`
-- `stateScore`
-- `stateThresholds`
-- `stateRationale`
-
-Targets and guidance:
-
+Targets/guidance:
 - `physicalTarget.{low,center,high}`
 - `mentalTarget.{low,center,high}`
 - `studyTargetLow`
 - `studyTargetHigh`
 - `studyRationale`
 
-Confidence:
+States:
+- `physicalState` (`no_status` | detraining | maintaining | productive | peaking | fatigued | overtraining_risk)
+- `mentalState` (underloaded | maintaining | productive | peaking | fatigued | burnout_risk)
+- `cardioLoad`:
+  - `state`
+  - `stateScore`
+  - `stateThresholds`
+  - `stateRationale`
+- `mentalLoadState`:
+  - `state`
+  - `stateScore`
+  - `stateThresholds`
+  - `stateRationale`
 
-- `confidence.sleep`
-- `confidence.recovery`
-- `confidence.physicalStrain`
-- `confidence.mentalRecovery`
-- `confidence.mentalStrain`
-- `confidence.overall`
+Calibration + diagnostics:
+- `calibrationStatus.physical`:
+  - `phase`
+  - `effectiveTrainingDays28`
+  - `effectiveTrainingDays42`
+  - `qualifyingSessionCount42`
+  - `lastQualifyingSessionDate`
+  - `reasonCodes[]`
+  - `readiness`
+- `calibrationStatus.mental`:
+  - `phase`
+  - `studyDays14`
+  - `studyDays42`
+  - `coverage14`
+  - `reasonCodes[]`
+  - `readiness`
+- `denominatorDiagnostics.physical`:
+  - `ctlRef`
+  - `ctlRefEffective`
+  - `floored`
+  - `validDays`
+  - `shrinkWeight`
+- `denominatorDiagnostics.mental`:
+  - `mclRef`
+  - `mclRefEffective`
+  - `floored`
+  - `validDays`
+  - `shrinkWeight`
+  - `studyCoverage14`
+  - `maiRaw`
+  - `maiClamped`
+  - `maiShrinkFactor`
+  - `stateGated`
 
-Fallback and narrative:
+Components (`components` object):
+- Sleep: `sleepDuration`, `sleepContinuity`, `sleepTiming`, `sleepRegularity`, `sleepSocialJetlag`, `sleepDrift`, `sleepSRI14`, `sleepStages`
+- Physiology/load: `zLhrv`, `zRhr`, `zRr`, `compHrv`, `compRhr`, `compRr`, `zApl`, `zAml`, `ctl`, `atl`, `tsb`, `mcl`, `mal`, `fi`, `ai`, `mfi`, `mai`
+- MAI diagnostics: `maiRaw`, `maiShrinkFactor`, `mclRefEffective`, `ctlRefEffective`
+- Context: `examUrgency`, `pressureScore`, `recoveryPhysOnly`
+- Calibration: `qualifyingTrainingDays28`, `qualifyingTrainingDays42`, `qualifyingSessions42`
 
+Confidence (`confidence` object):
+- `sleep`
+- `recovery`
+- `physicalStrain`
+- `mentalRecovery`
+- `mentalStrain`
+- `overall`
+
+Explainability (`explainability` object):
+- `sleep`:
+  - `reasonCodes[]`
+  - `userMessages[]`
+  - `contributionBreakdown`
+  - `lowReasons[]`
+  - `highReasons[]`
+- `physicalRecovery`:
+  - `reasonCodes[]`
+  - `userMessages[]`
+  - `contributionBreakdown`
+  - `reasons[]`
+- `mentalRecovery`:
+  - `reasonCodes[]`
+  - `userMessages[]`
+  - `contributionBreakdown`
+  - `reasons[]`
+- `targetRange`:
+  - `reasonCodes[]`
+  - `userMessages[]`
+  - `contributionBreakdown`
+  - `physicalReasons[]`
+  - `mentalReasons[]`
+  - `studyRationale`
+
+Chart hover payloads (`chartPayloads`):
+- `physicalStrain`:
+  - `timestamp`
+  - `rawValue`
+  - `normalizedValue`
+  - `componentContributions`
+  - `confidence`
+- `mentalStrain`:
+  - `timestamp`
+  - `rawValue`
+  - `normalizedValue`
+  - `componentContributions`
+  - `confidence`
+
+Other:
 - `fallbackFlags[]`
 - `narrative`
 
-## Chart Metadata Payloads
+## DailyRecommendation parity fields
 
-`chartPayloads` currently contains:
-
-- `physicalStrain`
-- `mentalStrain`
-
-Each payload object has:
-
-- `timestamp`
-- `rawValue`
-- `normalizedValue`
-- `componentContributions`
-- `confidence`
-
-This is the hover contract used by the scientific charts.
-
-## Explainability Blocks
-
-`explainability.sleep`:
-
-- `reasonCodes[]`
-- `userMessages[]`
-- `contributionBreakdown`
-- `lowReasons[]`
-- `highReasons[]`
-
-`explainability.physicalRecovery`:
-
-- `reasonCodes[]`
-- `userMessages[]`
-- `contributionBreakdown`
-- `reasons[]`
-
-`explainability.mentalRecovery`:
-
-- `reasonCodes[]`
-- `userMessages[]`
-- `contributionBreakdown`
-- `reasons[]`
-
-`explainability.targetRange`:
-
-- `reasonCodes[]`
-- `userMessages[]`
-- `contributionBreakdown`
-- `physicalReasons[]`
-- `mentalReasons[]`
-- `studyRationale`
-
-## Recommendation Cross-Fields
-
-`DailyRecommendation` mirrors study guidance and state for legacy cards:
-
+Recommendation mirrors scientific guidance for UI compatibility:
 - `studyTargetHoursLow`, `studyTargetHoursHigh`
 - `studyTargetLow`, `studyTargetHigh`
 - `studyRationale`
+- `physicalTargetLow`, `physicalTargetHigh`
+- `mentalTargetLow`, `mentalTargetHigh`
 - `physicalState`, `mentalState`
+

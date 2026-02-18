@@ -174,6 +174,8 @@ export interface DailyHealthFact {
   respiratoryRateBpm?: number;
   sleepMidpointHour?: number;
   sleepBedtimeHour?: number;
+  sleepBedtimeAt?: string;
+  sleepWakeupAt?: string;
   sleepRegularitySRI?: number;
   steps?: number;
   walkRunDistanceKm?: number;
@@ -306,6 +308,8 @@ export interface MobileSyncDailyHealthInput {
   sleepAwakeHours?: number;
   sleepMidpointHour?: number;
   sleepBedtimeHour?: number;
+  sleepBedtimeAt?: string;
+  sleepWakeupAt?: string;
   sleepRegularitySRI?: number;
   hrvMs?: number;
   restingHrBpm?: number;
@@ -452,6 +456,7 @@ export interface DailyRecommendation {
 }
 
 export type PhysicalLoadState =
+  | "no_status"
   | "detraining"
   | "maintaining"
   | "productive"
@@ -513,7 +518,11 @@ export interface ScientificMentalLoadState {
 export interface ScientificMetricComponents {
   sleepDuration: number;
   sleepContinuity: number;
+  sleepTiming: number;
   sleepRegularity: number;
+  sleepSocialJetlag: number;
+  sleepDrift: number;
+  sleepSRI14: number;
   sleepStages: number;
   zLhrv: number;
   zRhr: number;
@@ -535,7 +544,16 @@ export interface ScientificMetricComponents {
   ai: number;
   mfi: number;
   mai: number;
+  maiRaw?: number;
+  maiShrinkFactor?: number;
+  mclRefEffective?: number;
+  ctlRefEffective?: number;
   examUrgency: number;
+  pressureScore?: number;
+  recoveryPhysOnly?: number;
+  qualifyingTrainingDays28?: number;
+  qualifyingTrainingDays42?: number;
+  qualifyingSessions42?: number;
 }
 
 export interface ScientificTargetRange {
@@ -551,6 +569,60 @@ export interface ScientificMetricConfidence {
   mentalRecovery: number;
   mentalStrain: number;
   overall: number;
+}
+
+export type PhysicalCalibrationPhase =
+  | "uninitialized"
+  | "calibrating"
+  | "calibrated"
+  | "degraded";
+
+export type MentalCalibrationPhase = "sparse" | "calibrating" | "calibrated";
+
+export interface ScientificPhysicalCalibrationStatus {
+  phase: PhysicalCalibrationPhase;
+  effectiveTrainingDays28: number;
+  effectiveTrainingDays42: number;
+  qualifyingSessionCount42: number;
+  lastQualifyingSessionDate?: string;
+  reasonCodes: string[];
+  readiness: number;
+}
+
+export interface ScientificMentalCalibrationStatus {
+  phase: MentalCalibrationPhase;
+  studyDays14: number;
+  studyDays42: number;
+  coverage14: number;
+  reasonCodes: string[];
+  readiness: number;
+}
+
+export interface ScientificCalibrationStatus {
+  physical: ScientificPhysicalCalibrationStatus;
+  mental: ScientificMentalCalibrationStatus;
+}
+
+export interface ScientificDenominatorDiagnostics {
+  physical: {
+    ctlRef: number;
+    ctlRefEffective: number;
+    floored: boolean;
+    validDays: number;
+    shrinkWeight: number;
+  };
+  mental: {
+    mclRef: number;
+    mclRefEffective: number;
+    floored: boolean;
+    validDays: number;
+    shrinkWeight: number;
+    studyCoverage14: number;
+    maiRaw: number;
+    maiClamped: number;
+    maiShrinkFactor: number;
+    stateGated: boolean;
+  };
 }
 
 export interface ScientificDailyMetrics {
@@ -582,6 +654,8 @@ export interface ScientificDailyMetrics {
   mentalState: MentalLoadState;
   cardioLoad: ScientificCardioLoadState;
   mentalLoadState: ScientificMentalLoadState;
+  calibrationStatus?: ScientificCalibrationStatus;
+  denominatorDiagnostics?: ScientificDenominatorDiagnostics;
   studyTargetLow: number;
   studyTargetHigh: number;
   studyRationale: string;

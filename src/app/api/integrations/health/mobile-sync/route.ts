@@ -38,6 +38,14 @@ function optionalNumber(value: unknown): number | undefined {
   return value;
 }
 
+function optionalIsoString(value: unknown): string | undefined {
+  if (!isIsoDate(value)) {
+    return undefined;
+  }
+
+  return new Date(value).toISOString();
+}
+
 function normalizeSeries(value: unknown): Array<{ timestamp: string; value: number }> | undefined {
   const entries = asArrayOfRecords(value)
     .map((item) => {
@@ -153,6 +161,8 @@ function normalizeSyncRequest(raw: unknown): { payload: MobileSyncRequest | null
         sleepAwakeHours: optionalNumber(row.sleepAwakeHours),
         sleepMidpointHour: optionalNumber(row.sleepMidpointHour),
         sleepBedtimeHour: optionalNumber(row.sleepBedtimeHour),
+        sleepBedtimeAt: optionalIsoString(row.sleepBedtimeAt),
+        sleepWakeupAt: optionalIsoString(row.sleepWakeupAt),
         sleepRegularitySRI: optionalNumber(row.sleepRegularitySRI),
         hrvMs: optionalNumber(row.hrvMs),
         restingHrBpm: optionalNumber(row.restingHrBpm),

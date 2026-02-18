@@ -22,6 +22,8 @@ function buildPayload(batchId: string): MobileSyncRequest {
       {
         date: "2026-02-15",
         sleepHours: 7.8,
+        sleepBedtimeAt: "2026-02-14T23:12:00+01:00",
+        sleepWakeupAt: "2026-02-15T07:05:00+01:00",
         hrvMs: 63,
         restingHrBpm: 51,
         steps: 12000,
@@ -69,6 +71,8 @@ test("imports mobile sync payload into daily health and workouts", () => {
   assert.equal(imported.summary.importedWorkouts, 1);
   assert.equal(imported.nextData.workouts.length, 1);
   assert.equal(imported.nextData.workoutDetails.length, 1);
+  assert.equal(imported.nextData.dailyHealth[0]?.sleepBedtimeAt, "2026-02-14T22:12:00.000Z");
+  assert.equal(imported.nextData.dailyHealth[0]?.sleepWakeupAt, "2026-02-15T06:05:00.000Z");
   assert.equal(imported.nextData.healthRawFiles[0]?.fileType, "mobile_sync");
   assert.ok((imported.nextData.workoutDetails[0]?.heartRateSeries?.length || 0) > 0);
 });
