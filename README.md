@@ -48,6 +48,7 @@ Mathematical and debugging docs live in:
 
 - `docs/metric-framework/FORMULAS.md`
 - `docs/metric-framework/DEBUG_GUIDE.md`
+- `docs/metric-framework/OUTPUT_SCHEMA.md`
 
 ## Stack
 
