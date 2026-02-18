@@ -25,28 +25,43 @@ import type {
 
 const EPSILON = 1e-6;
 const MIN_BASELINE_DAYS = 21;
-const SLEEP_NEED_ANCHOR_MIN = 480;
-const SLEEP_NEED_MIN = 420;
+const SLEEP_NEED_ADULT_ANCHOR_MIN = 480;
+const SLEEP_NEED_TEEN_ANCHOR_MIN = 540;
+const SLEEP_NEED_ADULT_MIN = 420;
+const SLEEP_NEED_TEEN_MIN = 480;
 const SLEEP_NEED_MAX = 600;
+const SLEEP_NEED_PERSONALIZATION_KAPPA = 14;
+const SLEEP_NEED_GOOD_SLEEP_WINDOW = 60;
+const SLEEP_NEED_GOOD_SLEEP_MIN_COUNT = 7;
+
 const DURATION_DEFICIT_SCALE = 0.35;
-const OVERSLEEP_GRACE_MIN = 60;
-const OVERSLEEP_PENALTY_WINDOW_MIN = 240;
-const SLEEP_OVERSLEEP_MAX_PENALTY = 10;
+const OVERSLEEP_GRACE_MIN = 90;
+const OVERSLEEP_PENALTY_WINDOW_MIN = 360;
+const SLEEP_OVERSLEEP_MAX_PENALTY = 8;
 
-const CONTINUITY_EFF_MIN = 0.75;
-const CONTINUITY_EFF_SPAN = 0.15;
+const CONTINUITY_EFF_POOR = 0.74;
+const CONTINUITY_EFF_GOOD = 0.85;
 const CONTINUITY_AWAKE_PENALTY_MAX = 20;
-const CONTINUITY_AWAKE_BASE_MIN = 20;
-const CONTINUITY_AWAKE_SPAN = 80;
+const CONTINUITY_AWAKE_GOOD_MIN = 20;
+const CONTINUITY_AWAKE_MAX_MIN = 60;
 
-const REGULARITY_SCALE_MIN = 90;
-const STAGE_DEEP_FLOOR = 0.13;
-const STAGE_REM_FLOOR = 0.2;
+const SLEEP_SRI_WINDOW_DAYS = 14;
+const SLEEP_SRI_MIN_VALID_DAYS = 4;
+const SLEEP_SJL_NO_PENALTY_MIN = 60;
+const SLEEP_SJL_MAX_PENALTY_MIN = 180;
+const SLEEP_DRIFT_TOLERANCE_MIN_PER_DAY = 10;
+const SLEEP_DRIFT_SEVERE_MIN_PER_DAY = 30;
 
-const SLEEP_WEIGHT_DURATION = 0.5;
+const STAGE_N3_LOW = 0.05;
+const STAGE_N3_OK = 0.16;
+const STAGE_REM_LOW = 0.1;
+const STAGE_REM_OK = 0.21;
+const STAGE_CONTRIBUTION_CAP = 5;
+
+const SLEEP_WEIGHT_DURATION = 0.45;
 const SLEEP_WEIGHT_CONTINUITY = 0.25;
-const SLEEP_WEIGHT_REGULARITY = 0.15;
-const SLEEP_WEIGHT_STAGES = 0.1;
+const SLEEP_WEIGHT_TIMING = 0.25;
+const SLEEP_WEIGHT_STAGES = 0.05;
 
 const TAU_CTL_DAYS = 42;
 const TAU_ATL_DAYS = 7;
@@ -56,15 +71,36 @@ const TAU_MAL_DAYS = 3;
 const PHYSICAL_STRAIN_U0 = 30;
 const PHYSICAL_STRAIN_COLD_REF = 300;
 const PHYSICAL_STRAIN_MIN_REF = 150;
+const PHYSICAL_STRAIN_REF_WINDOW_DAYS = 120;
+const PHYSICAL_STRAIN_REF_NMIN = 20;
+const PHYSICAL_STRAIN_REF_KAPPA = 20;
 
 const MENTAL_STRAIN_M0 = 60;
 const MENTAL_STRAIN_COLD_REF = 600;
 const MENTAL_STRAIN_MIN_REF = 200;
+const MENTAL_STRAIN_REF_WINDOW_DAYS = 120;
+const MENTAL_STRAIN_REF_NMIN = 20;
+const MENTAL_STRAIN_REF_KAPPA = 20;
+const MENTAL_BACKGROUND_LOAD_MAX = 30;
+const MAI_MIN_CLAMP = -0.25;
+const MAI_MAX_CLAMP = 0.75;
+const MAI_MCL_FLOOR = 0.5 * MENTAL_STRAIN_MIN_REF;
+const AI_CTL_FLOOR = 0.5 * PHYSICAL_STRAIN_MIN_REF;
 
 const RECOVERY_SLEEP_WEIGHT = 0.25;
 const RECOVERY_HRV_WEIGHT = 0.35;
 const RECOVERY_RHR_WEIGHT = 0.25;
 const RECOVERY_RR_WEIGHT = 0.15;
+const RECOVERY_BASELINE_WINDOW_DAYS = 60;
+const RECOVERY_PHYS_ONLY_LOW_THRESHOLD = 60;
+
+const TRIMP_A_UNKNOWN = 0.75;
+const TRIMP_K_UNKNOWN = 1.795;
+
+const QUALIFYING_HRR_THRESHOLD = 0.4;
+const QUALIFYING_HRR_DURATION_MIN = 20;
+const QUALIFYING_MET_THRESHOLD = 3;
+const QUALIFYING_MET_DURATION_MIN = 30;
 
 const EXAM_DECAY_DAYS = 10;
 
@@ -74,7 +110,6 @@ const DAYS_21 = 21;
 const DAYS_28 = 28;
 const DAYS_30 = 30;
 const DAYS_42 = 42;
-const DAYS_56 = 56;
 const DAYS_90 = 90;
 const DAYS_180 = 180;
 const DAYS_365 = 365;
@@ -180,12 +215,20 @@ type DailyRow = {
   sleepNeedMin: number;
   sleepAsleepMin?: number;
   sleepInBedMin?: number;
+  sleepBedtimeMin?: number;
+  sleepWakeMin?: number;
   sleepEfficiency?: number;
   sleepWasoMin?: number;
   sleepMidpointMin?: number;
   sleepMidpointDeltaMin?: number;
   sleepDurationScore?: number;
   sleepContinuityScore?: number;
+  sleepTimingScore?: number;
+  sleepSRI14?: number;
+  sleepSocialJetlagMin?: number;
+  sleepSocialJetlagScore?: number;
+  sleepDriftMinPerDay?: number;
+  sleepDriftScore?: number;
   sleepRegularityScore?: number;
   sleepStagesScore?: number;
   sleepScore: number;
@@ -204,23 +247,39 @@ type DailyRow = {
   compRr?: number;
 
   examUrgency: number;
+  pressureScore: number;
   physicalImpulse: number;
+  physicalTrainingImpulse: number;
   physicalImpulseWorkout: number;
   physicalImpulseFallback: number;
+  qualifyingSessions: number;
+  qualifyingTrainingDay: boolean;
   workoutMethod: "hr_series" | "avg_hr" | "pace" | "energy" | "none";
   ctl: number;
   atl: number;
   tsb: number;
   physicalRef: number;
+  physicalRefShrinkWeight: number;
+  physicalRefValidDays: number;
+  ctlRef: number;
+  ctlRefEffective: number;
   physicalStrain: number;
 
   mentalImpulse: number;
   mentalSessionImpulse: number;
+  mentalBackgroundImpulse: number;
+  studyDays14: number;
+  studyDays42: number;
   mcl: number;
   mal: number;
   mentalRef: number;
+  mentalRefShrinkWeight: number;
+  mentalRefValidDays: number;
+  mclRef: number;
+  mclRefEffective: number;
   mentalStrain: number;
 
+  recoveryPhysOnly: number;
   recoveryBase: number;
   recoveryScore: number;
   recoveryReasonCodes: string[];
@@ -241,8 +300,22 @@ type DailyRow = {
   ai: number;
   mfi: number;
   mai: number;
+  maiRaw: number;
+  maiShrinkFactor: number;
+  maiStateGated: boolean;
   physicalState: PhysicalLoadState;
   mentalState: MentalLoadState;
+  physicalCalibrationPhase: "uninitialized" | "calibrating" | "calibrated" | "degraded";
+  physicalCalibrationReasonCodes: string[];
+  effectiveTrainingDays28: number;
+  effectiveTrainingDays42: number;
+  qualifyingSessionCount42: number;
+  lastQualifyingSessionDate?: string;
+  physicalReadiness: number;
+  mentalCalibrationPhase: "sparse" | "calibrating" | "calibrated";
+  mentalCalibrationReasonCodes: string[];
+  mentalReadiness: number;
+  noStatusPhysicalState: boolean;
 
   physicalTargetCenterRaw: number;
   physicalTargetMinRaw: number;
@@ -378,6 +451,125 @@ function circularMedianMinutes(values: number[]): number | undefined {
   return ((best % 1440) + 1440) % 1440;
 }
 
+function circularMeanMinutes(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  const vector = values.reduce(
+    (acc, value) => {
+      const radians = (2 * Math.PI * (((value % 1440) + 1440) % 1440)) / 1440;
+      return {
+        x: acc.x + Math.cos(radians),
+        y: acc.y + Math.sin(radians),
+      };
+    },
+    { x: 0, y: 0 },
+  );
+
+  if (Math.abs(vector.x) < EPSILON && Math.abs(vector.y) < EPSILON) {
+    return undefined;
+  }
+
+  const angle = Math.atan2(vector.y, vector.x);
+  const minutes = (angle * 1440) / (2 * Math.PI);
+  return ((minutes % 1440) + 1440) % 1440;
+}
+
+function unwrapClockSeries(values: number[]): number[] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const unwrapped: number[] = [values[0]];
+  for (let index = 1; index < values.length; index += 1) {
+    let candidate = values[index];
+    const previous = unwrapped[index - 1];
+
+    while (candidate - previous > 720) {
+      candidate -= 1440;
+    }
+    while (candidate - previous < -720) {
+      candidate += 1440;
+    }
+
+    unwrapped.push(candidate);
+  }
+
+  return unwrapped;
+}
+
+function olsSlope(values: number[]): number | undefined {
+  if (values.length < 2) {
+    return undefined;
+  }
+
+  const meanX = (values.length - 1) / 2;
+  const meanY = values.reduce((sum, value) => sum + value, 0) / values.length;
+
+  let numerator = 0;
+  let denominator = 0;
+
+  for (let index = 0; index < values.length; index += 1) {
+    const dx = index - meanX;
+    numerator += dx * (values[index] - meanY);
+    denominator += dx * dx;
+  }
+
+  if (Math.abs(denominator) < EPSILON) {
+    return undefined;
+  }
+
+  return numerator / denominator;
+}
+
+function isMinuteInSleepInterval(
+  minute: number,
+  bedtimeMin: number,
+  wakeMin: number,
+): boolean {
+  const minuteSafe = ((minute % 1440) + 1440) % 1440;
+  const bedSafe = ((bedtimeMin % 1440) + 1440) % 1440;
+  const wakeSafe = ((wakeMin % 1440) + 1440) % 1440;
+
+  if (wakeSafe > bedSafe) {
+    return minuteSafe >= bedSafe && minuteSafe < wakeSafe;
+  }
+  return minuteSafe >= bedSafe || minuteSafe < wakeSafe;
+}
+
+function computeSRI14(
+  intervals: Array<{ bedtimeMin: number; wakeMin: number }>,
+): number | undefined {
+  const valid = intervals.slice(-SLEEP_SRI_WINDOW_DAYS);
+  if (valid.length < SLEEP_SRI_MIN_VALID_DAYS) {
+    return undefined;
+  }
+
+  let matches = 0;
+  for (let dayIndex = 1; dayIndex < valid.length; dayIndex += 1) {
+    for (let bin = 0; bin < 48; bin += 1) {
+      const minute = bin * 30;
+      const prevState = isMinuteInSleepInterval(
+        minute,
+        valid[dayIndex - 1].bedtimeMin,
+        valid[dayIndex - 1].wakeMin,
+      );
+      const currState = isMinuteInSleepInterval(
+        minute,
+        valid[dayIndex].bedtimeMin,
+        valid[dayIndex].wakeMin,
+      );
+      if (prevState === currState) {
+        matches += 1;
+      }
+    }
+  }
+
+  const denominator = 48 * Math.max(valid.length - 1, 1);
+  return (100 * matches) / denominator;
+}
+
 function ewmaTau(previous: number, current: number, tauDays: number): number {
   const k = 1 - Math.exp(-1 / Math.max(tauDays, 1));
   return previous + k * (current - previous);
@@ -459,6 +651,56 @@ function toIsoOnDate(dateKey: string, minutesFromMidnight: number): string {
   date.setHours(0, 0, 0, 0);
   date.setMinutes(safeMinutes);
   return date.toISOString();
+}
+
+function localClockMinutesFromIso(timestamp: string | undefined): number | undefined {
+  if (typeof timestamp !== "string" || timestamp.length === 0) {
+    return undefined;
+  }
+
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) {
+    return undefined;
+  }
+
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function sleepDateFromWakeTimestamp(
+  wakeTimestamp: string | undefined,
+  fallbackDate: string,
+): string {
+  if (typeof wakeTimestamp !== "string" || wakeTimestamp.length === 0) {
+    return fallbackDate;
+  }
+
+  const wake = new Date(wakeTimestamp);
+  if (!Number.isFinite(wake.getTime())) {
+    return fallbackDate;
+  }
+
+  const wakeClockMin = wake.getHours() * 60 + wake.getMinutes();
+  const wakeDateKey = toDateKey(wake);
+  if (wakeClockMin >= 4 * 60) {
+    return wakeDateKey;
+  }
+
+  return shiftDate(wakeDateKey, -1);
+}
+
+function mergeHealthFacts(current: DailyHealthFact | undefined, incoming: DailyHealthFact): DailyHealthFact {
+  if (!current) {
+    return incoming;
+  }
+
+  const merged: DailyHealthFact = { ...current };
+  for (const [key, value] of Object.entries(incoming) as Array<[keyof DailyHealthFact, unknown]>) {
+    if (value !== undefined && value !== null) {
+      (merged[key] as unknown) = value;
+    }
+  }
+
+  return merged;
 }
 
 function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
@@ -718,14 +960,6 @@ function mentalStrainFromImpulse(impulse: number, impulseRef: number): number {
   return clamp(100 * (numerator / Math.max(denominator, EPSILON)), 0, 100);
 }
 
-function rollingP95(values: number[], fallback: number, floor: number): number {
-  if (values.length === 0) {
-    return fallback;
-  }
-
-  return Math.max(quantile(values, 0.95), floor);
-}
-
 function sleepReasonText(code: string): string {
   if (code === "SLEEP_UNDERSLEPT") {
     return "Sleep duration was below your personalized need.";
@@ -734,7 +968,10 @@ function sleepReasonText(code: string): string {
     return "Continuity was reduced by low efficiency or high awake time.";
   }
   if (code === "SLEEP_IRREGULAR_TIMING") {
-    return "Sleep midpoint shifted significantly from your 21-day baseline.";
+    return "Sleep timing regularity is low due to social jetlag or bedtime drift.";
+  }
+  if (code === "SLEEP_TIMING_SPARSE") {
+    return "Bed/wake timestamps are sparse, so timing regularity confidence is reduced.";
   }
   if (code === "SLEEP_STAGE_LOW_CONFIDENCE") {
     return "Stage data is incomplete or low-confidence, so stage effects are conservative.";
@@ -771,6 +1008,9 @@ function recoveryReasonText(code: string): string {
 }
 
 function targetReasonText(code: string): string {
+  if (code === "TARGET_PHYSICAL_NO_STATUS") {
+    return "Cardio model is still calibrating, so guidance uses baseline movement targets.";
+  }
   if (code === "TARGET_PHYSICAL_DETRAINING") {
     return "Cardio load is below your reference, so targets bias upward to rebuild.";
   }
@@ -803,6 +1043,15 @@ function targetReasonText(code: string): string {
   }
   if (code === "TARGET_MENTAL_BURNOUT_RISK") {
     return "Burnout-risk persistence was detected, so study targets were cut and recovery is prioritized.";
+  }
+  if (code === "TARGET_MENTAL_GATED_SPARSE") {
+    return "Sparse recent study coverage gated high-risk/high-load mental states to avoid unstable labels.";
+  }
+  if (code === "TARGET_CALIBRATING") {
+    return "Model calibration is in progress, so target bands are intentionally wider.";
+  }
+  if (code === "TARGET_DEGRADED") {
+    return "Recent training inactivity degraded model readiness, so aggressive targets are temporarily limited.";
   }
   if (code === "TARGET_EXAM_URGENCY_HIGH") {
     return "High exam urgency shifted targets toward strategic, focused workload.";
@@ -852,12 +1101,16 @@ function sanitizeHealthDay(raw: DailyHealthFact): DailyHealthFact {
   return next;
 }
 
-function sleepNeedForDay(index: number, rows: DailyRow[]): number {
+function sleepNeedForDay(index: number, rows: DailyRow[], goals: PerformanceGoals): number {
+  const teenMode = Number.isFinite(goals.ageYears) && goals.ageYears <= 18;
+  const anchor = teenMode ? SLEEP_NEED_TEEN_ANCHOR_MIN : SLEEP_NEED_ADULT_ANCHOR_MIN;
+  const minBound = teenMode ? SLEEP_NEED_TEEN_MIN : SLEEP_NEED_ADULT_MIN;
+
   if (index < MIN_BASELINE_DAYS || rows.length < MIN_BASELINE_DAYS) {
-    return SLEEP_NEED_ANCHOR_MIN;
+    return anchor;
   }
 
-  const start = Math.max(0, rows.length - DAYS_56);
+  const start = Math.max(0, rows.length - SLEEP_NEED_GOOD_SLEEP_WINDOW);
   const goodDayDurations: number[] = [];
 
   for (let i = start; i < rows.length; i += 1) {
@@ -867,19 +1120,25 @@ function sleepNeedForDay(index: number, rows: DailyRow[]): number {
     if (
       typeof row.sleepAsleepMin === "number" &&
       typeof row.sleepEfficiency === "number" &&
-      row.recoveryScore >= 60 &&
+      row.recoveryPhysOnly >= RECOVERY_PHYS_ONLY_LOW_THRESHOLD &&
       row.sleepEfficiency >= 0.85 &&
-      (prev?.physicalStrain ?? 0) <= 70
+      (prev?.physicalStrain ?? 0) <= 70 &&
+      (prev?.mentalStrain ?? 0) <= 70
     ) {
       goodDayDurations.push(row.sleepAsleepMin);
     }
   }
 
-  if (goodDayDurations.length < 7) {
-    return SLEEP_NEED_ANCHOR_MIN;
+  if (goodDayDurations.length < SLEEP_NEED_GOOD_SLEEP_MIN_COUNT) {
+    return anchor;
   }
 
-  return clamp(median(goodDayDurations), SLEEP_NEED_MIN, SLEEP_NEED_MAX);
+  const dataNeed = quantile(goodDayDurations, 0.6);
+  const w =
+    SLEEP_NEED_PERSONALIZATION_KAPPA /
+    (SLEEP_NEED_PERSONALIZATION_KAPPA + goodDayDurations.length);
+  const blendedNeed = w * anchor + (1 - w) * dataNeed;
+  return clamp(blendedNeed, minBound, SLEEP_NEED_MAX);
 }
 
 function physicalStateRationale(state: PhysicalLoadState, fi: number, ai: number, recovery: number): string {
@@ -898,7 +1157,9 @@ function buildTrainingCategory(
 ): TrainingCategory {
   let category: TrainingCategory;
 
-  if (physicalState === "overtraining_risk" || physicalState === "fatigued") {
+  if (physicalState === "no_status") {
+    category = "recovery";
+  } else if (physicalState === "overtraining_risk" || physicalState === "fatigued") {
     category = "rest_walk";
   } else if (physicalState === "detraining") {
     category = recoveryScore >= 60 ? "steady_run" : "easy_run";
@@ -990,14 +1251,14 @@ function runModel({
   let mcl = 0;
   let mal = 0;
 
-  let sleepDebtHours = 0;
-
   const sleepMidpointHistory: number[] = [];
+  const sleepIntervalsHistory: Array<{ bedtimeMin: number; wakeMin: number; date: string }> = [];
   const hrvLnHistory: number[] = [];
   const rhrHistory: number[] = [];
   const rrHistory: number[] = [];
   const impulseHistory: number[] = [];
   const mentalImpulseHistory: number[] = [];
+  const studyDayHistory: number[] = [];
   const ctlHistory: number[] = [];
   const atlHistory: number[] = [];
   const mclHistory: number[] = [];
@@ -1008,6 +1269,10 @@ function runModel({
   const maiHistory: number[] = [];
   const recoveryHistory: number[] = [];
   const mentalRecoveryHistory: number[] = [];
+  const qualifyingSessionCountHistory: number[] = [];
+  const qualifyingTrainingDayHistory: number[] = [];
+  const hasPhysioHistory: number[] = [];
+  const hasSleepHistory: number[] = [];
 
   const hrMaxCandidates: Array<{ date: string; value: number }> = [];
 
@@ -1020,7 +1285,7 @@ function runModel({
     const sessions = sessionsByDate.get(date) || [];
     const fallbackFlags: string[] = [];
 
-    const sleepNeedMin = sleepNeedForDay(dayIndex, rows);
+    const sleepNeedMin = sleepNeedForDay(dayIndex, rows, goals);
 
     let sleepAsleepMin =
       positiveFinite(health?.sleepAsleepHours) !== undefined
@@ -1044,17 +1309,41 @@ function runModel({
       fallbackFlags.push("sleep_invalid_duration");
     }
 
+    let sleepBedtimeMin =
+      localClockMinutesFromIso(health?.sleepBedtimeAt) ??
+      (typeof health?.sleepBedtimeHour === "number" && Number.isFinite(health.sleepBedtimeHour)
+        ? ((health.sleepBedtimeHour % 24) + 24) % 24 * 60
+        : undefined);
+
+    const sleepWakeMin =
+      localClockMinutesFromIso(health?.sleepWakeupAt) ??
+      (typeof sleepBedtimeMin === "number" && typeof sleepInBedMin === "number"
+        ? (sleepBedtimeMin + sleepInBedMin) % 1440
+        : typeof sleepBedtimeMin === "number" && typeof sleepAsleepMin === "number"
+        ? (sleepBedtimeMin + sleepAsleepMin) % 1440
+        : undefined);
+
+    if (
+      typeof sleepBedtimeMin !== "number" &&
+      typeof sleepWakeMin === "number" &&
+      typeof sleepAsleepMin === "number"
+    ) {
+      sleepBedtimeMin = ((sleepWakeMin - sleepAsleepMin) % 1440 + 1440) % 1440;
+    }
+
     let sleepMidpointMin =
       typeof health?.sleepMidpointHour === "number" && Number.isFinite(health.sleepMidpointHour)
         ? ((health.sleepMidpointHour % 24) + 24) % 24 * 60
         : undefined;
 
-    const sleepBedtimeMin =
-      typeof health?.sleepBedtimeHour === "number" && Number.isFinite(health.sleepBedtimeHour)
-        ? ((health.sleepBedtimeHour % 24) + 24) % 24 * 60
-        : undefined;
-
     if (
+      typeof sleepMidpointMin !== "number" &&
+      typeof sleepBedtimeMin === "number" &&
+      typeof sleepWakeMin === "number"
+    ) {
+      const wakeAdjusted = sleepWakeMin >= sleepBedtimeMin ? sleepWakeMin : sleepWakeMin + 1440;
+      sleepMidpointMin = ((sleepBedtimeMin + (wakeAdjusted - sleepBedtimeMin) / 2) % 1440 + 1440) % 1440;
+    } else if (
       typeof sleepMidpointMin !== "number" &&
       typeof sleepBedtimeMin === "number" &&
       typeof sleepAsleepMin === "number"
@@ -1079,15 +1368,17 @@ function runModel({
         return undefined;
       }
 
-      const deficit = Math.max(0, sleepNeedMin - sleepAsleepMin);
-      if (deficit > 0) {
-        const ratio = deficit / Math.max(DURATION_DEFICIT_SCALE * sleepNeedMin, 1);
-        return clamp(100 * Math.max(0, 1 - ratio ** 2), 0, 100);
+      if (sleepAsleepMin <= sleepNeedMin) {
+        const ratio = (sleepNeedMin - sleepAsleepMin) / Math.max(DURATION_DEFICIT_SCALE * sleepNeedMin, 1);
+        return clamp(100 * Math.exp(-(ratio ** 2)), 0, 100);
       }
 
-      const excess = Math.max(0, sleepAsleepMin - sleepNeedMin);
-      const ratio = Math.max(0, excess - OVERSLEEP_GRACE_MIN) / OVERSLEEP_PENALTY_WINDOW_MIN;
-      return clamp(100 - SLEEP_OVERSLEEP_MAX_PENALTY * ratio ** 2, 0, 100);
+      const oversleepRatio =
+        Math.max(0, sleepAsleepMin - sleepNeedMin - OVERSLEEP_GRACE_MIN) /
+        Math.max(OVERSLEEP_PENALTY_WINDOW_MIN, 1);
+      const oversleepPenalty =
+        SLEEP_OVERSLEEP_MAX_PENALTY * Math.min(1, oversleepRatio ** 2);
+      return clamp(100 - oversleepPenalty, 0, 100);
     })();
 
     const continuityScore = (() => {
@@ -1096,20 +1387,22 @@ function runModel({
       }
 
       const scoreEff = clamp(
-        (100 * (sleepEfficiency - CONTINUITY_EFF_MIN)) / CONTINUITY_EFF_SPAN,
+        (100 * (sleepEfficiency - CONTINUITY_EFF_POOR)) /
+          Math.max(CONTINUITY_EFF_GOOD - CONTINUITY_EFF_POOR, EPSILON),
         0,
         100,
       );
-      const penaltyAwake =
+      const wasoPenalty =
         typeof wasoMin === "number"
           ? CONTINUITY_AWAKE_PENALTY_MAX *
             clamp(
-              (wasoMin - CONTINUITY_AWAKE_BASE_MIN) / CONTINUITY_AWAKE_SPAN,
+              (wasoMin - CONTINUITY_AWAKE_GOOD_MIN) /
+                Math.max(CONTINUITY_AWAKE_MAX_MIN - CONTINUITY_AWAKE_GOOD_MIN, 1),
               0,
               1,
             )
           : 0;
-      return clamp(scoreEff - penaltyAwake, 0, 100);
+      return clamp(scoreEff - wasoPenalty, 0, 100);
     })();
 
     const midpointBaseline = circularMedianMinutes(
@@ -1121,10 +1414,128 @@ function runModel({
         ? circularDistanceMinutes(sleepMidpointMin, midpointBaseline)
         : undefined;
 
-    const regularityScore =
+    let regularityScore: number | undefined =
       typeof midpointDelta === "number"
-        ? clamp(100 / (1 + (midpointDelta / REGULARITY_SCALE_MIN) ** 2), 0, 100)
+        ? clamp(100 / (1 + (midpointDelta / 90) ** 2), 0, 100)
         : undefined;
+
+    const timingIntervals = [
+      ...sleepIntervalsHistory.slice(-SLEEP_SRI_WINDOW_DAYS),
+      ...(typeof sleepBedtimeMin === "number" && typeof sleepWakeMin === "number"
+        ? [{ bedtimeMin: sleepBedtimeMin, wakeMin: sleepWakeMin, date }]
+        : []),
+    ];
+
+    const sri14 = computeSRI14(
+      timingIntervals.map((item) => ({
+        bedtimeMin: item.bedtimeMin,
+        wakeMin: item.wakeMin,
+      })),
+    );
+
+    const socialJetlagMin = (() => {
+      if (timingIntervals.length < 4) {
+        return undefined;
+      }
+
+      const workMid: number[] = [];
+      const freeMid: number[] = [];
+
+      for (const interval of timingIntervals) {
+        const dayOfWeek = new Date(`${interval.date}T00:00:00`).getDay();
+        const wakeAdjusted =
+          interval.wakeMin >= interval.bedtimeMin
+            ? interval.wakeMin
+            : interval.wakeMin + 1440;
+        const mid = ((interval.bedtimeMin + (wakeAdjusted - interval.bedtimeMin) / 2) % 1440 + 1440) % 1440;
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+          freeMid.push(mid);
+        } else {
+          workMid.push(mid);
+        }
+      }
+
+      if (workMid.length < 2 || freeMid.length < 2) {
+        return undefined;
+      }
+
+      const workMean = circularMeanMinutes(workMid);
+      const freeMean = circularMeanMinutes(freeMid);
+      if (typeof workMean !== "number" || typeof freeMean !== "number") {
+        return undefined;
+      }
+
+      return circularDistanceMinutes(workMean, freeMean);
+    })();
+
+    const socialJetlagScore =
+      typeof socialJetlagMin === "number"
+        ? clamp(
+            100 *
+              (1 -
+                clamp(
+                  (socialJetlagMin - SLEEP_SJL_NO_PENALTY_MIN) /
+                    Math.max(SLEEP_SJL_MAX_PENALTY_MIN - SLEEP_SJL_NO_PENALTY_MIN, 1),
+                  0,
+                  1,
+                )),
+            0,
+            100,
+          )
+        : undefined;
+
+    const bedtimeDriftMinPerDay = (() => {
+      if (timingIntervals.length < 7) {
+        return undefined;
+      }
+
+      const series = timingIntervals.map((item) => item.bedtimeMin);
+      const slope = olsSlope(unwrapClockSeries(series));
+      if (typeof slope !== "number") {
+        return undefined;
+      }
+      return slope;
+    })();
+
+    const driftScore =
+      typeof bedtimeDriftMinPerDay === "number"
+        ? clamp(
+            100 *
+              (1 -
+                clamp(
+                  (Math.abs(bedtimeDriftMinPerDay) - SLEEP_DRIFT_TOLERANCE_MIN_PER_DAY) /
+                    Math.max(
+                      SLEEP_DRIFT_SEVERE_MIN_PER_DAY - SLEEP_DRIFT_TOLERANCE_MIN_PER_DAY,
+                      1,
+                    ),
+                  0,
+                  1,
+                )),
+            0,
+            100,
+          )
+        : undefined;
+
+    const timingSubcomponents: Array<{ score: number; weight: number }> = [];
+    if (typeof sri14 === "number") {
+      timingSubcomponents.push({ score: sri14, weight: 0.6 });
+    }
+    if (typeof socialJetlagScore === "number") {
+      timingSubcomponents.push({ score: socialJetlagScore, weight: 0.25 });
+    }
+    if (typeof driftScore === "number") {
+      timingSubcomponents.push({ score: driftScore, weight: 0.15 });
+    }
+
+    const timingScore =
+      timingSubcomponents.length > 0
+        ? timingSubcomponents.reduce((sum, item) => sum + item.score * item.weight, 0) /
+          timingSubcomponents.reduce((sum, item) => sum + item.weight, 0)
+        : undefined;
+
+    if (typeof timingScore === "number") {
+      regularityScore = timingScore;
+    }
 
     const deepMin =
       positiveFinite(health?.sleepDeepHours) !== undefined
@@ -1141,9 +1552,22 @@ function runModel({
       typeof deepMin === "number" &&
       typeof remMin === "number"
         ? clamp(
-            100 -
-              400 * Math.max(0, STAGE_DEEP_FLOOR - deepMin / sleepAsleepMin) -
-              250 * Math.max(0, STAGE_REM_FLOOR - remMin / sleepAsleepMin),
+            0.5 *
+              (100 *
+                clamp(
+                  (remMin / sleepAsleepMin - STAGE_REM_LOW) /
+                    Math.max(STAGE_REM_OK - STAGE_REM_LOW, EPSILON),
+                  0,
+                  1,
+                )) +
+              0.5 *
+                (100 *
+                  clamp(
+                    (deepMin / sleepAsleepMin - STAGE_N3_LOW) /
+                      Math.max(STAGE_N3_OK - STAGE_N3_LOW, EPSILON),
+                    0,
+                    1,
+                  )),
             0,
             100,
           )
@@ -1165,51 +1589,66 @@ function runModel({
         weight: SLEEP_WEIGHT_CONTINUITY,
       });
     }
-    if (typeof regularityScore === "number") {
+    if (typeof timingScore === "number") {
       sleepComponents.push({
-        key: "regularity",
-        value: regularityScore,
-        weight: SLEEP_WEIGHT_REGULARITY,
-      });
-    }
-    if (typeof stagesScore === "number") {
-      sleepComponents.push({
-        key: "stages",
-        value: stagesScore,
-        weight: SLEEP_WEIGHT_STAGES,
+        key: "timing",
+        value: timingScore,
+        weight: SLEEP_WEIGHT_TIMING,
       });
     } else {
+      fallbackFlags.push("sleep_timing_sparse");
+    }
+    if (typeof stagesScore !== "number") {
       fallbackFlags.push("sleep_stage_missing");
       fallbackFlags.push("sleep_stage_neutral");
     }
 
-    if (typeof sleepMidpointMin !== "number") {
+    if (typeof sleepBedtimeMin !== "number" || typeof sleepWakeMin !== "number") {
       fallbackFlags.push("sleep_midpoint_missing");
     }
 
     const sleepWeightSum = sleepComponents.reduce((sum, item) => sum + item.weight, 0);
-    const sleepScore =
+    const baseSleepScore =
       sleepWeightSum > 0
-        ? clamp(
-            sleepComponents.reduce(
-              (sum, item) => sum + item.value * (item.weight / sleepWeightSum),
-              0,
-            ),
+        ? sleepComponents.reduce(
+            (sum, item) => sum + item.value * (item.weight / sleepWeightSum),
             0,
-            100,
           )
         : 50;
+
+    const stageDelta =
+      typeof stagesScore === "number"
+        ? clamp(
+            (stagesScore - 50) * (SLEEP_WEIGHT_STAGES * 2),
+            -STAGE_CONTRIBUTION_CAP,
+            STAGE_CONTRIBUTION_CAP,
+          )
+        : 0;
+
+    const sleepScore = clamp(baseSleepScore + stageDelta, 0, 100);
 
     const sleepContribution: Record<string, number> = {
       duration: 0,
       continuity: 0,
+      timing: 0,
       regularity: 0,
+      socialJetlag: 0,
+      drift: 0,
+      sri14: 0,
       stages: 0,
     };
 
     for (const item of sleepComponents) {
-      sleepContribution[item.key] = round(item.value * (item.weight / Math.max(sleepWeightSum, EPSILON)), 2);
+      sleepContribution[item.key] = round(
+        item.value * (item.weight / Math.max(sleepWeightSum, EPSILON)),
+        2,
+      );
     }
+    sleepContribution.regularity = sleepContribution.timing;
+    sleepContribution.stages = round(stageDelta, 2);
+    sleepContribution.sri14 = round(sri14 || 0, 2);
+    sleepContribution.socialJetlag = round(socialJetlagScore || 0, 2);
+    sleepContribution.drift = round(driftScore || 0, 2);
 
     const sleepReasonCodes: string[] = [];
 
@@ -1217,21 +1656,29 @@ function runModel({
       sleepReasonCodes.push("SLEEP_UNDERSLEPT");
     }
     if (
-      (typeof sleepEfficiency === "number" && sleepEfficiency < 0.85) ||
-      (typeof wasoMin === "number" && wasoMin > 30)
+      (typeof sleepEfficiency === "number" && sleepEfficiency < CONTINUITY_EFF_GOOD) ||
+      (typeof wasoMin === "number" && wasoMin > CONTINUITY_AWAKE_GOOD_MIN)
     ) {
       sleepReasonCodes.push("SLEEP_FRAGMENTED");
     }
-    if (typeof midpointDelta === "number" && midpointDelta > 60) {
+    if (
+      (typeof timingScore === "number" && timingScore < 65) ||
+      (typeof socialJetlagMin === "number" && socialJetlagMin > SLEEP_SJL_NO_PENALTY_MIN) ||
+      (typeof bedtimeDriftMinPerDay === "number" &&
+        Math.abs(bedtimeDriftMinPerDay) > SLEEP_DRIFT_TOLERANCE_MIN_PER_DAY)
+    ) {
       sleepReasonCodes.push("SLEEP_IRREGULAR_TIMING");
+    }
+    if (typeof timingScore !== "number") {
+      sleepReasonCodes.push("SLEEP_TIMING_SPARSE");
     }
     if (typeof stagesScore !== "number") {
       sleepReasonCodes.push("SLEEP_STAGE_LOW_CONFIDENCE");
     }
     if (
       typeof sleepAsleepMin === "number" &&
-      sleepAsleepMin > sleepNeedMin + 60 &&
-      (sleepEfficiency || 0) >= 0.85
+      sleepAsleepMin > sleepNeedMin + OVERSLEEP_GRACE_MIN &&
+      (sleepEfficiency || 0) >= CONTINUITY_EFF_GOOD
     ) {
       sleepReasonCodes.push("SLEEP_OVERSLEPT_NEUTRAL");
     }
@@ -1251,15 +1698,18 @@ function runModel({
     if ((durationScore || 0) >= 85) {
       sleepHighReasons.push("Sleep duration was close to your personalized need.");
     }
-    if ((continuityScore || 0) >= 80) {
+    if ((continuityScore || 0) >= 80 && (wasoMin || 0) <= CONTINUITY_AWAKE_GOOD_MIN) {
       sleepHighReasons.push("Sleep continuity was strong with limited awake time.");
     }
-    if ((regularityScore || 0) >= 75) {
-      sleepHighReasons.push("Sleep midpoint remained stable versus baseline.");
+    if ((timingScore || 0) >= 75) {
+      sleepHighReasons.push("Sleep timing was stable across regularity, social jetlag, and drift signals.");
     }
 
     const sleepMessages = [
       `You slept ${(sleepAsleepMin || 0) / 60 >= 0 ? ((sleepAsleepMin || 0) / 60).toFixed(1) : "0.0"}h vs need ${(sleepNeedMin / 60).toFixed(1)}h.`,
+      typeof sri14 === "number"
+        ? `Timing score ${(timingScore || 0).toFixed(1)} (SRI ${sri14.toFixed(1)}, SJL ${(socialJetlagMin || 0).toFixed(0)} min, drift ${(bedtimeDriftMinPerDay || 0).toFixed(1)} min/day).`
+        : "Timing score is conservative because bed/wake history is incomplete.",
       ...sleepReasonCodes.slice(0, 3).map(sleepReasonText),
     ];
 
@@ -1284,7 +1734,11 @@ function runModel({
       typeof hrvLn === "number"
         ? robustZ(
             hrvLn,
-            recentValues(hrvLnHistory.slice(0, Math.max(0, hrvLnHistory.length - 1)), DAYS_28),
+            recentValues(
+              hrvLnHistory.slice(0, Math.max(0, hrvLnHistory.length - 1)),
+              RECOVERY_BASELINE_WINDOW_DAYS,
+            ),
+            true,
           )
         : undefined;
 
@@ -1292,8 +1746,10 @@ function runModel({
       typeof restingHr === "number"
         ? robustZ(
             restingHr,
-            recentValues(rhrHistory.slice(0, Math.max(0, rhrHistory.length - 1)), DAYS_28),
-            true,
+            recentValues(
+              rhrHistory.slice(0, Math.max(0, rhrHistory.length - 1)),
+              RECOVERY_BASELINE_WINDOW_DAYS,
+            ),
           )
         : undefined;
 
@@ -1301,14 +1757,16 @@ function runModel({
       typeof respRate === "number"
         ? robustZ(
             respRate,
-            recentValues(rrHistory.slice(0, Math.max(0, rrHistory.length - 1)), DAYS_28),
-            true,
+            recentValues(
+              rrHistory.slice(0, Math.max(0, rrHistory.length - 1)),
+              RECOVERY_BASELINE_WINDOW_DAYS,
+            ),
           )
         : undefined;
 
-    const compHrv = typeof zHrv === "number" ? clamp(50 + 20 * zHrv, 0, 100) : undefined;
-    const compRhr = typeof zRhr === "number" ? clamp(50 + 20 * zRhr, 0, 100) : undefined;
-    const compRr = typeof zRr === "number" ? clamp(50 + 15 * zRr, 0, 100) : undefined;
+    const compHrv = typeof zHrv === "number" ? clamp(50 - 12.5 * zHrv, 0, 100) : undefined;
+    const compRhr = typeof zRhr === "number" ? clamp(50 - 12.5 * zRhr, 0, 100) : undefined;
+    const compRr = typeof zRr === "number" ? clamp(50 - 12.5 * zRr, 0, 100) : undefined;
 
     const hrMaxCandidatesBefore = hrMaxCandidates.filter(
       (item) =>
@@ -1347,8 +1805,10 @@ function runModel({
     })();
 
     let physicalImpulse = 0;
+    let physicalTrainingImpulse = 0;
     let physicalImpulseWorkout = 0;
     let physicalImpulseFallback = 0;
+    let qualifyingSessions = 0;
     let methodUsed: DailyRow["workoutMethod"] = "none";
 
     for (const workout of workouts) {
@@ -1362,20 +1822,29 @@ function runModel({
 
       let sessionTrimp = 0;
       let sessionMethod: DailyRow["workoutMethod"] = "none";
+      let sessionAvgHrr: number | undefined;
+      let sessionMetEstimate: number | undefined;
 
       if (hrSeries.length > 0 && hrMaxEst - rhrBaseline > 1) {
+        const avgHrr =
+          hrSeries.reduce((sum, hr) => {
+            const hrr = clamp((hr - rhrBaseline) / Math.max(hrMaxEst - rhrBaseline, 1), 0, 1);
+            return sum + hrr;
+          }, 0) / hrSeries.length;
         const avgContribution =
           hrSeries.reduce((sum, hr) => {
             const hrr = clamp((hr - rhrBaseline) / Math.max(hrMaxEst - rhrBaseline, 1), 0, 1);
-            return sum + hrr * Math.exp(1.8 * hrr);
+            return sum + hrr * TRIMP_A_UNKNOWN * Math.exp(TRIMP_K_UNKNOWN * hrr);
           }, 0) / hrSeries.length;
+        sessionAvgHrr = avgHrr;
         sessionTrimp = durationMin * avgContribution;
         sessionMethod = "hr_series";
       } else {
         const avgHr = workoutAverageHeartRate(workout);
         if (typeof avgHr === "number" && hrMaxEst - rhrBaseline > 1) {
           const hrr = clamp((avgHr - rhrBaseline) / Math.max(hrMaxEst - rhrBaseline, 1), 0, 1);
-          sessionTrimp = durationMin * hrr * Math.exp(1.8 * hrr);
+          sessionAvgHrr = hrr;
+          sessionTrimp = durationMin * hrr * TRIMP_A_UNKNOWN * Math.exp(TRIMP_K_UNKNOWN * hrr);
           sessionMethod = "avg_hr";
         } else {
           const mode = classifyWorkoutMode(workout);
@@ -1389,7 +1858,12 @@ function runModel({
             const vo2 = mode === "walk" ? 0.1 * speedMPerMin + 3.5 : 0.2 * speedMPerMin + 3.5;
             const met = Math.max(1, vo2 / 3.5);
             const hrrProxy = clamp((met - 1.5) / 10, 0.2, 0.95);
-            sessionTrimp = durationMin * hrrProxy * Math.exp(1.8 * hrrProxy);
+            sessionMetEstimate = met;
+            sessionTrimp =
+              durationMin *
+              hrrProxy *
+              TRIMP_A_UNKNOWN *
+              Math.exp(TRIMP_K_UNKNOWN * hrrProxy);
             sessionMethod = "pace";
           } else {
             const activeKcal =
@@ -1407,7 +1881,11 @@ function runModel({
               const baselineRate = history.length >= 3 ? median(recentValues(history, DAYS_42)) : kcalPerMin;
               const norm = kcalPerMin / Math.max(baselineRate, 0.1);
               const hrrProxy = clamp(0.35 + 0.25 * (norm - 1), 0.2, 0.9);
-              sessionTrimp = durationMin * hrrProxy * Math.exp(1.8 * hrrProxy);
+              sessionTrimp =
+                durationMin *
+                hrrProxy *
+                TRIMP_A_UNKNOWN *
+                Math.exp(TRIMP_K_UNKNOWN * hrrProxy);
               sessionMethod = "energy";
 
               history.push(kcalPerMin);
@@ -1418,6 +1896,20 @@ function runModel({
       }
 
       physicalImpulse += sessionTrimp;
+      const qualifyingByHrr =
+        typeof sessionAvgHrr === "number" &&
+        durationMin >= QUALIFYING_HRR_DURATION_MIN &&
+        sessionAvgHrr >= QUALIFYING_HRR_THRESHOLD;
+      const qualifyingByMet =
+        typeof sessionMetEstimate === "number" &&
+        durationMin >= QUALIFYING_MET_DURATION_MIN &&
+        sessionMetEstimate >= QUALIFYING_MET_THRESHOLD;
+
+      if (qualifyingByHrr || qualifyingByMet) {
+        qualifyingSessions += 1;
+        physicalTrainingImpulse += sessionTrimp;
+      }
+
       if (sessionMethod === "hr_series" || sessionMethod === "avg_hr") {
         physicalImpulseWorkout += sessionTrimp;
       } else {
@@ -1435,11 +1927,14 @@ function runModel({
       }
     }
 
+    const qualifyingTrainingDay = qualifyingSessions > 0;
+
     if (physicalImpulse === 0 && workouts.length > 0) {
       fallbackFlags.push("physical_unscored_workouts");
     }
 
     const examUrgency = computeExamUrgency(date, exams, todos);
+    const pressureScore = 100 * clamp(examUrgency, 0, 1);
 
     const sessionImpulseBase = sessions.reduce((sum, session) => {
       const durationMin = Math.max(0, session.durationSec / 60);
@@ -1447,37 +1942,75 @@ function runModel({
         return sum;
       }
 
-      return sum + durationMin * (1 + 0.003 * Math.max(0, durationMin - 60));
+      const raw = durationMin * (1 + 0.003 * Math.max(0, durationMin - 60));
+      const capped = Math.min(raw, 3 * durationMin);
+      return sum + capped;
     }, 0);
 
-    let mentalImpulse = sessionImpulseBase * (1 + 0.5 * examUrgency);
-    if (sessions.length === 0) {
-      mentalImpulse = MENTAL_STRAIN_COLD_REF * examUrgency;
+    const mentalBackgroundImpulse =
+      sessionImpulseBase > 0 ? 0 : MENTAL_BACKGROUND_LOAD_MAX * examUrgency;
+
+    const mentalImpulse = sessionImpulseBase > 0 ? sessionImpulseBase : mentalBackgroundImpulse;
+    if (sessionImpulseBase <= 0 && examUrgency > 0) {
+      fallbackFlags.push("mental_background_from_pressure");
+    }
+
+    if (sessions.length === 0 && examUrgency > 0) {
       if (examUrgency > 0) {
         fallbackFlags.push("mental_from_exam_urgency");
       }
     }
 
-    ctl = ewmaTau(ctl, physicalImpulse, TAU_CTL_DAYS);
-    atl = ewmaTau(atl, physicalImpulse, TAU_ATL_DAYS);
+    ctl = ewmaTau(ctl, physicalTrainingImpulse, TAU_CTL_DAYS);
+    atl = ewmaTau(atl, physicalTrainingImpulse, TAU_ATL_DAYS);
     mcl = ewmaTau(mcl, mentalImpulse, TAU_MCL_DAYS);
     mal = ewmaTau(mal, mentalImpulse, TAU_MAL_DAYS);
 
-    const physicalRef =
-      impulseHistory.length >= 14
-        ? rollingP95(recentValues(impulseHistory, DAYS_180), PHYSICAL_STRAIN_COLD_REF, PHYSICAL_STRAIN_MIN_REF)
-        : PHYSICAL_STRAIN_COLD_REF;
+    const physicalRefWindow = recentValues(impulseHistory, PHYSICAL_STRAIN_REF_WINDOW_DAYS).filter(
+      (value) => value > 0,
+    );
+    const physicalRefValidDays = physicalRefWindow.length;
+    let physicalRef = PHYSICAL_STRAIN_COLD_REF;
+    let physicalRefShrinkWeight = 1;
+    if (physicalRefValidDays >= PHYSICAL_STRAIN_REF_NMIN) {
+      physicalRef = Math.max(
+        PHYSICAL_STRAIN_MIN_REF,
+        quantile(physicalRefWindow, 0.95),
+      );
+      physicalRefShrinkWeight =
+        PHYSICAL_STRAIN_REF_KAPPA /
+        (PHYSICAL_STRAIN_REF_KAPPA + physicalRefValidDays);
+      physicalRef =
+        physicalRefShrinkWeight * PHYSICAL_STRAIN_COLD_REF +
+        (1 - physicalRefShrinkWeight) * physicalRef;
+    }
 
-    const mentalRef =
-      mentalImpulseHistory.length >= 14
-        ? rollingP95(recentValues(mentalImpulseHistory, DAYS_180), MENTAL_STRAIN_COLD_REF, MENTAL_STRAIN_MIN_REF)
-        : MENTAL_STRAIN_COLD_REF;
+    const mentalRefWindow = recentValues(mentalImpulseHistory, MENTAL_STRAIN_REF_WINDOW_DAYS).filter(
+      (value) => value > 0,
+    );
+    const mentalRefValidDays = mentalRefWindow.length;
+    let mentalRef = MENTAL_STRAIN_COLD_REF;
+    let mentalRefShrinkWeight = 1;
+    if (mentalRefValidDays >= MENTAL_STRAIN_REF_NMIN) {
+      mentalRef = Math.max(
+        MENTAL_STRAIN_MIN_REF,
+        quantile(mentalRefWindow, 0.95),
+      );
+      mentalRefShrinkWeight =
+        MENTAL_STRAIN_REF_KAPPA /
+        (MENTAL_STRAIN_REF_KAPPA + mentalRefValidDays);
+      mentalRef =
+        mentalRefShrinkWeight * MENTAL_STRAIN_COLD_REF +
+        (1 - mentalRefShrinkWeight) * mentalRef;
+    }
 
     const physicalStrain = physicalStrainFromImpulse(physicalImpulse, physicalRef);
     const mentalStrain = mentalStrainFromImpulse(mentalImpulse, mentalRef);
 
     const prevPhysicalStrain = physicalStrainHistory.length > 0 ? physicalStrainHistory[physicalStrainHistory.length - 1] : 0;
     const prevMentalStrain = mentalStrainHistory.length > 0 ? mentalStrainHistory[mentalStrainHistory.length - 1] : 0;
+    const prevPhysicalConfidence = rows.length > 0 ? rows[rows.length - 1].physicalConfidence : 0;
+    const prevMentalConfidence = rows.length > 0 ? rows[rows.length - 1].mentalConfidence : 0;
 
     const recoveryComponents: Array<{ key: string; value: number; weight: number }> = [
       { key: "sleep", value: sleepScore, weight: RECOVERY_SLEEP_WEIGHT },
@@ -1501,8 +2034,30 @@ function runModel({
           )
         : sleepScore;
 
+    const physiologyOnlyComponents: Array<{ value: number; weight: number }> = [];
+    if (typeof compHrv === "number") {
+      physiologyOnlyComponents.push({ value: compHrv, weight: RECOVERY_HRV_WEIGHT });
+    }
+    if (typeof compRhr === "number") {
+      physiologyOnlyComponents.push({ value: compRhr, weight: RECOVERY_RHR_WEIGHT });
+    }
+    if (typeof compRr === "number") {
+      physiologyOnlyComponents.push({ value: compRr, weight: RECOVERY_RR_WEIGHT });
+    }
+
+    const physiologyWeightSum = physiologyOnlyComponents.reduce((sum, item) => sum + item.weight, 0);
+    const recoveryPhysOnly =
+      physiologyWeightSum > 0
+        ? physiologyOnlyComponents.reduce(
+            (sum, item) => sum + item.value * (item.weight / physiologyWeightSum),
+            0,
+          )
+        : 50;
+
     const recoveryScore = clamp(
-      recoveryBase - 0.1 * prevPhysicalStrain - 0.05 * prevMentalStrain,
+      recoveryBase -
+        0.1 * prevPhysicalConfidence * prevPhysicalStrain -
+        0.05 * prevMentalConfidence * prevMentalStrain,
       0,
       100,
     );
@@ -1522,13 +2077,13 @@ function runModel({
     const mentalRecovery = clamp(mentalRecoveryBase - 0.05 * prevMentalStrain, 0, 100);
 
     const recoveryReasonCodes: string[] = [];
-    if ((zHrv || 0) <= -1) {
+    if ((zHrv || 0) >= 1) {
       recoveryReasonCodes.push("RECOVERY_HRV_LOW");
     }
-    if ((zRhr || 0) <= -1) {
+    if ((zRhr || 0) >= 1) {
       recoveryReasonCodes.push("RECOVERY_RHR_HIGH");
     }
-    if ((zRr || 0) <= -1) {
+    if ((zRr || 0) >= 1) {
       recoveryReasonCodes.push("RECOVERY_RR_HIGH");
     }
     if (sleepScore < 60) {
@@ -1557,7 +2112,11 @@ function runModel({
         typeof compRr === "number"
           ? round((RECOVERY_RR_WEIGHT / recoveryWeightSum) * compRr, 2)
           : 0,
-      loadPenalty: round(-0.1 * prevPhysicalStrain - 0.05 * prevMentalStrain, 2),
+      loadPenalty: round(
+        -0.1 * prevPhysicalConfidence * prevPhysicalStrain -
+          0.05 * prevMentalConfidence * prevMentalStrain,
+        2,
+      ),
     };
 
     const recoveryMessages = [
@@ -1624,6 +2183,7 @@ function runModel({
         : ctlRefCandidates30.length > 0
         ? median(ctlRefCandidates30)
         : 50;
+    const ctlRefEffective = Math.max(ctlRef, AI_CTL_FLOOR);
 
     const mclRefCandidates90 = recentValues(mclHistory, DAYS_90).filter((value) => value > 0);
     const mclRefCandidates30 = recentValues(mclHistory, DAYS_30).filter((value) => value > 0);
@@ -1633,11 +2193,22 @@ function runModel({
         : mclRefCandidates30.length > 0
         ? median(mclRefCandidates30)
         : 50;
+    const mclRefEffective = Math.max(mclRef, MAI_MCL_FLOOR);
 
-    const fi = ctl / Math.max(ctlRef, EPSILON);
-    const ai = (atl - ctl) / Math.max(ctlRef, EPSILON);
-    const mfi = mcl / Math.max(mclRef, EPSILON);
-    const mai = (mal - mcl) / Math.max(mclRef, EPSILON);
+    const fi = ctl / Math.max(ctlRefEffective, EPSILON);
+    const ai = (atl - ctl) / Math.max(ctlRefEffective, EPSILON);
+    const mfi = mcl / Math.max(mclRefEffective, EPSILON);
+
+    const studyDays14 =
+      recentValues(studyDayHistory, DAYS_14).reduce((sum, value) => sum + value, 0) +
+      (sessionImpulseBase > 0 ? 1 : 0);
+    const studyDays42 =
+      recentValues(studyDayHistory, DAYS_42).reduce((sum, value) => sum + value, 0) +
+      (sessionImpulseBase > 0 ? 1 : 0);
+    const studyCoverage14 = clamp(studyDays14 / DAYS_14, 0, 1);
+    const maiRaw = (mal - mcl) / Math.max(mclRefEffective, EPSILON);
+    const maiShrinkFactor = Math.sqrt(studyCoverage14);
+    const mai = clamp(maiShrinkFactor * maiRaw, MAI_MIN_CLAMP, MAI_MAX_CLAMP);
 
     aiHistory.push(ai);
     maiHistory.push(mai);
@@ -1650,6 +2221,70 @@ function runModel({
     const recoveryLow3 =
       recentValues(recoveryHistory, 3).length >= 3 &&
       recentValues(recoveryHistory, 3).every((value) => value <= 45);
+
+    const effectiveTrainingDays28 =
+      recentValues(qualifyingTrainingDayHistory, DAYS_28).reduce((sum, value) => sum + value, 0) +
+      (qualifyingTrainingDay ? 1 : 0);
+    const effectiveTrainingDays42 =
+      recentValues(qualifyingTrainingDayHistory, DAYS_42).reduce((sum, value) => sum + value, 0) +
+      (qualifyingTrainingDay ? 1 : 0);
+    const qualifyingSessionCount42 =
+      recentValues(qualifyingSessionCountHistory, DAYS_42).reduce((sum, value) => sum + value, 0) +
+      qualifyingSessions;
+    const lifetimeQualifyingSessions =
+      qualifyingSessionCountHistory.reduce((sum, value) => sum + value, 0) + qualifyingSessions;
+
+    const lastQualifyingSessionDate = (() => {
+      if (qualifyingTrainingDay) {
+        return date;
+      }
+      for (let idx = rows.length - 1; idx >= 0; idx -= 1) {
+        if (rows[idx].qualifyingTrainingDay) {
+          return rows[idx].date;
+        }
+      }
+      return undefined;
+    })();
+
+    const daysSinceLastQualifying =
+      typeof lastQualifyingSessionDate === "string"
+        ? Math.max(
+            0,
+            Math.floor(
+              (new Date(`${date}T00:00:00`).getTime() -
+                new Date(`${lastQualifyingSessionDate}T00:00:00`).getTime()) /
+                86_400_000,
+            ),
+          )
+        : Number.POSITIVE_INFINITY;
+
+    let physicalCalibrationPhase: DailyRow["physicalCalibrationPhase"] = "calibrating";
+    const physicalCalibrationReasonCodes: string[] = [];
+
+    if (effectiveTrainingDays42 === 0 && lifetimeQualifyingSessions < 3) {
+      physicalCalibrationPhase = "uninitialized";
+      physicalCalibrationReasonCodes.push("CALIBRATION_UNINITIALIZED");
+    } else if (daysSinceLastQualifying >= 14) {
+      physicalCalibrationPhase = "degraded";
+      physicalCalibrationReasonCodes.push("CALIBRATION_DEGRADED_NO_QUALIFYING_14D");
+    } else if (
+      (lifetimeQualifyingSessions >= 3 && lifetimeQualifyingSessions <= 9) ||
+      effectiveTrainingDays28 < 7 ||
+      effectiveTrainingDays42 < 10
+    ) {
+      physicalCalibrationPhase = "calibrating";
+      physicalCalibrationReasonCodes.push("CALIBRATION_BUILDING_HISTORY");
+    } else if (
+      effectiveTrainingDays28 >= 7 &&
+      effectiveTrainingDays42 >= 10 &&
+      qualifyingSessionCount42 >= 12
+    ) {
+      physicalCalibrationPhase = "calibrated";
+      physicalCalibrationReasonCodes.push("CALIBRATION_READY");
+    } else {
+      physicalCalibrationPhase = "calibrating";
+      physicalCalibrationReasonCodes.push("CALIBRATION_BUILDING_HISTORY");
+    }
 
     let physicalState: PhysicalLoadState;
     if (overtrainPersist && recoveryLow3) {
@@ -1666,6 +2301,26 @@ function runModel({
       physicalState = "detraining";
     } else {
       physicalState = "maintaining";
+    }
+
+    if (physicalCalibrationPhase === "uninitialized") {
+      physicalState = "no_status";
+    } else if (physicalCalibrationPhase === "calibrating") {
+      if (
+        physicalState === "productive" ||
+        physicalState === "peaking" ||
+        physicalState === "overtraining_risk"
+      ) {
+        if (ai >= 0.25 && recoveryScore < 45) {
+          physicalState = "fatigued";
+        } else {
+          physicalState = fi < 0.75 ? "detraining" : "maintaining";
+        }
+      }
+    } else if (physicalCalibrationPhase === "degraded") {
+      if (physicalState === "productive" || physicalState === "peaking") {
+        physicalState = fi < 0.75 ? "detraining" : "maintaining";
+      }
     }
 
     const burnoutPersist =
@@ -1706,7 +2361,60 @@ function runModel({
       mentalState = "maintaining";
     }
 
+    const baseMentalConfidence =
+      0.9 * studyCoverage14 * (mclRefEffective <= MAI_MCL_FLOOR + EPSILON ? 0.7 : 1);
+    const mentalStateGatingTriggered =
+      studyDays14 < 3 ||
+      baseMentalConfidence < 0.5 ||
+      mclRefEffective <= MAI_MCL_FLOOR + EPSILON;
+    const severeLowMentalRecoveryPersist =
+      recentValues(mentalRecoveryHistory, 5).filter((value) => value < 35).length >= 3 &&
+      pressureScore >= 70;
+
+    let maiStateGated = false;
+    if (
+      mentalStateGatingTriggered &&
+      !severeLowMentalRecoveryPersist &&
+      (mentalState === "peaking" ||
+        mentalState === "fatigued" ||
+        mentalState === "burnout_risk" ||
+        mentalState === "productive")
+    ) {
+      mentalState = mfi < 0.9 ? "underloaded" : "maintaining";
+      maiStateGated = true;
+    }
+
+    const mentalCalibrationPhase: DailyRow["mentalCalibrationPhase"] =
+      studyDays14 < 3
+        ? "sparse"
+        : studyDays42 >= 10
+        ? "calibrated"
+        : "calibrating";
+    const mentalCalibrationReasonCodes: string[] = [];
+    if (mentalCalibrationPhase === "sparse") {
+      mentalCalibrationReasonCodes.push("MENTAL_CALIBRATION_SPARSE_STUDY");
+    } else if (mentalCalibrationPhase === "calibrating") {
+      mentalCalibrationReasonCodes.push("MENTAL_CALIBRATION_BUILDING_HISTORY");
+    } else {
+      mentalCalibrationReasonCodes.push("MENTAL_CALIBRATION_READY");
+    }
+
+    const physicalReadiness = clamp(
+      0.5 * Math.min(1, effectiveTrainingDays28 / 7) +
+        0.3 * Math.min(1, effectiveTrainingDays42 / 10) +
+        0.2 * Math.min(1, qualifyingSessionCount42 / 12),
+      0,
+      1,
+    );
+    const mentalReadiness = clamp(
+      0.7 * studyCoverage14 + 0.3 * Math.min(1, studyDays42 / 10),
+      0,
+      1,
+    );
+    const noStatusPhysicalState = physicalState === "no_status";
+
     const physicalBaseMult: Record<PhysicalLoadState, number> = {
+      no_status: 1,
       detraining: 1.25,
       maintaining: 1,
       productive: 1.35,
@@ -1727,15 +2435,28 @@ function runModel({
     const physicalMultRecovery = 0.5 + recoveryScore / 200;
     const physicalMultExam = examUrgency >= 0.7 ? 0.85 : examUrgency >= 0.4 ? 0.95 : 1;
 
-    const physicalTargetCenterRaw =
-      ctl * physicalBaseMult[physicalState] * physicalMultRecovery * physicalMultExam;
+    let physicalTargetCenterRaw =
+      Math.max(ctl, 1) *
+      physicalBaseMult[physicalState] *
+      physicalMultRecovery *
+      physicalMultExam;
+
+    if (physicalState === "no_status") {
+      physicalTargetCenterRaw = 0.3 * PHYSICAL_STRAIN_COLD_REF;
+    }
 
     let physicalTargetMinRaw: number;
     let physicalTargetMaxRaw: number;
 
-    if (physicalState === "fatigued" || physicalState === "overtraining_risk") {
+    if (physicalState === "no_status") {
+      physicalTargetMinRaw = 0.2 * PHYSICAL_STRAIN_COLD_REF;
+      physicalTargetMaxRaw = 0.4 * PHYSICAL_STRAIN_COLD_REF;
+    } else if (physicalState === "fatigued" || physicalState === "overtraining_risk") {
       physicalTargetMinRaw = 0;
       physicalTargetMaxRaw = physicalTargetCenterRaw;
+    } else if (physicalCalibrationPhase === "calibrating") {
+      physicalTargetMinRaw = 0.7 * physicalTargetCenterRaw;
+      physicalTargetMaxRaw = 1.3 * physicalTargetCenterRaw;
     } else {
       physicalTargetMinRaw = 0.8 * physicalTargetCenterRaw;
       physicalTargetMaxRaw = 1.2 * physicalTargetCenterRaw;
@@ -1746,7 +2467,12 @@ function runModel({
       physicalState === "maintaining" ||
       physicalState === "productive";
 
-    const physicalHardCap = buildState ? 1.6 * ctl : 1.3 * ctl;
+    const physicalHardCap =
+      physicalCalibrationPhase === "calibrating"
+        ? 1.2 * Math.max(ctl, 1)
+        : buildState
+        ? 1.6 * Math.max(ctl, 1)
+        : 1.3 * Math.max(ctl, 1);
     if (physicalHardCap > 0) {
       physicalTargetMaxRaw = Math.min(physicalTargetMaxRaw, physicalHardCap);
     }
@@ -1761,12 +2487,18 @@ function runModel({
     const mentalMultPhysical =
       physicalState === "fatigued" || physicalState === "overtraining_risk" ? 0.9 : 1;
 
-    const mentalTargetCenterRaw =
+    let mentalTargetCenterRaw =
       mcl *
       mentalBaseMult[mentalState] *
       mentalMultRecovery *
       mentalMultExam *
       mentalMultPhysical;
+
+    const baselineStudyImpulse = Math.max(30, goals.baselineStudyHours * 60);
+    if (mentalCalibrationPhase !== "calibrated") {
+      const shrink = mentalCalibrationPhase === "sparse" ? 0.75 : 0.4;
+      mentalTargetCenterRaw = shrink * baselineStudyImpulse + (1 - shrink) * mentalTargetCenterRaw;
+    }
 
     let mentalTargetMinRaw: number;
     let mentalTargetMaxRaw: number;
@@ -1774,13 +2506,18 @@ function runModel({
     if (mentalState === "fatigued" || mentalState === "burnout_risk") {
       mentalTargetMinRaw = 0;
       mentalTargetMaxRaw = mentalTargetCenterRaw;
+    } else if (mentalCalibrationPhase === "sparse") {
+      mentalTargetMinRaw = 0.7 * mentalTargetCenterRaw;
+      mentalTargetMaxRaw = 1.3 * mentalTargetCenterRaw;
     } else {
       mentalTargetMinRaw = 0.8 * mentalTargetCenterRaw;
       mentalTargetMaxRaw = 1.2 * mentalTargetCenterRaw;
     }
 
-    if (mcl > 0) {
-      mentalTargetMaxRaw = Math.min(mentalTargetMaxRaw, 1.6 * mcl);
+    const mentalCapBase =
+      mentalCalibrationPhase === "calibrated" ? mcl : Math.max(mcl, baselineStudyImpulse);
+    if (mentalCapBase > 0) {
+      mentalTargetMaxRaw = Math.min(mentalTargetMaxRaw, 1.6 * mentalCapBase);
     }
     mentalTargetMinRaw = clamp(mentalTargetMinRaw, 0, Math.max(mentalTargetMaxRaw, 0));
 
@@ -1801,7 +2538,9 @@ function runModel({
     );
 
     const studyRationale =
-      mentalState === "burnout_risk" || mentalState === "fatigued"
+      mentalCalibrationPhase === "sparse"
+        ? "Study history is sparse, so guidance is conservative and centered near your baseline hours."
+        : mentalState === "burnout_risk" || mentalState === "fatigued"
         ? "Mental load is elevated relative to recovery; keep study focused and shorter today."
         : mentalState === "underloaded"
         ? "Mental load is below your productive range; increase distributed study volume today."
@@ -1814,6 +2553,15 @@ function runModel({
       `TARGET_MENTAL_${mentalState.toUpperCase()}`,
     ];
 
+    if (maiStateGated) {
+      targetReasonCodes.push("TARGET_MENTAL_GATED_SPARSE");
+    }
+    if (physicalCalibrationPhase === "calibrating") {
+      targetReasonCodes.push("TARGET_CALIBRATING");
+    } else if (physicalCalibrationPhase === "degraded") {
+      targetReasonCodes.push("TARGET_DEGRADED");
+    }
+
     if (examUrgency >= 0.7) {
       targetReasonCodes.push("TARGET_EXAM_URGENCY_HIGH");
     } else if (examUrgency >= 0.4) {
@@ -1821,15 +2569,30 @@ function runModel({
     }
 
     const targetPhysicalReasons = targetReasonCodes
-      .filter((code) => code.startsWith("TARGET_PHYSICAL") || code.startsWith("TARGET_EXAM"))
+      .filter(
+        (code) =>
+          code.startsWith("TARGET_PHYSICAL") ||
+          code.startsWith("TARGET_EXAM") ||
+          code === "TARGET_CALIBRATING" ||
+          code === "TARGET_DEGRADED",
+      )
       .map(targetReasonText);
 
     const targetMentalReasons = targetReasonCodes
-      .filter((code) => code.startsWith("TARGET_MENTAL") || code.startsWith("TARGET_EXAM"))
+      .filter(
+        (code) =>
+          code.startsWith("TARGET_MENTAL") ||
+          code.startsWith("TARGET_EXAM") ||
+          code === "TARGET_MENTAL_GATED_SPARSE" ||
+          code === "TARGET_CALIBRATING" ||
+          code === "TARGET_DEGRADED",
+      )
       .map(targetReasonText);
 
     const targetMessages = [
-      `Today’s cardio target is ${physicalTargetLow.toFixed(1)}-${physicalTargetHigh.toFixed(1)} strain (${physicalState}).`,
+      physicalState === "no_status"
+        ? `Cardio model is calibrating; baseline movement band is ${physicalTargetLow.toFixed(1)}-${physicalTargetHigh.toFixed(1)} strain.`
+        : `Today’s cardio target is ${physicalTargetLow.toFixed(1)}-${physicalTargetHigh.toFixed(1)} strain (${physicalState}).`,
       `Today’s study target is ${studyTargetLow.toFixed(1)}-${studyTargetHigh.toFixed(1)}h (${mentalState}).`,
       ...targetReasonCodes.slice(0, 2).map(targetReasonText),
     ];
@@ -1838,13 +2601,13 @@ function runModel({
       physicalBaseMult: round(physicalBaseMult[physicalState], 3),
       physicalRecoveryMult: round(physicalMultRecovery, 3),
       physicalExamMult: round(physicalMultExam, 3),
+      physicalCalibrationReadiness: round(physicalReadiness, 3),
       mentalBaseMult: round(mentalBaseMult[mentalState], 3),
       mentalRecoveryMult: round(mentalMultRecovery, 3),
       mentalExamMult: round(mentalMultExam, 3),
       mentalPhysicalMult: round(mentalMultPhysical, 3),
+      mentalCalibrationReadiness: round(mentalReadiness, 3),
     };
-
-    const historyFactor = rows.length < 7 ? 0.3 : rows.length < 14 ? 0.7 : 1;
 
     let consistencyFactor = 1;
     if (typeof hrvMs === "number" && (hrvMs < 5 || hrvMs > 400)) {
@@ -1858,43 +2621,76 @@ function runModel({
       fallbackFlags.push("rhr_jump");
     }
 
-    const sleepConfBase =
-      1 *
-      (typeof sleepMidpointMin === "number" ? 1 : 0.9) *
-      (typeof stagesScore === "number" ? 1 : 0.85);
+    const sleepDays14 =
+      recentValues(hasSleepHistory, DAYS_14).reduce((sum, value) => sum + value, 0) +
+      (typeof sleepAsleepMin === "number" ? 1 : 0);
+    const sleepCoverage14 = clamp(sleepDays14 / DAYS_14, 0, 1);
+    const stageConfidence = typeof stagesScore === "number" ? 1 : 0.85;
+    const timingConfidence =
+      typeof sleepBedtimeMin === "number" && typeof sleepWakeMin === "number" ? 1 : 0.9;
+    const sleepConfidence = clamp(sleepCoverage14 * stageConfidence * timingConfidence, 0, 1);
 
-    const recoveryConfBase = clamp(recoveryWeightSum / 1, 0, 1);
+    const recoveryAvailability =
+      0.4 * (typeof compHrv === "number" ? 1 : 0) +
+      0.3 * (typeof compRhr === "number" ? 1 : 0) +
+      0.2 * (typeof compRr === "number" ? 1 : 0) +
+      0.1 * (typeof sleepAsleepMin === "number" ? 1 : 0);
+    const physioDays180 =
+      recentValues(hasPhysioHistory, DAYS_180).reduce((sum, value) => sum + value, 0) +
+      (typeof compHrv === "number" || typeof compRhr === "number" || typeof compRr === "number"
+        ? 1
+        : 0);
+    const recoveryHistoryFactor = clamp(physioDays180 / DAYS_180, 0.2, 1);
+    const recoveryConfidence = clamp(
+      recoveryAvailability * recoveryHistoryFactor * consistencyFactor,
+      0,
+      1,
+    );
 
-    const physicalConfBase =
+    const physicalMethodQuality =
       methodUsed === "hr_series" || methodUsed === "avg_hr"
         ? 0.9
         : methodUsed === "pace" || methodUsed === "energy"
         ? 0.65
         : 0.45;
+    const trainingDays14 =
+      recentValues(qualifyingTrainingDayHistory, DAYS_14).reduce((sum, value) => sum + value, 0) +
+      (qualifyingTrainingDay ? 1 : 0);
+    const physicalCoverage14 = clamp(trainingDays14 / DAYS_14, 0, 1);
+    let physicalConfidence = clamp(
+      (0.6 * physicalCoverage14 + 0.4 * physicalMethodQuality) * consistencyFactor,
+      0,
+      1,
+    );
+    if (physicalCalibrationPhase === "uninitialized") {
+      physicalConfidence = Math.min(physicalConfidence, 0.4);
+    } else if (physicalCalibrationPhase === "calibrating") {
+      physicalConfidence = Math.min(physicalConfidence, 0.7);
+    } else if (physicalCalibrationPhase === "degraded") {
+      physicalConfidence *= 0.8;
+    }
 
-    const mentalConfBase = sessions.length > 0 ? 0.9 : 0.7;
+    let mentalConfidence = clamp(baseMentalConfidence, 0, 1);
+    if (mentalCalibrationPhase === "calibrating") {
+      mentalConfidence = Math.min(mentalConfidence, 0.8);
+    }
+    if (mentalCalibrationPhase === "sparse") {
+      mentalConfidence = Math.min(mentalConfidence, 0.5);
+    }
 
-    const sleepConfidence = clamp(sleepConfBase * historyFactor * consistencyFactor, 0, 1);
-    const recoveryConfidence = clamp(recoveryConfBase * historyFactor * consistencyFactor, 0, 1);
-    const physicalConfidence = clamp(physicalConfBase * historyFactor * consistencyFactor, 0, 1);
-    const mentalConfidence = clamp(mentalConfBase * historyFactor * consistencyFactor, 0, 1);
     const overallConfidence = clamp(
       0.25 * sleepConfidence +
-        0.35 * recoveryConfidence +
+        0.3 * recoveryConfidence +
         0.25 * physicalConfidence +
-        0.15 * mentalConfidence,
+        0.2 * mentalConfidence,
       0,
       1,
     );
 
-    sleepDebtHours =
-      0.7 * sleepDebtHours +
-      (typeof sleepAsleepMin === "number" ? Math.max(0, (sleepNeedMin - sleepAsleepMin) / 60) : 0);
-
     const narrative =
       `Sleep ${Math.round(sleepScore)}/100 (${((sleepAsleepMin || 0) / 60).toFixed(1)}h vs need ${(sleepNeedMin / 60).toFixed(1)}h). ` +
       `Recovery ${Math.round(recoveryScore)}/100, mental recovery ${Math.round(mentalRecovery)}/100. ` +
-      `Physical state ${physicalState}, mental state ${mentalState}. ` +
+      `Physical state ${physicalState} (${physicalCalibrationPhase}), mental state ${mentalState} (${mentalCalibrationPhase}). ` +
       `Study target ${studyTargetLow.toFixed(1)}-${studyTargetHigh.toFixed(1)}h.`;
 
     const row: DailyRow = {
@@ -1902,12 +2698,20 @@ function runModel({
       sleepNeedMin,
       sleepAsleepMin,
       sleepInBedMin,
+      sleepBedtimeMin,
+      sleepWakeMin,
       sleepEfficiency,
       sleepWasoMin: wasoMin,
       sleepMidpointMin,
       sleepMidpointDeltaMin: midpointDelta,
       sleepDurationScore: durationScore,
       sleepContinuityScore: continuityScore,
+      sleepTimingScore: timingScore,
+      sleepSRI14: sri14,
+      sleepSocialJetlagMin: socialJetlagMin,
+      sleepSocialJetlagScore: socialJetlagScore,
+      sleepDriftMinPerDay: bedtimeDriftMinPerDay,
+      sleepDriftScore: driftScore,
       sleepRegularityScore: regularityScore,
       sleepStagesScore: stagesScore,
       sleepScore,
@@ -1926,23 +2730,39 @@ function runModel({
       compRr,
 
       examUrgency,
+      pressureScore,
       physicalImpulse,
+      physicalTrainingImpulse,
       physicalImpulseWorkout,
       physicalImpulseFallback,
+      qualifyingSessions,
+      qualifyingTrainingDay,
       workoutMethod: methodUsed,
       ctl,
       atl,
       tsb: ctl - atl,
       physicalRef,
+      physicalRefShrinkWeight,
+      physicalRefValidDays,
+      ctlRef,
+      ctlRefEffective,
       physicalStrain,
 
       mentalImpulse,
       mentalSessionImpulse: sessionImpulseBase,
+      mentalBackgroundImpulse,
+      studyDays14,
+      studyDays42,
       mcl,
       mal,
       mentalRef,
+      mentalRefShrinkWeight,
+      mentalRefValidDays,
+      mclRef,
+      mclRefEffective,
       mentalStrain,
 
+      recoveryPhysOnly,
       recoveryBase,
       recoveryScore,
       recoveryReasonCodes,
@@ -1963,8 +2783,22 @@ function runModel({
       ai,
       mfi,
       mai,
+      maiRaw,
+      maiShrinkFactor,
+      maiStateGated,
       physicalState,
       mentalState,
+      physicalCalibrationPhase,
+      physicalCalibrationReasonCodes,
+      effectiveTrainingDays28,
+      effectiveTrainingDays42,
+      qualifyingSessionCount42,
+      lastQualifyingSessionDate,
+      physicalReadiness,
+      mentalCalibrationPhase,
+      mentalCalibrationReasonCodes,
+      mentalReadiness,
+      noStatusPhysicalState,
 
       physicalTargetCenterRaw,
       physicalTargetMinRaw,
@@ -2005,15 +2839,27 @@ function runModel({
     if (typeof sleepMidpointMin === "number") {
       sleepMidpointHistory.push(sleepMidpointMin);
     }
+    if (typeof sleepBedtimeMin === "number" && typeof sleepWakeMin === "number") {
+      sleepIntervalsHistory.push({ bedtimeMin: sleepBedtimeMin, wakeMin: sleepWakeMin, date });
+    }
 
     impulseHistory.push(physicalImpulse);
     mentalImpulseHistory.push(mentalImpulse);
+    studyDayHistory.push(sessionImpulseBase > 0 ? 1 : 0);
     ctlHistory.push(ctl);
     atlHistory.push(atl);
     mclHistory.push(mcl);
     malHistory.push(mal);
     physicalStrainHistory.push(physicalStrain);
     mentalStrainHistory.push(mentalStrain);
+    qualifyingSessionCountHistory.push(qualifyingSessions);
+    qualifyingTrainingDayHistory.push(qualifyingTrainingDay ? 1 : 0);
+    hasPhysioHistory.push(
+      typeof compHrv === "number" || typeof compRhr === "number" || typeof compRr === "number"
+        ? 1
+        : 0,
+    );
+    hasSleepHistory.push(typeof sleepAsleepMin === "number" ? 1 : 0);
   }
 
   return rows;
@@ -2045,10 +2891,10 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
     mentalCap: MENTAL_STRAIN_COLD_REF,
     physicalTarget: { low: 0, center: 0, high: 0 },
     mentalTarget: { low: 0, center: 0, high: 0 },
-    physicalState: "maintaining",
+    physicalState: "no_status",
     mentalState: "maintaining",
     cardioLoad: {
-      state: "maintaining",
+      state: "no_status",
       stateScore: 50,
       stateThresholds: {
         fi_detraining: 0.75,
@@ -2070,13 +2916,56 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
       },
       stateRationale: "Insufficient data for stable mental state classification.",
     },
+    calibrationStatus: {
+      physical: {
+        phase: "uninitialized",
+        effectiveTrainingDays28: 0,
+        effectiveTrainingDays42: 0,
+        qualifyingSessionCount42: 0,
+        reasonCodes: ["CALIBRATION_UNINITIALIZED"],
+        readiness: 0,
+      },
+      mental: {
+        phase: "sparse",
+        studyDays14: 0,
+        studyDays42: 0,
+        coverage14: 0,
+        reasonCodes: ["MENTAL_CALIBRATION_SPARSE_STUDY"],
+        readiness: 0,
+      },
+    },
+    denominatorDiagnostics: {
+      physical: {
+        ctlRef: 50,
+        ctlRefEffective: AI_CTL_FLOOR,
+        floored: true,
+        validDays: 0,
+        shrinkWeight: 1,
+      },
+      mental: {
+        mclRef: 50,
+        mclRefEffective: MAI_MCL_FLOOR,
+        floored: true,
+        validDays: 0,
+        shrinkWeight: 1,
+        studyCoverage14: 0,
+        maiRaw: 0,
+        maiClamped: 0,
+        maiShrinkFactor: 0,
+        stateGated: true,
+      },
+    },
     studyTargetLow: DEFAULT_BASELINE_STUDY_HOURS - 0.8,
     studyTargetHigh: DEFAULT_BASELINE_STUDY_HOURS + 0.8,
     studyRationale: "Default study guidance used while model confidence is low.",
     components: {
       sleepDuration: 50,
       sleepContinuity: 50,
+      sleepTiming: 50,
       sleepRegularity: 50,
+      sleepSocialJetlag: 50,
+      sleepDrift: 50,
+      sleepSRI14: 50,
       sleepStages: 50,
       zLhrv: 0,
       zRhr: 0,
@@ -2098,7 +2987,16 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
       ai: 0,
       mfi: 1,
       mai: 0,
+      maiRaw: 0,
+      maiShrinkFactor: 0,
+      mclRefEffective: MAI_MCL_FLOOR,
+      ctlRefEffective: AI_CTL_FLOOR,
       examUrgency: 0,
+      pressureScore: 0,
+      recoveryPhysOnly: 50,
+      qualifyingTrainingDays28: 0,
+      qualifyingTrainingDays42: 0,
+      qualifyingSessions42: 0,
     },
     confidence: {
       sleep: 0.2,
@@ -2116,6 +3014,9 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
         componentContributions: {
           workoutLoad: 0,
           fallbackLoad: 0,
+          qualifyingLoad: 0,
+          qualifyingSessions: 0,
+          qualifyingTrainingDay: 0,
         },
         confidence: 0.2,
       },
@@ -2125,7 +3026,8 @@ function defaultScientificMetric(todayKey: string): ScientificDailyMetrics {
         normalizedValue: 0,
         componentContributions: {
           studyLoad: 0,
-          examUrgencyAmplifier: 0,
+          backgroundLoad: 0,
+          pressureScore: 0,
         },
         confidence: 0.2,
       },
@@ -2240,19 +3142,19 @@ function defaultRecommendation(todayKey: string): DailyRecommendation {
   return {
     date: todayKey,
     studyTargetHours: DEFAULT_BASELINE_STUDY_HOURS,
-    trainingCategory: "easy_run",
-    trainingLabel: "Easy Run",
-    runMinutesMin: 35,
-    runMinutesMax: 50,
-    walkMinutesMin: 15,
-    walkMinutesMax: 25,
-    targetRpeMin: 4,
-    targetRpeMax: 5,
-    trainingRationale: "Default recommendation used because recent readiness data is limited.",
+    trainingCategory: "recovery",
+    trainingLabel: "Recovery Run",
+    runMinutesMin: 20,
+    runMinutesMax: 35,
+    walkMinutesMin: 20,
+    walkMinutesMax: 40,
+    targetRpeMin: 3,
+    targetRpeMax: 4,
+    trainingRationale: "Cardio model is calibrating; use baseline movement until enough qualifying sessions are available.",
     isRunRecommended: true,
     workoutType: "cardio",
-    workoutDurationMin: 50,
-    workoutSuggestion: "easy run",
+    workoutDurationMin: 35,
+    workoutSuggestion: "recovery run",
     bedtimeIso: toIsoOnDate(todayKey, bedtimeCenter),
     bedtimeLabel: formatClockLabel(bedtimeCenter),
     bedtimeRangeStartIso: toIsoOnDate(todayKey, start),
@@ -2271,7 +3173,7 @@ function defaultRecommendation(todayKey: string): DailyRecommendation {
     physicalTargetHigh: 0,
     mentalTargetLow: 0,
     mentalTargetHigh: 0,
-    physicalState: "maintaining",
+    physicalState: "no_status",
     mentalState: "maintaining",
     scientificSummary:
       "Model confidence is low today. Keep study and training moderate while collecting more consistent health data.",
@@ -2300,8 +3202,18 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
     .filter((day) => typeof day?.date === "string")
     .map((day) => sanitizeHealthDay(day))
     .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
-
-  const healthByDate = new Map(healthDays.map((day) => [day.date, day]));
+  const healthByDate = new Map<string, DailyHealthFact>();
+  for (const day of healthDays) {
+    const sleepDateKey = sleepDateFromWakeTimestamp(day.sleepWakeupAt, day.date);
+    const existing = healthByDate.get(sleepDateKey);
+    healthByDate.set(
+      sleepDateKey,
+      mergeHealthFacts(existing, {
+        ...day,
+        date: sleepDateKey,
+      }),
+    );
+  }
 
   const workoutDetailsByWorkoutId = new Map<string, WorkoutDetail>();
   for (const detail of data.workoutDetails || []) {
@@ -2360,8 +3272,9 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
   const minimumStart = shiftDate(todayKey, -365);
 
   const dataDateCandidates: string[] = [minimumStart];
-  if (healthDays.length > 0) {
-    dataDateCandidates.push(healthDays[0].date);
+  const healthDateKeys = [...healthByDate.keys()].sort();
+  if (healthDateKeys.length > 0) {
+    dataDateCandidates.push(healthDateKeys[0]);
   }
   if (enrichedWorkouts.length > 0) {
     dataDateCandidates.push(workoutDayKey(enrichedWorkouts[0]));
@@ -2612,13 +3525,57 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
         },
         stateRationale: mentalStateRationale(row.mentalState, row.mfi, row.mai, row.mentalRecovery),
       },
+      calibrationStatus: {
+        physical: {
+          phase: row.physicalCalibrationPhase,
+          effectiveTrainingDays28: row.effectiveTrainingDays28,
+          effectiveTrainingDays42: row.effectiveTrainingDays42,
+          qualifyingSessionCount42: row.qualifyingSessionCount42,
+          lastQualifyingSessionDate: row.lastQualifyingSessionDate,
+          reasonCodes: row.physicalCalibrationReasonCodes,
+          readiness: round(row.physicalReadiness, 3),
+        },
+        mental: {
+          phase: row.mentalCalibrationPhase,
+          studyDays14: row.studyDays14,
+          studyDays42: row.studyDays42,
+          coverage14: round(clamp(row.studyDays14 / DAYS_14, 0, 1), 3),
+          reasonCodes: row.mentalCalibrationReasonCodes,
+          readiness: round(row.mentalReadiness, 3),
+        },
+      },
+      denominatorDiagnostics: {
+        physical: {
+          ctlRef: round(row.ctlRef, 3),
+          ctlRefEffective: round(row.ctlRefEffective, 3),
+          floored: row.ctlRefEffective <= AI_CTL_FLOOR + EPSILON,
+          validDays: row.physicalRefValidDays,
+          shrinkWeight: round(row.physicalRefShrinkWeight, 3),
+        },
+        mental: {
+          mclRef: round(row.mclRef, 3),
+          mclRefEffective: round(row.mclRefEffective, 3),
+          floored: row.mclRefEffective <= MAI_MCL_FLOOR + EPSILON,
+          validDays: row.mentalRefValidDays,
+          shrinkWeight: round(row.mentalRefShrinkWeight, 3),
+          studyCoverage14: round(clamp(row.studyDays14 / DAYS_14, 0, 1), 3),
+          maiRaw: round(row.maiRaw, 3),
+          maiClamped: round(row.mai, 3),
+          maiShrinkFactor: round(row.maiShrinkFactor, 3),
+          stateGated: row.maiStateGated,
+        },
+      },
       studyTargetLow: row.studyTargetLow,
       studyTargetHigh: row.studyTargetHigh,
       studyRationale: row.studyRationale,
       components: {
         sleepDuration: round(row.sleepDurationScore || 50, 2),
         sleepContinuity: round(row.sleepContinuityScore || 50, 2),
+        sleepTiming: round(row.sleepTimingScore || row.sleepRegularityScore || 50, 2),
         sleepRegularity: round(row.sleepRegularityScore || 50, 2),
+        sleepSocialJetlag: round(row.sleepSocialJetlagScore || 50, 2),
+        sleepDrift: round(row.sleepDriftScore || 50, 2),
+        sleepSRI14: round(row.sleepSRI14 || 50, 2),
         sleepStages: round(row.sleepStagesScore || 50, 2),
         zLhrv: round(row.zHrv || 0, 3),
         zRhr: round(row.zRhr || 0, 3),
@@ -2640,7 +3597,16 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
         ai: round(row.ai, 3),
         mfi: round(row.mfi, 3),
         mai: round(row.mai, 3),
+        maiRaw: round(row.maiRaw, 3),
+        maiShrinkFactor: round(row.maiShrinkFactor, 3),
+        mclRefEffective: round(row.mclRefEffective, 3),
+        ctlRefEffective: round(row.ctlRefEffective, 3),
         examUrgency: round(row.examUrgency, 3),
+        pressureScore: round(row.pressureScore, 2),
+        recoveryPhysOnly: round(row.recoveryPhysOnly, 2),
+        qualifyingTrainingDays28: row.effectiveTrainingDays28,
+        qualifyingTrainingDays42: row.effectiveTrainingDays42,
+        qualifyingSessions42: row.qualifyingSessionCount42,
       },
       confidence: {
         sleep: round(row.sleepConfidence, 3),
@@ -2658,6 +3624,9 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
           componentContributions: {
             workoutLoad: round(row.physicalImpulseWorkout, 2),
             fallbackLoad: round(row.physicalImpulseFallback, 2),
+            qualifyingLoad: round(row.physicalTrainingImpulse, 2),
+            qualifyingSessions: row.qualifyingSessions,
+            qualifyingTrainingDay: row.qualifyingTrainingDay ? 1 : 0,
             ctl: round(row.ctl, 2),
             atl: round(row.atl, 2),
           },
@@ -2669,9 +3638,13 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
           normalizedValue: round(row.mentalStrain / 100, 4),
           componentContributions: {
             studyLoad: round(row.mentalSessionImpulse, 2),
-            examUrgencyAmplifier: round(row.mentalImpulse - row.mentalSessionImpulse, 2),
+            backgroundLoad: round(row.mentalBackgroundImpulse, 2),
+            pressureScore: round(row.pressureScore, 2),
+            studyDays14: row.studyDays14,
             mcl: round(row.mcl, 2),
             mal: round(row.mal, 2),
+            maiRaw: round(row.maiRaw, 3),
+            mai: round(row.mai, 3),
           },
           confidence: round(row.mentalConfidence, 3),
         },

@@ -203,6 +203,23 @@ function mergeNumericDailyHealth(
   return next;
 }
 
+function mergeIsoDailyHealth(
+  target: DailyHealthFact,
+  source: Record<string, unknown>,
+  keys: Array<keyof DailyHealthFact>,
+): DailyHealthFact {
+  const next: DailyHealthFact = { ...target };
+
+  for (const key of keys) {
+    const value = normalizeIso(source[key as string]);
+    if (typeof value === "string") {
+      (next as unknown as Record<string, unknown>)[key as string] = value;
+    }
+  }
+
+  return next;
+}
+
 function upsertDailyHealth(
   current: DailyHealthFact[],
   incoming: MobileSyncDailyHealthInput[],
@@ -259,6 +276,11 @@ function upsertDailyHealth(
       "activeEnergyKj",
       "restingEnergyKj",
       "exerciseTimeMin",
+    ]);
+
+    next = mergeIsoDailyHealth(next, row as unknown as Record<string, unknown>, [
+      "sleepBedtimeAt",
+      "sleepWakeupAt",
     ]);
 
     if (typeof next.sleepMidpointHour === "number" && Number.isFinite(next.sleepMidpointHour)) {

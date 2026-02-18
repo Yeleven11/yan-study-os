@@ -1,130 +1,154 @@
-# Scientific Engine Debug Guide
+# Scientific Engine Debug Guide (Deterministic Audit Version)
 
-This guide explains how to debug day-level outputs from `src/lib/health-engine.ts`.
+Primary implementation:
+- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/src/lib/health-engine.ts`
 
-## Source Files
+Primary types:
+- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/src/lib/types.ts`
 
-- Engine: `src/lib/health-engine.ts`
-- Shared contracts: `src/lib/types.ts`
-- Scientific dashboard: `src/components/scientific-dashboard.tsx`
-- Formula reference: `docs/metric-framework/FORMULAS.md`
+Formula reference:
+- `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/docs/metric-framework/FORMULAS.md`
 
-## Output Maps
+## 1) Fast triage sequence
 
-`buildPerformanceInsights` emits three per-day maps:
+1. Inspect `fallbackFlags` for missingness/imputation.
+2. Inspect `calibrationStatus` and `denominatorDiagnostics` first.
+3. Inspect `components` (`fi/ai/mfi/mai`, timing subscores, pressure).
+4. Inspect `explainability` reason codes/messages.
+5. Inspect `chartPayloads` hover contributions for raw-vs-normalized sanity.
 
-- `readinessByDate`: high-level readiness view (legacy-compatible)
-- `recommendationsByDate`: study/workout/bedtime guidance
-- `scientificByDate`: full deterministic scientific payload
-
-## High-Value Debug Fields
+## 2) Most useful fields by domain
 
 Sleep:
-
 - `sleepNeedHours`
 - `sleepHours`
 - `sleepEfficiency`
 - `sleepWasoMinutes`
 - `sleepMidpointDeltaMinutes`
-- `sleepScore`
-- `components.sleepDuration`, `components.sleepContinuity`, `components.sleepRegularity`, `components.sleepStages`
+- `components.sleepDuration`
+- `components.sleepContinuity`
+- `components.sleepTiming`
+- `components.sleepSRI14`
+- `components.sleepSocialJetlag`
+- `components.sleepDrift`
+- `components.sleepStages`
 
 Recovery:
-
 - `recoveryScore`
-- `components.zLhrv`, `components.zRhr`, `components.zRr`
-- `components.compHrv`, `components.compRhr`, `components.compRr`
+- `components.zLhrv`
+- `components.zRhr`
+- `components.zRr`
+- `components.compHrv`
+- `components.compRhr`
+- `components.compRr`
+- `components.recoveryPhysOnly`
 
-Physical load:
-
-- `physicalRawLoad` (`u(t)`)
-- `physicalChronicLoad` (`CTL`)
-- `physicalAcuteLoad` (`ATL`)
+Physical:
+- `physicalRawLoad`
+- `physicalAcuteLoad` / `physicalChronicLoad`
 - `components.fi`, `components.ai`
 - `physicalState`
-- `cardioLoad.state`, `cardioLoad.stateScore`
+- `cardioLoad.*`
+- `calibrationStatus.physical.*`
+- `denominatorDiagnostics.physical.*`
 
-Mental load:
-
-- `mentalRawLoad` (`m(t)`)
-- `mentalChronicLoad` (`MCL`)
-- `mentalAcuteLoad` (`MAL`)
+Mental:
+- `mentalRawLoad`
+- `mentalAcuteLoad` / `mentalChronicLoad`
 - `components.mfi`, `components.mai`
+- `components.maiRaw`, `components.maiShrinkFactor`
 - `mentalState`
-- `mentalLoadState.state`, `mentalLoadState.stateScore`
+- `mentalLoadState.*`
+- `calibrationStatus.mental.*`
+- `denominatorDiagnostics.mental.*`
 
-Targets and guidance:
+Targets:
+- `physicalTarget`
+- `mentalTarget`
+- `studyTargetLow`
+- `studyTargetHigh`
+- `studyRationale`
+- `explainability.targetRange.*`
 
-- `physicalTarget`, `mentalTarget`
-- `studyTargetLow`, `studyTargetHigh`, `studyRationale`
+Confidence:
+- `confidence.sleep`
+- `confidence.recovery`
+- `confidence.physicalStrain`
+- `confidence.mentalRecovery`
+- `confidence.mentalStrain`
+- `confidence.overall`
 
-Explainability and confidence:
+## 3) Calibration debugging
 
-- `explainability.*`
-- `confidence.*`
-- `fallbackFlags[]`
+Physical phases:
+- `uninitialized`
+- `calibrating`
+- `calibrated`
+- `degraded`
 
-Chart hover payloads:
+Use:
+- `effectiveTrainingDays28`
+- `effectiveTrainingDays42`
+- `qualifyingSessionCount42`
+- `lastQualifyingSessionDate`
+- `reasonCodes[]`
 
-- `chartPayloads.physicalStrain`
-- `chartPayloads.mentalStrain`
+Mental phases:
+- `sparse`
+- `calibrating`
+- `calibrated`
 
-## Fallback Flags
+Use:
+- `studyDays14`
+- `studyDays42`
+- `coverage14`
+- `reasonCodes[]`
 
-Most common deterministic flags:
+## 4) MAI explosion prevention checks
 
-- `sleep_tst_from_tib`: TST estimated from TIB (`0.85 * TIB`)
-- `sleep_stage_missing`: stage component unavailable
-- `sleep_stage_neutral`: stage component neutralized for compatibility
-- `sleep_midpoint_missing`: midpoint unavailable
-- `physical_unscored_workouts`: workouts existed but no valid scoring inputs
-- `mental_from_exam_urgency`: study missing, mental impulse estimated from exam urgency
-- `hrv_outlier`: implausible HRV sample affected consistency factor
-- `rhr_jump`: large day-to-day RHR jump affected consistency factor
+For sparse study history, validate:
+- `denominatorDiagnostics.mental.mclRefEffective >= 100`
+- `components.mai` within `[-0.25, 0.75]`
+- `components.maiShrinkFactor` follows `sqrt(cov14)` behavior
+- `denominatorDiagnostics.mental.stateGated` toggles when sparse/floored
+- high-risk mental states are suppressed when gating conditions apply
 
-## State Debugging Checklist
+## 5) Sleep timing checks
 
-1. Check `components.fi` and `components.ai` for physical state assignment.
-2. Check `components.mfi` and `components.mai` for mental state assignment.
-3. Verify persistence logic using recent 10-day history:
-- overtraining risk: `AI >= 0.35` on >=7 days + low recovery streak
-- burnout risk: high `MAI`/low mental recovery persistence
-4. Validate threshold records in:
-- `cardioLoad.stateThresholds`
-- `mentalLoadState.stateThresholds`
+When timing feels wrong, check:
+- bed/wake timestamps exist in input day
+- `components.sleepSRI14`
+- `components.sleepSocialJetlag`
+- `components.sleepDrift`
+- `explainability.sleep.reasonCodes`
+- `sleep_timing_sparse` fallback flag
 
-## Explainability Debugging
+## 6) Chart hover checks
 
-For any day, inspect:
+Physical chart payload should include:
+- raw load
+- normalized score
+- qualifying vs fallback contributions
+- confidence
 
-- `explainability.sleep.lowReasons` and `explainability.sleep.highReasons`
-- `explainability.physicalRecovery.reasons`
-- `explainability.mentalRecovery.reasons`
-- `explainability.targetRange.physicalReasons`
-- `explainability.targetRange.mentalReasons`
-- `explainability.targetRange.studyRationale`
+Mental chart payload should include:
+- study load
+- bounded background load
+- pressure score
+- MAI raw/clamped context
+- confidence
 
-Contribution breakdowns are numeric, additive diagnostics for UI and troubleshooting.
+## 7) Common fallback flags
 
-## Confidence Debugging
+- `sleep_tst_from_tib`
+- `sleep_invalid_duration`
+- `sleep_stage_missing`
+- `sleep_stage_neutral`
+- `sleep_timing_sparse`
+- `sleep_midpoint_missing`
+- `physical_unscored_workouts`
+- `mental_background_from_pressure`
+- `mental_from_exam_urgency`
+- `hrv_outlier`
+- `rhr_jump`
 
-Per-metric confidence is built from:
-
-- base availability confidence (sleep/recovery/physical/mental)
-- history factor (`<7d=0.3`, `7-13d=0.7`, `>=14d=1.0`)
-- consistency factor (outlier penalties)
-
-If confidence unexpectedly drops, inspect:
-
-- missing physiological channels (`HRV`, `RHR`, `RR`)
-- missing sleep midpoint/stage channels
-- fallback workout scoring usage
-- recent outlier flags
-
-## Quick Triage Flow
-
-1. Confirm inputs for that date (sleep, physiology, workouts, study, exams/todos).
-2. Inspect `fallbackFlags`.
-3. Inspect state metrics (`fi/ai/mfi/mai`) and `stateRationale` strings.
-4. Inspect explainability reason codes/messages.
-5. Confirm chart payload contributions match raw loads.

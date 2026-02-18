@@ -42,6 +42,10 @@ Private study operating system for IBDP finals with integrated health/performanc
 - Native iOS JSON ingest (`/api/integrations/health/mobile-sync`).
 - Workout detail drill-down with merged streams and provenance.
 - Deterministic multi-domain metric engine for sleep, recovery, physical strain, mental recovery, and mental strain.
+- Sleep scoring uses a timestamp-aware timing model (`SRI14 + social jetlag + bedtime drift`) with 04:00 sleep-day attribution.
+- Physical and mental domains expose calibration phases and denominator diagnostics to prevent sparse-history instability.
+- MAI is stabilized with denominator floors, coverage shrinkage, clamping, and state gating.
+- Chart payloads expose raw, normalized, component-level contributions, and per-metric confidence for hover/debug use.
 - User-editable workout difficulty override (1-10) feeding future training load.
 
 Mathematical and debugging docs live in:
@@ -49,6 +53,8 @@ Mathematical and debugging docs live in:
 - `docs/metric-framework/FORMULAS.md`
 - `docs/metric-framework/DEBUG_GUIDE.md`
 - `docs/metric-framework/OUTPUT_SCHEMA.md`
+
+The formulas doc now includes the full constant registry used by the deterministic engine.
 
 ## Stack
 

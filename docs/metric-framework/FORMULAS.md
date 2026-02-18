@@ -1,349 +1,280 @@
-# Scientific Engine Formulas (Implementation-Ready)
+# Scientific Engine Formulas (Deterministic Audit Implementation)
 
-This document is the mathematical source of truth for the implementation in `src/lib/health-engine.ts`.
-All equations below are deterministic and include the constants used in code.
+This file is the implementation reference for `/Users/yanborovyk/Desktop/Code Projects/IbWebsite/src/lib/health-engine.ts`.
+All formulas below are deterministic and match shipped constants.
 
-## 1) Notation and Units
+## 1) Core math primitives
 
-- Day index: `t` (calendar day in user local timezone).
-- Sleep durations: minutes unless otherwise noted.
-- Loads: TRIMP-like impulse units.
-- Scores and strain outputs: `[0, 100]`.
-- `clip(x,a,b) = min(max(x,a), b)`
+- `clip(x, a, b) = min(max(x, a), b)`
 - `sigmoid(x) = 1 / (1 + exp(-x))`
-- Robust scale: `sigma = 1.4826 * MAD`
+- Robust scale: `sigma = 1.4826 * MAD + 1e-6`
+- Robust z-score: `z = clip((x - median(history))/sigma, -4, +4)`
+- EWMA (`tau` in days):
+  - `k = 1 - exp(-1/tau)`
+  - `state_t = state_{t-1} + k * (u_t - state_{t-1})`
 
-## 2) Sleep Need
+## 2) Sleep day attribution (04:00 boundary)
 
-Cold start:
+For each health row with wake timestamp `W`:
+- If local wake clock `>= 04:00`: assign sleep to `date(W)`
+- Else: assign to `date(W) - 1 day`
 
-- `sleep_need_min(t) = 480`
+This prevents midnight/early-morning sessions from being treated as a new day prematurely.
 
-Personalized need (after >=21 valid days):
+## 3) Sleep need `N_t` (minutes)
 
-- Good days from prior 56 days satisfy:
-- `RecoveryScore >= 60`
-- `sleep_efficiency >= 0.85`
-- `PhysicalStrain(t-1) <= 70`
-- If `|GoodDays| >= 7`:
-- `sleep_need_min(t) = clip(median(TST over GoodDays), 420, 600)`
-- Else fallback to `480`.
+Age-aware anchors:
+- Teen mode (`age <= 18`): `anchor = 540`, clamp `[480, 600]`
+- Adult/unknown: `anchor = 480`, clamp `[420, 600]`
 
-## 3) Sleep Score
+Personalization over last 60 days (`H=60`) using good nights:
+- Good-night filters:
+  - `sleepEfficiency >= 0.85`
+  - `recoveryPhysOnly >= 60`
+  - prior-day physical strain `<= 70`
+  - prior-day mental strain `<= 70`
+- If good nights `< 7`: use anchor.
+- Else:
+  - `N_data = quantile_0.60(TST_good)`
+  - `w = kappa / (kappa + n_good)`, `kappa = 14`
+  - `N_t = clip(w*anchor + (1-w)*N_data, N_min, 600)`
 
-Let:
+## 4) Sleep score components (0-100)
 
-- `N = sleep_need_min(t)`
-- `S = sleep_asleep_min`
-- `B = sleep_inbed_min`
-- `A = WASO_min` (or `max(0, B-S)` fallback)
-- `E = S / B`
+### 4.1 Duration score `S_dur`
 
-### 3.1 Duration Component
+Let `T = TST` minutes.
 
-Undersleep (strong convex penalty):
+Undersleep (`T <= N_t`):
+- `r = (N_t - T) / (0.35 * N_t)`
+- `S_dur = 100 * exp(-r^2)`
 
-- `deficit = max(0, N - S)`
-- `Score_duration = 100 * max(0, 1 - (deficit/(0.35*N))^2)` when `deficit > 0`
+Oversleep (`T > N_t`):
+- Grace `g = 90 min`
+- Window `w = 360 min`
+- Max penalty `P_max = 8`
+- `P_over = P_max * min(1, (max(0, T - N_t - g)/w)^2)`
+- `S_dur = 100 - P_over`
 
-Oversleep (minimal penalty after grace):
+If TST missing and TIB exists: `TST = 0.85 * TIB` (`sleep_tst_from_tib`).
 
-- `excess = max(0, S - N)`
-- `ratio = max(0, excess - 60) / 240`
-- `Score_duration = 100 - 10 * ratio^2` when `deficit = 0`
+### 4.2 Continuity score `S_cont`
 
-### 3.2 Continuity Component
+- Efficiency `E = TST/TIB`
+- `SE = 100 * clip((E - 0.74)/(0.85 - 0.74), 0, 1)`
+- WASO penalty:
+  - `P_WASO = 20 * clip((WASO - 20)/(60 - 20), 0, 1)`
+- `S_cont = clip(SE - P_WASO, 0, 100)`
 
-- `Score_eff = clip(100 * (E - 0.75) / 0.15, 0, 100)`
-- `pen_awake = 20 * clip((A - 20) / 80, 0, 1)`
-- `Score_continuity = clip(Score_eff - pen_awake, 0, 100)`
+### 4.3 Timing score `S_time` (SRI + SJL + drift)
 
-### 3.3 Regularity Component
+Uses bed/wake timestamps over last 14 valid sleep days.
 
-- `Delta_mid = circular_abs_diff_minutes(midpoint_today, circular_median_21d(midpoint))`
-- `Score_regularity = 100 / (1 + (Delta_mid / 90)^2)`
+#### SRI14
+- Sleep/wake occupancy in 30-minute bins (`48` bins/day)
+- `SRI14 = 100 * matches / (48*(M-1))`, require `M >= 4`
 
-### 3.4 Stage Component
+#### Social jetlag score
+- Compute midsleep circular means for:
+  - workdays: Mon-Fri
+  - free days: Sat-Sun
+- `SJL = circular_distance(mid_work, mid_free)` minutes
+- `S_SJL = 100 * (1 - clip((SJL - 60)/(180 - 60), 0, 1))`
 
-Let:
+#### Bedtime drift score
+- Unwrap bedtime series (avoid >720-minute jumps)
+- OLS slope `beta_b` in min/day
+- `S_drift = 100 * (1 - clip((|beta_b| - 10)/(30 - 10), 0, 1))`
 
-- `deep_pct = deep_min / S`
-- `rem_pct = rem_min / S`
-- `deep_def = max(0, 0.13 - deep_pct)`
-- `rem_def = max(0, 0.20 - rem_pct)`
+#### Blend
+- `S_time = weighted_mean([SRI14, S_SJL, S_drift], [0.60, 0.25, 0.15])` over available subcomponents.
+
+If timing insufficient, mark `sleep_timing_sparse`.
+
+### 4.4 Stage score `S_stage` (de-weighted)
+
+Let `pREM = REM/TST`, `pN3 = deep/TST`.
+
+- `S_REM = 100 * clip((pREM - 0.10)/(0.21 - 0.10), 0, 1)`
+- `S_N3 = 100 * clip((pN3 - 0.05)/(0.16 - 0.05), 0, 1)`
+- `S_stage = 0.5*S_REM + 0.5*S_N3`
+
+Stage influence is explicitly capped in final aggregation:
+- `stageDelta = clip(0.1 * (S_stage - 50), -5, +5)`
+
+### 4.5 Final sleep score
+
+Main weighted score over available non-stage components:
+- Duration `0.45`
+- Continuity `0.25`
+- Timing `0.25`
 
 Then:
+- `SleepScore = clip(baseSleep + stageDelta, 0, 100)`
 
-- `Score_stages = clip(100 - 400*deep_def - 250*rem_def, 0, 100)`
+### 4.6 Sleep confidence
 
-If stage data missing, stage component is omitted and flagged.
+- `n14 = valid sleep days in last 14`
+- `C_hist = n14 / 14`
+- `C_stage = 0.85` if stage missing else `1.0`
+- `C_mid = 0.90` if bed/wake missing else `1.0`
+- `C_sleep = clip(C_hist * C_stage * C_mid, 0, 1)`
 
-### 3.5 Final Sleep Score
+## 5) Physical load and strain
 
-Weighted mean over available components (weights renormalized across present components):
+## 5.1 Session TRIMP (unknown-sex deterministic compromise)
 
-- `w_duration = 0.50`
-- `w_continuity = 0.25`
-- `w_regularity = 0.15`
-- `w_stages = 0.10`
+For HR reserve fraction `HRR`:
+- `TRIMP_session = duration * HRR * 0.75 * exp(1.795 * HRR)`
 
-- `SleepScore = weighted_mean(components, available_weights)`
+HR hierarchy:
+- HR series -> mean bin contribution
+- avg HR fallback
+- pace/MET fallback for walk/run
+- active-energy fallback
 
-## 4) HR Calibration and TRIMP
+## 5.2 Qualifying cardio sessions (for calibration/status)
 
-### 4.1 HRmax Estimation Hierarchy
+A session is qualifying if either:
+- HR branch: duration `>= 20 min` and mean `HRR >= 0.40`
+- MET branch: duration `>= 30 min` and estimated `MET >= 3`
 
-1. User profile HRmax (if provided).
-2. Else max valid workout `hrMax` over last 365 days, with QA:
-- `hrMax >= 140`
-- workout duration >= 5 min
-3. Else fallback `HRmax_est = 200`.
+Non-qualifying sessions still contribute to raw daily impulse.
 
-### 4.2 Resting HR Baseline
+## 5.3 Daily physical impulse and dynamics
 
-- `HRrest_est = median(last 14 valid resting HR)`
-- Fallback latest value, then conservative default.
+- Raw impulse `u_t = sum(TRIMP_session)` over all sessions
+- Qualifying training impulse `u_train_t = sum(TRIMP_session qualifying)`
+- CTL/ATL for status/targets use qualifying impulse:
+  - `CTL = EWMA_tau42(u_train)`
+  - `ATL = EWMA_tau7(u_train)`
 
-### 4.3 Session TRIMP (unknown sex default)
+## 5.4 Physical reference stabilization
 
-`b = 1.8`
+Over rolling 120 days:
+- valid days: `u_t > 0`
+- require `n >= 20` else cold ref `300`
+- raw ref: `max(150, p95(u))`
+- shrinkage (`kappa=20`):
+  - `w = 20/(20+n)`
+  - `ref_u = w*300 + (1-w)*raw_ref`
 
-If HR series available:
+## 5.5 Physical strain
 
-- `HRR_m = clip((HR_m - HRrest_est)/(HRmax_est - HRrest_est), 0, 1)`
-- `TRIMP_session = duration_min * mean(HRR_m * exp(1.8 * HRR_m))`
+- `PhysicalStrain = 100 * clip( ln(1 + u_t/30) / ln(1 + ref_u/30), 0, 1 )`
 
-If only avg HR:
+## 6) Recovery
 
-- `HRR = clip((HR_avg - HRrest_est)/(HRmax_est - HRrest_est), 0, 1)`
-- `TRIMP_session = duration_min * HRR * exp(1.8 * HRR)`
+Physiology channels (60-day robust baselines):
+- `y_HRV = ln(HRV)`
+- `y_RHR = RHR`
+- `y_RR = RR`
 
-Fallback ladder if HR is missing:
+Direction-normalized z-sign convention in code:
+- `z_HRV` uses invert mode (higher = better)
+- `z_RHR`, `z_RR` use standard robust z (higher = worse)
 
-1. Walk/run distance+duration -> ACSM speed-based MET proxy -> HRR proxy -> TRIMP proxy.
-2. Energy+duration -> within-mode energy-rate normalization -> HRR proxy -> TRIMP proxy.
-3. If no fallback signal -> `TRIMP_session = 0` and mark unscored.
+Map to 0-100:
+- `S = clip(50 - 12.5*z, 0, 100)`
 
-## 5) Physical Load Dynamics and Strain
+Composite recovery base (renormalized by available components):
+- HRV `0.35`
+- RHR `0.25`
+- RR `0.15`
+- Sleep `0.25`
 
-Daily impulse:
+Physiology-only diagnostic:
+- `recoveryPhysOnly` = weighted physiology blend (no sleep)
 
-- `u(t) = sum(TRIMP_session on day t)`
+Final recovery (confidence-coupled penalties):
+- `Recovery = clip(RecoveryBase - 0.10*C_phys_{t-1}*PhysStrain_{t-1} - 0.05*C_ment_{t-1}*MentStrain_{t-1}, 0, 100)`
 
-EWMA update for time constant `tau` days:
+## 7) Mental load, strain, MAI stabilization
 
-- `k(tau) = 1 - exp(-1/tau)`
-- `X(t) = X(t-1) + k(tau) * (u(t) - X(t-1))`
+Urgency scalar:
+- `U_t = max_event(importance/5 * exp(-daysToEvent/10))`
+- `pressureScore = 100 * clip(U_t, 0, 1)`
 
-Definitions:
-
-- `CTL`: `tau = 42`
-- `ATL`: `tau = 7`
-- `TSB = CTL - ATL`
-
-Physical strain scaling:
-
-- `u_ref = max(150, p95(u over last 180 days))`, cold start `u_ref = 300`
-- `u0 = 30`
-- `PhysicalStrain = clip(100 * ln(1 + u/u0) / ln(1 + u_ref/u0), 0, 100)`
-
-## 6) Mental Load Dynamics and Strain
-
-Exam urgency:
-
-- For each upcoming event `e`:
-- `u_e = (importance_e/5) * exp(-days_until_e / 10)`
-- `ExamUrgency = max(u_e)`
-
-Session load:
-
-- `session_load = d_min * (1 + 0.003 * max(0, d_min - 60))`
+Study session load:
+- `L_s = d * (1 + 0.003*max(0, d-60))`
+- capped: `L*_s = min(L_s, 3*d)`
 
 Daily mental impulse:
+- `m_study = sum(L*_s)`
+- if `m_study > 0`: `m_final = m_study`
+- else: `m_final = 30 * U_t` (bounded background load)
 
-- Primary: `m(t) = sum(session_load) * (1 + 0.5 * ExamUrgency)`
-- Missing-study fallback: `m(t) = m_ref_default * ExamUrgency`, with low confidence (`m_ref_default = 600`)
+EWMAs:
+- `MCL = EWMA_tau21(m_final)`
+- `MAL = EWMA_tau3(m_final)`
 
-Mental EWMAs:
-
-- `MCL`: `tau = 21`
-- `MAL`: `tau = 3`
+Mental reference stabilization (same shape as physical):
+- window 120d, `n>=20`, cold ref `600`, min ref `200`, `kappa=20`
 
 Mental strain:
+- `MentalStrain = 100 * clip( ln(1 + m_final/60) / ln(1 + ref_m/60), 0, 1 )`
 
-- `m_ref = max(200, p95(m over last 180 days))`, cold start `m_ref = 600`
-- `m0 = 60`
-- `MentalStrain = clip(100 * ln(1 + m/m0) / ln(1 + m_ref/m0), 0, 100)`
+MAI stabilization:
+- `MCL_ref_effective = max(MCL_ref, 100)` (floor = `0.5*200`)
+- `cov14 = study_days_14 / 14`
+- `s = sqrt(cov14)`
+- `maiRaw = (MAL - MCL) / MCL_ref_effective`
+- `MAI = clip(s * maiRaw, -0.25, +0.75)`
 
-## 7) Recovery Score
+## 8) Calibration protocol
 
-Robust physiology deltas (28-day baseline windows):
+### Physical calibration phases
 
-- `z_HRV = robust_z(ln(HRV_sdnn_ms))`
-- `z_RHR = robust_z_inverse(RHR)`
-- `z_RR = robust_z_inverse(RR)`
+Output phase:
+- `uninitialized`: no qualifying sessions in last 42 and lifetime qualifying < 3
+- `calibrating`: early history (`3-9` lifetime or days28<7 or days42<10)
+- `calibrated`: days28>=7 AND days42>=10 AND sessions42>=12
+- `degraded`: no qualifying session for >=14 consecutive days
 
-Component maps:
+Effects:
+- `uninitialized`: state forced to `no_status`, confidence cap `<=0.40`
+- `calibrating`: confidence cap `<=0.70`, wider target band (`+-30%`), build cap `1.2*CTL`
+- `degraded`: disallow productive/peaking; confidence multiplier `0.8`
 
-- `Comp_HRV = clip(50 + 20*z_HRV, 0, 100)`
-- `Comp_RHR = clip(50 + 20*z_RHR, 0, 100)`
-- `Comp_RR = clip(50 + 15*z_RR, 0, 100)`
+### Mental calibration/gating
 
-Base weighted score over available components:
+- `sparse`: studyDays14 < 3
+- `calibrating`: not sparse but studyDays42 < 10
+- `calibrated`: studyDays42 >= 10
 
-- weights: `HRV 0.35`, `RHR 0.25`, `RR 0.15`, `Sleep 0.25`
-- renormalized over present inputs
+State gating trigger if any:
+- studyDays14 < 3
+- base mental confidence < 0.5
+- MCL denominator is floored
 
-Final:
+When triggered, high-risk/high-load mental labels are suppressed unless severe persistent low mental recovery + high pressure.
 
-- `RecoveryScore = clip(RecoveryBase - 0.10*PhysicalStrain(t-1) - 0.05*MentalStrain(t-1), 0, 100)`
+## 9) States and target ranges
 
-## 8) Mental Recovery
+Physical and mental state machines keep threshold structure from prior engine but now consume stabilized denominators and calibration gates.
 
-Base blend:
+Targets:
+- Physical target center driven by CTL, state multiplier, recovery, exam modulation.
+- Mental target center driven by MCL, state multiplier, recovery, exam modulation.
+- During sparse mental calibration, center is shrunk toward baseline study impulse.
+- Study guidance range is always emitted:
+  - `studyTargetLow`, `studyTargetHigh`, `studyRationale`
 
-- `MentalRecoveryBase = weighted_mean(SleepScore, SleepRegularity, Comp_HRV_if_available)`
-- default intended weights: `0.60`, `0.20`, `0.20`
-- HRV-missing case renormalizes remaining weights
+## 10) Confidence model
 
-Final:
-
-- `MentalRecovery = clip(MentalRecoveryBase - 0.05*MentalStrain(t-1), 0, 100)`
-
-## 9) State Machines
-
-### 9.1 Physical States
-
-- `FI = CTL / CTL_ref`, `CTL_ref = median(CTL last 90 valid days)` (fallback 30-day median, cold start 50)
-- `AI = (ATL - CTL) / CTL_ref`
-
-Priority order:
-
-1. `overtraining_risk`: `AI >= 0.35` for >=7 of last 10 days AND `RecoveryScore <= 45` for last 3 days
-2. `fatigued`: `AI >= 0.25` OR (`AI >= 0.15` and `RecoveryScore < 45`)
-3. `peaking`: `FI >= 1.15` and `-0.10 <= AI <= 0.15` and `RecoveryScore >= 55`
-4. `productive`: `0.90 <= FI <= 1.15` and `0.05 <= AI <= 0.25` and `RecoveryScore >= 45`
-5. `maintaining`: `0.75 <= FI < 0.95` and `-0.05 <= AI < 0.15`
-6. `detraining`: `FI < 0.75`
-
-### 9.2 Mental States
-
-- `MFI = MCL / MCL_ref`, `MCL_ref = median(MCL last 90 valid days)` (fallback 30-day median, cold start 50)
-- `MAI = (MAL - MCL) / MCL_ref`
-
-Priority order:
-
-1. `burnout_risk`: persistence (>=7 of last 10 days had `MAI >= 0.25` or `MentalRecovery < 50`) and today `MAI >= 0.25` or `MentalRecovery < 50`
-2. `fatigued`: (`MentalRecovery < 40` and `MFI >= 0.75`) OR `MAI >= 0.25` OR (`MAI >= 0.15` and `MentalRecovery < 50`)
-3. `peaking`: `MFI >= 1.15` and `-0.10 <= MAI <= 0.15` and `MentalRecovery >= 60` and `ExamUrgency >= 0.40`
-4. `productive`: `0.90 <= MFI <= 1.15` and `0.05 <= MAI <= 0.25` and `MentalRecovery >= 55`
-5. `maintaining`: `0.75 <= MFI < 0.95` and `-0.05 <= MAI < 0.15`
-6. `underloaded`: `MFI < 0.75` and `ExamUrgency < 0.40`
-
-## 10) Daily Target Ranges
-
-### 10.1 Physical Target (raw impulse center)
-
-`u_center = CTL * base_mult(state) * mult_recovery * mult_exam`
-
-- `base_mult`:
-- detraining `1.25`
-- maintaining `1.00`
-- productive `1.35`
-- peaking `0.60`
-- fatigued `0.30`
-- overtraining_risk `0.10`
-
-- `mult_recovery = 0.5 + RecoveryScore/200`
-- `mult_exam = 0.85 if ExamUrgency >= 0.70 else 0.95 if ExamUrgency >= 0.40 else 1.0`
-
-Range:
-
-- fatigued/overtraining_risk: `[0, u_center]`
-- else: `[0.8*u_center, 1.2*u_center]`
-
-Spike guard:
-
-- build states (detraining/maintaining/productive): `u_max <= 1.6*CTL`
-- non-build states: `u_max <= 1.3*CTL`
-
-Map range to strain via the physical log mapping function.
-
-### 10.2 Mental Target (raw impulse center)
-
-`m_center = MCL * base_mult_mental(state) * mult_mrec * mult_exam * mult_physical`
-
-- `base_mult_mental`:
-- underloaded `1.20`
-- maintaining `1.00`
-- productive `1.10`
-- peaking `1.25`
-- fatigued `0.70`
-- burnout_risk `0.50`
-
-- `mult_mrec = 0.5 + MentalRecovery/200`
-- `mult_exam = 1.25 if ExamUrgency >= 0.70 else 1.10 if ExamUrgency >= 0.40 else 1.0`
-- `mult_physical = 0.90 if PhysicalState in {fatigued, overtraining_risk} else 1.0`
-
-Range:
-
-- fatigued/burnout_risk: `[0, m_center]`
-- else: `[0.8*m_center, 1.2*m_center]`
-
-Cap: `m_max <= 1.6*MCL`
-
-Map range to strain via the mental log mapping function.
-
-## 11) Confidence Model
-
-History factor:
-
-- `<7 days`: `0.3`
-- `7-13 days`: `0.7`
-- `>=14 days`: `1.0`
-
-Consistency factor:
-
-- penalized by outlier-like spikes (for example large HRV/RHR anomalies)
-
-Per-metric base confidence:
-
-- `SleepConfidenceBase = 1.0 * (0.90 if midpoint missing else 1.0) * (0.85 if stage missing else 1.0)`
-- `RecoveryConfidenceBase = used_recovery_weight_sum`
-- `PhysicalConfidenceBase = 0.90 (HR series/avg HR), 0.65 (pace/energy fallback), 0.45 (minimal signal)`
-- `MentalConfidenceBase = 0.90 (study present), 0.70 (no study sessions)`
-
-Final per-metric confidence:
-
-- `Conf_metric = clip(Base * HistoryFactor * ConsistencyFactor, 0, 1)`
+- Sleep: coverage-based `C_sleep`
+- Recovery: availability mix (HRV/RHR/RR/sleep) * history factor * noise consistency
+- Physical: qualifying-day coverage + method quality + calibration caps
+- Mental: `0.9 * studyCoverage14`, with denominator-floor penalty and calibration caps
 
 Overall:
+- `C_overall = 0.25*C_sleep + 0.30*C_recovery + 0.25*C_physical + 0.20*C_mental`
 
-- `OverallConfidence = 0.25*Sleep + 0.35*Recovery + 0.25*Physical + 0.15*Mental`
+## 11) Diagnostics exposed in API
 
-## 12) Explainability Outputs
+`scientificByDate[date]` includes:
+- `calibrationStatus` (physical + mental)
+- `denominatorDiagnostics` (physical + mental)
+- `components.maiRaw`, `components.maiShrinkFactor`, `components.mclRefEffective`, `components.ctlRefEffective`
+- `chartPayloads` with explicit raw, normalized, contributions, and confidence
 
-Every scientific day emits:
-
-- `reasonCodes[]`
-- `userMessages[]`
-- `contributionBreakdown{component -> points}`
-
-Explicit explainability blocks exist for:
-
-- sleep (`lowReasons`, `highReasons`)
-- physical recovery (`reasons`)
-- mental recovery (`reasons`)
-- target range (`physicalReasons`, `mentalReasons`, `studyRationale`)
-
-## 13) Chart Payload Contract
-
-Each day includes hover-ready metadata for chart points:
-
-- `timestamp`
-- `rawValue`
-- `normalizedValue`
-- `componentContributions`
-- `confidence`
-
-Implemented for `physicalStrain` and `mentalStrain` payloads under `chartPayloads`.
