@@ -133,6 +133,10 @@ Notes:
 - `YAN_STUDY_PASSCODE_HASH`
 - `SESSION_SECRET`
 
+### Dev-only auth fallback
+
+- `YAN_STUDY_PASSCODE` (plain-text passcode; avoid in production)
+
 ### Common
 
 - `NEXT_PUBLIC_DATA_MODE=api`
@@ -154,10 +158,11 @@ Notes:
 - `YAN_STUDY_SESSIONS_TABLE`
 - `YAN_STUDY_TODOS_TABLE`
 - `YAN_STUDY_SETTINGS_TABLE`
-- Region (one of):
+- Region resolution order:
   - `DYNAMO_REGION`
   - `AWS_REGION`
   - `AWS_DEFAULT_REGION`
+  - default fallback: `eu-central-1`
 
 ### Optional ingestion auth
 
