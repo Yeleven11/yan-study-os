@@ -16,7 +16,7 @@ Private study operating system for IBDP finals with integrated health/performanc
   - `local` (file store)
   - `neon` (Postgres via Neon serverless driver)
   - `dynamodb` (AWS DynamoDB)
-- No synthetic sample health fallback is used in the analytics engine.
+- Analytics engine runs on real data; local data mode seeds a single synthetic day/workout after CSV import to keep the UI usable.
 
 ## Core Features
 
@@ -217,6 +217,11 @@ node scripts/import-health-folder.mjs "/absolute/path/to/export/folder" "http://
 - Payload: schema version `1`
 - Supports daily health + workouts + stream series + deletions
 - iOS app emits minute-resampled workout heart-rate series with gap carry-forward
+- Set `MOBILE_HEALTH_SYNC_BEARER_TOKEN` on the server; generate one with:
+
+```bash
+npm run mobile-sync:token
+```
 
 ## iOS App (StudyHealthSync)
 
