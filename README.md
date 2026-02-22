@@ -166,8 +166,9 @@ Notes:
 
 ### Optional ingestion auth
 
-- `HEALTH_EXPORT_BEARER_TOKEN` (CSV and mobile endpoint fallback token)
+- `HEALTH_EXPORT_BEARER_TOKEN` (CSV and batch endpoint token)
 - `MOBILE_HEALTH_SYNC_BEARER_TOKEN` (dedicated mobile token)
+- Back-compat env names for CSV + batch tokens are also accepted: `HEALTH_EXPORT_BEARER_TOKE`, `HEALTH_EXPORT_TOKEN`, `HEALTH_TOKEN`, `AUTHORIZATION`, `Authorization`
 
 ### Optional tooling
 
@@ -204,6 +205,10 @@ Notes:
   - JSON `{ csv, filename }`
   - JSON `{ files: [{ filename, csv }] }`
   - raw `text/csv`
+- Auth token sources (when a token is configured):
+- `Authorization: Bearer <token>`
+- `x-health-export-token` or `x-health-token` headers
+- query string `?ingest_token=` or `?token=`
 
 Batch helper:
 
