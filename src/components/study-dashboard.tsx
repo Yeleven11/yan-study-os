@@ -28,7 +28,10 @@ import {
   sortTodos,
   toDateKey,
 } from "@/lib/dashboard-utils";
-import { createDashboardRepository } from "@/lib/client/repository";
+import {
+  createDashboardRepository,
+  resetDemoRepositoryData,
+} from "@/lib/client/repository";
 import { ScientificDashboard, ScientificTrendsRail } from "@/components/scientific-dashboard";
 import {
   applyFlashcardGrade,
@@ -64,7 +67,14 @@ import type {
 } from "@/lib/types";
 
 type AuthStatus = "checking" | "signedOut" | "signedIn";
+type DashboardSessionMode = "full" | "demo";
 type ExpandedCard = "calendar" | "timer" | "totals" | "health" | null;
+type SessionResponse = {
+  authenticated: boolean;
+  mode?: DashboardSessionMode;
+  issuedAt?: string;
+  expiresAt?: string;
+};
 
 const TIMER_STORAGE_KEY = "yan-study-os:active-timer:v1";
 const OFFLINE_QUEUE_KEY = "yan-study-os:offline-queue:v1";
@@ -92,6 +102,7 @@ type GoalsDraftState = {
 type GoalsDraftErrors = Partial<Record<keyof GoalsDraftState, string>>;
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const MOBILE_UNSUPPORTED_MESSAGE = "Unfortunately this website is not supported on mobile at this time.";
 
 function createOfflineAction(
   action: Omit<OfflineAction, "id" | "createdAt">,
@@ -730,8 +741,22 @@ function FocusModal({
   );
 }
 
+function MobileUnsupportedScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-5 text-[var(--text)] md:hidden">
+      <div className="w-full max-w-sm rounded-xl border border-[var(--panel-border)] bg-[var(--panel)] p-5 text-center">
+        <p className="text-sm font-medium text-[var(--text)]">{MOBILE_UNSUPPORTED_MESSAGE}</p>
+      </div>
+    </div>
+  );
+}
+
 export default function StudyDashboard() {
-  const repository = useMemo(() => createDashboardRepository(), []);
+  const [sessionMode, setSessionMode] = useState<DashboardSessionMode>("full");
+  const repository = useMemo(
+    () => createDashboardRepository({ sessionMode }),
+    [sessionMode],
+  );
 
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [sessionIssuedAt, setSessionIssuedAt] = useState<string | null>(null);
@@ -796,35 +821,37 @@ export default function StudyDashboard() {
   const [selectedWorkoutDetail, setSelectedWorkoutDetail] = useState<WorkoutDetail | null>(null);
   const [loadingWorkoutDetail, setLoadingWorkoutDetail] = useState(false);
 
+  const applySessionResponse = useCallback((payload: SessionResponse) => {
+    setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
+    setSessionMode(payload.authenticated && payload.mode === "demo" ? "demo" : "full");
+    setSessionIssuedAt(
+      payload.authenticated && typeof payload.issuedAt === "string"
+        ? payload.issuedAt
+        : null,
+    );
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
-    request<{ authenticated: boolean; issuedAt?: string; expiresAt?: string }>(
-      "/api/auth/session",
-    )
+    request<SessionResponse>("/api/auth/session")
       .then((payload) => {
         if (!isMounted) {
           return;
         }
-        setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
-        setSessionIssuedAt(
-          payload.authenticated && typeof payload.issuedAt === "string"
-            ? payload.issuedAt
-            : null,
-        );
+        applySessionResponse(payload);
       })
       .catch(() => {
         if (!isMounted) {
           return;
         }
-        setAuthStatus("signedOut");
-        setSessionIssuedAt(null);
+        applySessionResponse({ authenticated: false });
       });
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [applySessionResponse]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -957,7 +984,7 @@ export default function StudyDashboard() {
 
         let nextData = toAppData(bootstrap, timezone);
 
-        if (offlineQueue.length > 0) {
+        if (repository.mode === "api" && offlineQueue.length > 0) {
           nextData = offlineQueue.reduce(applyOfflineAction, nextData);
         }
 
@@ -1537,23 +1564,24 @@ export default function StudyDashboard() {
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthError(null);
+    setStatusMessage(null);
 
     try {
       await request<{ ok: true }>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ passcode }),
       });
-      const sessionPayload: { authenticated: boolean; issuedAt?: string } = await request<{
-        authenticated: boolean;
-        issuedAt?: string;
-      }>("/api/auth/session").catch(() => ({ authenticated: true }));
-      setPasscode("");
-      setAuthStatus("signedIn");
-      setSessionIssuedAt(
-        sessionPayload.authenticated && typeof sessionPayload.issuedAt === "string"
-          ? sessionPayload.issuedAt
-          : new Date().toISOString(),
+      const sessionPayload = await request<SessionResponse>("/api/auth/session").catch(
+        () =>
+          ({
+            authenticated: true,
+            mode: "full",
+            issuedAt: new Date().toISOString(),
+          }) satisfies SessionResponse,
       );
+      setPasscode("");
+      setData(null);
+      applySessionResponse(sessionPayload);
     } catch (error) {
       setAuthError(
         error instanceof Error ? error.message : "Unable to verify passcode",
@@ -1561,10 +1589,39 @@ export default function StudyDashboard() {
     }
   };
 
+  const handleDemoLogin = async () => {
+    setAuthError(null);
+    setStatusMessage(null);
+    resetDemoRepositoryData();
+
+    try {
+      await request<{ ok: true }>("/api/auth/demo", {
+        method: "POST",
+      });
+      const sessionPayload = await request<SessionResponse>("/api/auth/session").catch(
+        () =>
+          ({
+            authenticated: true,
+            mode: "demo",
+            issuedAt: new Date().toISOString(),
+          }) satisfies SessionResponse,
+      );
+      setPasscode("");
+      setData(null);
+      applySessionResponse(sessionPayload);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to open demo mode");
+    }
+  };
+
   const handleLogout = async () => {
     await request<{ ok: true }>("/api/auth/logout", { method: "POST" }).catch(() => null);
     setAuthStatus("signedOut");
+    setSessionMode("full");
     setSessionIssuedAt(null);
+    setStatusMessage(null);
+    setSelectedWorkoutId(null);
+    setSelectedWorkoutDetail(null);
     setData(null);
   };
 
@@ -2055,67 +2112,90 @@ export default function StudyDashboard() {
 
   if (authStatus === "checking") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)]">
-        <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
-          Initializing Yan Study OS...
+      <>
+        <MobileUnsupportedScreen />
+        <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
+          <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
+            Initializing Yan Study OS...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (authStatus === "signedOut") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)]">
-        <form
-          onSubmit={handleLogin}
-          className="w-full max-w-md rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-6"
-        >
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Yan Study OS</p>
-          <h1 className="mt-2 text-xl font-semibold">Secure Entry</h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Enter your personal passcode to open the dashboard.
-          </p>
-          <label className="mt-5 block text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
-            Passcode
-          </label>
-          <input
-            type="password"
-            value={passcode}
-            onChange={(event) => setPasscode(event.target.value)}
-            className="mt-2 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
-            autoComplete="current-password"
-          />
-          {authError ? (
-            <p className="mt-3 text-sm text-[#ff7f7f]" role="alert">
-              {authError}
-            </p>
-          ) : null}
-          <button
-            type="submit"
-            className="mt-5 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+      <>
+        <MobileUnsupportedScreen />
+        <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
+          <form
+            onSubmit={handleLogin}
+            className="w-full max-w-md rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-6"
           >
-            Unlock Dashboard
-          </button>
-        </form>
-      </div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Yan Study OS</p>
+            <h1 className="mt-2 text-xl font-semibold">Secure Entry</h1>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Enter your personal passcode to open the dashboard.
+            </p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Or open a demo workspace with sample flashcards, study history, workouts, and health data.
+            </p>
+            <label className="mt-5 block text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
+              Passcode
+            </label>
+            <input
+              type="password"
+              value={passcode}
+              onChange={(event) => setPasscode(event.target.value)}
+              className="mt-2 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+              autoComplete="current-password"
+            />
+            {authError ? (
+              <p className="mt-3 text-sm text-[#ff7f7f]" role="alert">
+                {authError}
+              </p>
+            ) : null}
+            <div className="mt-5 grid gap-2">
+              <button
+                type="submit"
+                className="w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+              >
+                Unlock Dashboard
+              </button>
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                className="w-full rounded-md border border-[var(--panel-border)] px-3 py-2 text-sm transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+              >
+                Enter Demo
+              </button>
+            </div>
+          </form>
+        </div>
+      </>
     );
   }
 
   if (!data) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)]">
-        <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
-          Loading dashboard data...
+      <>
+        <MobileUnsupportedScreen />
+        <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
+          <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
+            Loading dashboard data...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   const maxSubjectSeconds = Math.max(...Object.values(subjectTotals), 1);
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-      <div className="flex h-full min-h-0 flex-col">
+    <>
+      <MobileUnsupportedScreen />
+      <div className="hidden h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)] md:block">
+        <div className="flex h-full min-h-0 flex-col">
         <StatusStrip
           healthUpdatedAt={latestHealthUpdateIso}
           workoutsUpdatedAt={latestWorkoutUpdateIso}
@@ -2223,7 +2303,7 @@ export default function StudyDashboard() {
                   Mode: {repository.mode.toUpperCase()}
                 </span>
                 <span className="rounded border border-[var(--panel-border)] px-2 py-1">
-                  Pending Sync: {offlineQueue.length}
+                  Pending Sync: {repository.mode === "api" ? offlineQueue.length : 0}
                 </span>
                 <button
                   type="button"
@@ -3215,8 +3295,9 @@ export default function StudyDashboard() {
           />
         ) : null}
       </FocusModal>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

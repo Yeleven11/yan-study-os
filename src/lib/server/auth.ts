@@ -3,9 +3,14 @@ import type { NextRequest } from "next/server";
 
 const COOKIE_NAME = "yan-study-os.session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const FULL_SESSION_SUBJECT = "yan";
+const DEMO_SESSION_SUBJECT = "demo";
+
+export type SessionMode = "full" | "demo";
 
 type SessionPayload = {
-  sub: string;
+  sub: typeof FULL_SESSION_SUBJECT | typeof DEMO_SESSION_SUBJECT;
+  mode?: SessionMode;
   iat: number;
   exp: number;
 };
@@ -34,6 +39,34 @@ function signPayload(payload: SessionPayload): string {
   return `${encoded}.${toBase64Url(signature)}`;
 }
 
+function normalizeSessionPayload(payload: SessionPayload): SessionPayload | null {
+  if (
+    !payload ||
+    typeof payload.iat !== "number" ||
+    typeof payload.exp !== "number"
+  ) {
+    return null;
+  }
+
+  const mode =
+    payload.mode === "demo" || payload.sub === DEMO_SESSION_SUBJECT
+      ? "demo"
+      : payload.mode === "full" || payload.sub === FULL_SESSION_SUBJECT
+      ? "full"
+      : null;
+
+  if (!mode) {
+    return null;
+  }
+
+  return {
+    sub: mode === "demo" ? DEMO_SESSION_SUBJECT : FULL_SESSION_SUBJECT,
+    mode,
+    iat: payload.iat,
+    exp: payload.exp,
+  };
+}
+
 function verifyAndDecodeSessionToken(token: string): SessionPayload | null {
   const [encodedPayload, encodedSignature] = token.split(".");
   if (!encodedPayload || !encodedSignature) {
@@ -53,13 +86,9 @@ function verifyAndDecodeSessionToken(token: string): SessionPayload | null {
   }
 
   try {
-    const payload = JSON.parse(fromBase64Url(encodedPayload).toString("utf-8")) as SessionPayload;
-    if (
-      !payload ||
-      payload.sub !== "yan" ||
-      typeof payload.iat !== "number" ||
-      typeof payload.exp !== "number"
-    ) {
+    const parsed = JSON.parse(fromBase64Url(encodedPayload).toString("utf-8")) as SessionPayload;
+    const payload = normalizeSessionPayload(parsed);
+    if (!payload) {
       return null;
     }
 
@@ -73,10 +102,11 @@ function verifyAndDecodeSessionToken(token: string): SessionPayload | null {
   }
 }
 
-export function createSessionToken(): string {
+export function createSessionToken(mode: SessionMode = "full"): string {
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
-    sub: "yan",
+    sub: mode === "demo" ? DEMO_SESSION_SUBJECT : FULL_SESSION_SUBJECT,
+    mode,
     iat: issuedAt,
     exp: issuedAt + SESSION_TTL_SECONDS,
   };

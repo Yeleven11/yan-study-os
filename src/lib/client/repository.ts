@@ -1,6 +1,7 @@
 "use client";
 
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
+import { createDemoAppData } from "@/lib/demo-data";
 import { sortTodos } from "@/lib/dashboard-utils";
 import { applyFlashcardGrade, normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
@@ -18,10 +19,13 @@ import type {
   WorkoutEntry,
 } from "@/lib/types";
 
-const STORAGE_KEY = "yan-study-os:data:v1";
+const DEFAULT_STORAGE_KEY = "yan-study-os:data:v1";
+const DEMO_STORAGE_KEY = "yan-study-os:demo-data:v1";
+
+type RepositoryMode = "local" | "api" | "demo";
 
 export interface DashboardRepository {
-  mode: "local" | "api";
+  mode: RepositoryMode;
   getBootstrap: () => Promise<DashboardBootstrap>;
   createStudySession: (session: StudySession) => Promise<void>;
   createWorkout: (workout: WorkoutEntry) => Promise<void>;
@@ -165,16 +169,20 @@ function parseGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGo
   };
 }
 
-function parseStoredData(raw: string | null): AppData {
+function parseStoredData(
+  raw: string | null,
+  createSeedData: (timezone?: string) => AppData = createDefaultAppData,
+): AppData {
   if (!raw) {
-    return createDefaultAppData(getTimezone());
+    return createSeedData(getTimezone());
   }
 
   try {
     const parsed = JSON.parse(raw) as AppData;
+    const defaults = createSeedData(getTimezone());
 
     return {
-      exams: Array.isArray(parsed.exams) ? parsed.exams : createDefaultAppData().exams,
+      exams: Array.isArray(parsed.exams) ? parsed.exams : defaults.exams,
       studySessions: Array.isArray(parsed.studySessions) ? parsed.studySessions : [],
       todos: Array.isArray(parsed.todos) ? parsed.todos : [],
       flashcards: normalizeFlashcards(parsed.flashcards),
@@ -186,12 +194,11 @@ function parseStoredData(raw: string | null): AppData {
       goals: parseGoals(parsed.goals),
       settings: {
         timezone: parsed.settings?.timezone ?? getTimezone(),
-        examHighlightColor:
-          parsed.settings?.examHighlightColor ?? createDefaultAppData().settings.examHighlightColor,
+        examHighlightColor: parsed.settings?.examHighlightColor ?? defaults.settings.examHighlightColor,
       },
     };
   } catch {
-    return createDefaultAppData(getTimezone());
+    return createSeedData(getTimezone());
   }
 }
 
@@ -199,21 +206,24 @@ function getTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Berlin";
 }
 
-function readLocalData(): AppData {
+function readLocalData(
+  storageKey = DEFAULT_STORAGE_KEY,
+  createSeedData: (timezone?: string) => AppData = createDefaultAppData,
+): AppData {
   if (typeof window === "undefined") {
-    return createDefaultAppData("Europe/Berlin");
+    return createSeedData("Europe/Berlin");
   }
 
-  return parseStoredData(window.localStorage.getItem(STORAGE_KEY));
+  return parseStoredData(window.localStorage.getItem(storageKey), createSeedData);
 }
 
-function writeLocalData(data: AppData): void {
+function writeLocalData(data: AppData, storageKey = DEFAULT_STORAGE_KEY): void {
   if (typeof window === "undefined") {
     return;
   }
 
   window.localStorage.setItem(
-    STORAGE_KEY,
+    storageKey,
     JSON.stringify({
       ...data,
       todos: sortTodos(data.todos),
@@ -221,12 +231,16 @@ function writeLocalData(data: AppData): void {
   );
 }
 
-function createLocalRepository(): DashboardRepository {
+function createLocalRepository(
+  mode: Extract<RepositoryMode, "local" | "demo"> = "local",
+  storageKey = DEFAULT_STORAGE_KEY,
+  createSeedData: (timezone?: string) => AppData = createDefaultAppData,
+): DashboardRepository {
   return {
-    mode: "local",
+    mode,
     async getBootstrap() {
-      const data = readLocalData();
-      writeLocalData(data);
+      const data = readLocalData(storageKey, createSeedData);
+      writeLocalData(data, storageKey);
 
       return {
         ...data,
@@ -234,18 +248,18 @@ function createLocalRepository(): DashboardRepository {
       };
     },
     async createStudySession(session) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.studySessions = [...data.studySessions, session];
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async createWorkout(workout) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       const exists = data.workouts.some((entry) => entry.id === workout.id);
       data.workouts = exists ? data.workouts : [...data.workouts, workout];
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async updateWorkout(id, patch) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.workouts = data.workouts.map((workout) => {
         if (workout.id !== id) {
           return workout;
@@ -265,37 +279,37 @@ function createLocalRepository(): DashboardRepository {
 
         return next;
       });
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async createTodo(todo) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.todos = sortTodos([...data.todos, todo]);
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async createFlashcard(flashcard) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       const exists = data.flashcards.some((item) => item.id === flashcard.id);
       data.flashcards = exists
         ? normalizeFlashcards(data.flashcards)
         : normalizeFlashcards([...data.flashcards, flashcard]);
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async gradeFlashcard(input) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       const timezone = data.settings?.timezone || getTimezone();
       const result = applyFlashcardGrade(data.flashcards, input, timezone);
       data.flashcards = result.cards;
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async updateTodo(id, patch) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.todos = sortTodos(
         data.todos.map((todo) => (todo.id === id ? { ...todo, ...patch } : todo)),
       );
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async archiveTodo(id) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.todos = sortTodos(
         data.todos.map((todo) =>
           todo.id === id
@@ -308,10 +322,10 @@ function createLocalRepository(): DashboardRepository {
             : todo,
         ),
       );
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async restoreTodo(id) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.todos = sortTodos(
         data.todos.map((todo) =>
           todo.id === id
@@ -324,22 +338,22 @@ function createLocalRepository(): DashboardRepository {
             : todo,
         ),
       );
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async updateExams(exams) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.exams = [...exams].sort(
         (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
       );
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async updateGoals(goals) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       data.goals = parseGoals(goals);
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
     },
     async importHealthCsv(csv) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       const now = new Date().toISOString();
       const synthetic: DailyHealthFact[] = [];
       const workouts: WorkoutEntry[] = [];
@@ -383,7 +397,7 @@ function createLocalRepository(): DashboardRepository {
       data.workouts = [...workoutsById.values()].sort(
         (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
       );
-      writeLocalData(data);
+      writeLocalData(data, storageKey);
       return {
         importedHealthDays: synthetic.length,
         importedWorkouts: workouts.length,
@@ -412,11 +426,11 @@ function createLocalRepository(): DashboardRepository {
       };
     },
     async getWorkoutDetail(id) {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       return data.workoutDetails.find((detail) => detail.workoutId === id) || null;
     },
     async getHealthRawFiles() {
-      const data = readLocalData();
+      const data = readLocalData(storageKey, createSeedData);
       return data.healthRawFiles;
     },
   };
@@ -556,7 +570,21 @@ function createApiRepository(): DashboardRepository {
   };
 }
 
-export function createDashboardRepository(): DashboardRepository {
+export function resetDemoRepositoryData(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(DEMO_STORAGE_KEY);
+}
+
+export function createDashboardRepository(options?: {
+  sessionMode?: "full" | "demo";
+}): DashboardRepository {
+  if (options?.sessionMode === "demo") {
+    return createLocalRepository("demo", DEMO_STORAGE_KEY, createDemoAppData);
+  }
+
   const mode = process.env.NEXT_PUBLIC_DATA_MODE === "local" ? "local" : "api";
   if (mode === "local") {
     return createLocalRepository();

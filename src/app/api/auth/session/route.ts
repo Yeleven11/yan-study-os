@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     authenticated: true,
+    mode: session.mode || "full",
     issuedAt: new Date(session.iat * 1000).toISOString(),
     expiresAt: new Date(session.exp * 1000).toISOString(),
   });

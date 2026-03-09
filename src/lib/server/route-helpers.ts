@@ -1,9 +1,11 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { isAuthenticatedRequest } from "./auth";
+import { getSessionFromRequest } from "./auth";
 
 export function requireSession(request: NextRequest): NextResponse | null {
-  if (!isAuthenticatedRequest(request)) {
+  const session = getSessionFromRequest(request);
+
+  if (!session || session.mode === "demo") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
