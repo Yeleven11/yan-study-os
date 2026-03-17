@@ -1,0 +1,1472 @@
+Implementation-Ready Scientific Specification for
+a Fitness and Cognition Engine
+Executive summary
+A) Executive summary (≤1 page)
+This specification defines a deterministic, implementation-ready engine that produces WHOOP-like
+robustness for daily physical load/recovery plus a parallel mental load/recovery system, using only the
+signals listed (sleep, HRV SDNN, resting HR, respiratory rate, activity, workout sessions, study sessions, and
+exam/deadline schedule). The physical core is an evidence-based training impulse approach (TRIMP)
+coupled to exponentially weighted “fitness” and “fatigue” moving averages that naturally decay without
+training (time constants 42 days and 7 days). 1 The mental core mirrors this design with a study-derived
+impulse signal that decays over short (3-day) and medium (21-day) horizons (these mental time constants
+are explicitly flagged as heuristics given current inputs and limited direct physiological measurement of
+mental work). 2
+
+
+The system outputs: (1) Sleep score, (2) Recovery score, (3) Cardio/physical load and physical strain, (4)
+Mental load and mental strain, (5) Mental recovery, (6) Daily target ranges for physical and mental strain, (7)
+Explainability artifacts (reason codes + user-facing templates + contribution breakdowns), and (8)
+Confidence and fallbacks under missing/noisy data. Sleep scoring emphasizes sleep duration relative to
+individualized need, sleep efficiency/fragmentation, and sleep timing regularity, all of which have strong
+empirical links to health and performance outcomes. 3 Wearable sleep stage estimates are included at
+low weight because multi-stage classification is less reliable than sleep–wake detection in consumer
+wearables. 4
+
+
+Critical sleep-score design decision (oversleep penalty): The engine applies a strongly asymmetric
+penalty: undersleep is penalized steeply; “sleeping above need” is penalized minimally and only beyond a
+generous grace window. This is supported by (a) adult consensus guidance emphasizing “≥7 hours” and
+stating that appropriateness of ≥9 hours cannot be ascertained with certainty and no strict upper limit is
+recommended by AASM/SRS, 5 (b) evidence that sleep extension can improve performance in some
+contexts, 6 and (c) observational evidence that both short and long sleep durations associate with
+adverse outcomes (U-shaped association), but long sleep is strongly confounded by underlying illness and
+other factors, so punitive scoring for moderate extension is not well-justified. 7
+
+
+Cardio-load states and guidance: The proposed six-state taxonomy retains your state names for
+compatibility but recommends renaming the top state to “overtraining risk” (not “overtraining”) because
+true overtraining syndrome is a clinical condition typically requiring weeks-to-months for recovery and
+cannot be diagnosed from the available signals alone; the engine can only flag risk patterns consistent with
+sustained maladaptation. 8 State boundaries are defined using (a) chronic load vs a personal reference
+level, (b) acute-minus-chronic load (fatigue), and (c) persistence + physiology stress signals. Detraining
+boundaries are anchored to detraining evidence showing meaningful regression in endurance capacity
+
+
+
+
+                                                      1
+after roughly 2–4 weeks of cessation/reduction, which aligns naturally with a 42-day chronic-load decay
+model. 9
+
+
+Data model and variables
+B) Variable dictionary with units and allowed ranges
+All timestamped inputs are assumed to be in the user’s local time (Europe/Berlin) and processed per
+calendar day (00:00–23:59). Dates are evaluated relative to 2026-02-17.
+
+
+                                                                 Allowed
+ Variable                                    Type        Units   range /      Required   Notes
+                                                                 validation
+
+                                                                                         Total sleep
+  sleep_asleep_min                           float        min    0–900             Yes   time (TST).
+                                                                                          10
+
+
+                                                                                         Time in bed /
+                                                                                         sleep
+  sleep_inbed_min                            float        min    0–1,200           Yes   opportunity.
+                                                                                         Used for sleep
+                                                                                         efficiency. 11
+
+                                                                                         “Core/light”
+                                                                                         stage from
+                                                                                         wearable; use
+  sleep_stage_core_min                       float        min    0–900             No    low weight
+                                                                                         due to stage
+                                                                                         uncertainty.
+                                                                                          12
+
+
+                                                                                         Low weight.
+  sleep_stage_deep_min                       float        min    0–900             No
+                                                                                          12
+
+
+                                                                                         Low weight.
+  sleep_stage_rem_min                        float        min    0–900             No
+                                                                                          12
+
+
+                                                                                         Proxy for
+                                                                                         WASO/
+                                                                                         fragmentation
+                                                                                         (wearable-
+  sleep_stage_awake_min                      float        min    0–600             No    defined).
+                                                                                         WASO is a
+                                                                                         core
+                                                                                         continuity
+                                                                                         concept. 13
+
+
+
+
+                                                     2
+                                                Allowed
+Variable                 Type           Units   range /      Required   Notes
+                                                validation
+
+                                                                        Sleep timing
+                                                                        regularity
+                                                                        proxy;
+                                                                        irregular
+                                                                        timing
+                                                00:00–
+sleep_midpoint_clock     time         hh:mm                       No    correlates
+                                                23:59
+                                                                        with worse
+                                                                        academic and
+                                                                        circadian
+                                                                        outcomes.
+                                                                         14
+
+
+                                                                        SDNN is a
+                                                                        standard HRV
+                                                                        time-domain
+hrv_sdnn_ms              float            ms    5–400             No
+                                                                        metric; use
+                                                                        baseline-
+                                                                        relative. 15
+
+                                                                        Use baseline-
+                                                                        relative
+                                                                        readiness;
+resting_hr_bpm           float          bpm     25–120            No    elevated RHR
+                                                                        can indicate
+                                                                        fatigue/
+                                                                        illness. 16
+
+                                                                        Wearables
+                                                                        can estimate
+                                                                        respiratory
+                                     breaths/                           rate;
+resp_rate_brpm           float                  6–30              No
+                                         min                            deviations can
+                                                                        support
+                                                                        illness/stress
+                                                                        detection. 17
+
+                                                                        Optional
+steps_day                  int         steps    0–80,000          No
+                                                                        NEAT/context.
+
+                                                                        Optional
+active_energy_kcal_day   float           kcal   0–6,000           No
+                                                                        NEAT/context.
+
+                                                                        Optional
+distance_km_day          float            km    0–200             No
+                                                                        NEAT/context.
+
+
+
+
+                                 3
+                                                       Allowed
+Variable                          Type         Units   range /      Required   Notes
+                                                       validation
+
+                                                                               Zero or more
+workouts[]                          list         —     —                 No    cardio
+                                                                               workouts.
+
+                                                       walk/run/
+workout.type                     enum            —     cycle/           Yes*   Per workout.
+                                                       swim
+
+workout.start_ts ,                                     end >
+                               datetime          —                      Yes*   For duration.
+workout.end_ts                                         start
+
+                                                                               If missing,
+workout.duration_min              float         min    1–600            Yes*   derive from
+                                                                               timestamps.
+
+                                                                               If HR is
+workout.avg_hr_bpm                float        bpm     40–220            No    missing, use
+                                                                               fallbacks.
+
+                                                                               Used for QA
+workout.min_hr_bpm ,
+                                  float        bpm     40–240            No    and HRmax
+workout.max_hr_bpm
+                                                                               estimation.
+
+                                                                               Preferred
+                                                                               when
+workout.hr_series_1min_bpm[]        list       bpm     40–240            No    available
+                                                                               (robust
+                                                                               TRIMP).
+
+                                                                               Fallback
+workout.distance_km               float         km     0–300             No    intensity
+                                                                               estimation.
+
+                                                                               Fallback
+workout.active_energy_kcal        float         kcal   0–4,000           No    intensity
+                                                                               estimation.
+
+workout.speed_mps_series[]          list        m/s    0–12              No    Optional.
+
+                                                                               Zero or more
+study_sessions[]                    list         —     —                 No
+                                                                               study blocks.
+
+study.start_ts ,                                       end >
+                               datetime          —                      Yes*   For duration.
+study.end_ts                                           start
+
+                                                                               If missing,
+study.duration_min                float         min    1–720            Yes*
+                                                                               derive.
+
+
+
+
+                                           4
+                                                                          Allowed
+  Variable                                        Type            Units   range /      Required     Notes
+                                                                          validation
+
+                                                                                                    Upcoming
+   exams[]                                          list            —     —                  No     deadlines/
+                                                                                                    exams.
+
+   exam.date                                       date             —     valid date       Yes*
+
+                                                                                                    Used to scale
+   exam.importance                                      int        1–5    1–5              Yes*
+                                                                                                    urgency.
+
+Derived variables (internal)
+- sleep_efficiency = sleep_asleep_min / sleep_inbed_min . Sleep efficiency is a standard
+continuity metric. 11
+- waso_min ≈ sleep_stage_awake_min (or sleep_inbed_min - sleep_asleep_min if stage awake
+is unavailable). WASO is a core concept for fragmentation. 13
+- HR calibration: HRmax_est , HRrest_est , HRR = HRmax_est - HRrest_est .
+- Physical impulse: TRIMP_session , TRIMP_day . TRIMP is a common internal-load construct based on
+HR intensity × duration. 18
+- Chronic/acute load: CTL (42d EWMA), ATL (7d EWMA), TSB = CTL - ATL . The 42d/7d defaults are
+widely used nominal values grounded in the impulse-response model tradition. 19
+- Mental impulse: mTRIMP_day , MCL (21d EWMA), MAL (3d EWMA). (Heuristic time constants; rationale
+is short-term mental fatigue vs medium-term workload accumulation.)             2
+
+- Exam urgency: exam_urgency_day ∈ [0,1] from schedule.
+
+
+Formula sheet
+C) Formula sheet (equations, constants, transforms)
+Notation: day index t increments once per calendar day. Minute-based quantities are in minutes. All
+scores are 0–100 unless stated.
+
+
+Sleep need estimation (individualized)
+
+Evidence basis: sleep need varies by age and individual; adult consensus recommends ≥7h and does not
+set a strict upper limit; teens commonly need 8–10h. 20
+Heuristic implementation (decision-complete):
+
+
+1) Cold-start anchor (used until sufficient history):
+- sleep_need_anchor_min = 480 (8h).
+- Rationale: midpoint of adult recommended range (7–9h) and within typical adolescent range (8–10h). 21
+- Evidence strength for “8h as universal”: low (individual variability is high); thus this is explicitly a heuristic
+default.
+
+
+2) Personalized need (requires ≥21 days with valid sleep + physiology):
+Let GoodDays be days where:
+
+
+
+
+                                                              5
+-       RecoveryScore(t)          ≥      60      AND           sleep_efficiency(t)     ≥      0.85      AND
+    PhysicalStrain(t-1) ≤ 70 .
+Sleep efficiency threshold near 85% aligns with normal consolidated sleep in clinical contexts.   22
+
+
+
+
+Then:
+-
+  sleep_need_min(t) = clamp( median_{d∈GoodDays last 56 days}( sleep_asleep_min(d) ),
+420, 600 )
+If |GoodDays| < 7 , fall back to sleep_need_anchor_min .
+- clamp(x, a, b) = min(max(x,a), b) .
+
+
+Sleep score
+
+Design goals: (i) strongly punish undersleep, (ii) minimally punish oversleep beyond need, (iii) incorporate
+fragmentation and timing regularity due to strong associations with wellbeing and academic/cognitive
+measures.       23
+
+
+
+
+Component scores
+
+Let N = sleep_need_min(t) , S = sleep_asleep_min , B = sleep_inbed_min , A = waso_min ,
+    E = S/B .
+
+
+1) Duration component Score_sleep_duration ∈ [0,100]
+- Undersleep penalty (strong, convex):
+- deficit = max(0, N - S)
+- Score_sleep_duration = 100 * max(0, 1 - ( deficit / (0.35*N) )^2 ) if deficit > 0 .
+- Interpretation: a deficit of ~0.35·N (≈2.8h at N=8h) drives duration toward 0 (strong penalty).
+- Evidence basis for strong undersleep penalty: chronic <7h is associated with adverse health and
+performance outcomes. 24
+- Exact curvature and 0.35 constant: heuristic (see heuristic registry).
+
+
+        • Oversleep penalty (minimal, only after grace):
+        • excess = max(0, S - N)
+        • grace = 60 minutes
+        • ratio = max(0, excess - grace) / 240
+        • Score_sleep_duration = 100 - 10*(ratio^2) if deficit = 0 .
+        • This penalizes only very large oversleep (beyond ~1h extra) by at most 10 points.
+        • Rationale: AASM/SRS do not define a firm upper limit and appropriateness of ≥9h is uncertain; long
+         sleep associations are largely observational and confounded.    25
+
+
+
+2) Continuity component Score_sleep_continuity ∈ [0,100]
+- Base from efficiency:
+- Score_eff = clip( 100*(E - 0.75)/0.15, 0, 100 )
+- This maps 75% efficiency → 0, 90% → 100.
+- Fragmentation penalty from WASO proxy:
+- pen_awake = 20 * clip( (A - 20)/80, 0, 1 )
+- Score_sleep_continuity = clip(Score_eff - pen_awake, 0, 100)
+
+
+
+
+                                                           6
+Clinical/educational materials commonly cite ~85% as a “normal” sleep efficiency threshold and WASO ≳20–
+30 minutes as potentially meaningful fragmentation.    26
+
+Exact scaling constants: heuristic.
+
+
+3) Regularity (timing) component Score_sleep_regularity ∈ [0,100]
+Let Δmid be the circular absolute difference (minutes) between today’s sleep midpoint and a 21-day
+circular median baseline midpoint. Sleep regularity and consistent sleep timing are associated with
+academic performance and circadian alignment outcomes in student populations. 27
+- Score_sleep_regularity = 100 / (1 + (Δmid / 90)^2)
+Function shape and 90-min scale: heuristic, evidence basis is directional not parametric.
+
+
+4) Stage composition component Score_sleep_stages ∈ [0,100]
+Because consumer wearables can detect sleep–wake relatively well but often struggle with fine-grained
+staging relative to polysomnography, stage information is used sparingly. 4
+Let deep_pct = sleep_stage_deep_min / S , rem_pct = sleep_stage_rem_min / S .
+- deep_def = max(0, 0.13 - deep_pct)
+- rem_def = max(0, 0.20 - rem_pct)
+- Score_sleep_stages = clip( 100 - 400*deep_def - 250*rem_def, 0, 100 )
+The 13% deep and 20% REM floor constants are heuristic “sanity bounds,” not clinical diagnosis thresholds.
+Stage weight is kept low due to device uncertainty. 12
+
+
+Final sleep score aggregation
+
+Default weights (renormalize over available components):
+- w_duration=0.50 , w_continuity=0.25 , w_regularity=0.15 , w_stages=0.10 (stages weight
+only if all stage mins present).
+- SleepScore = weighted_mean(scores, weights over available) .
+
+
+HR calibration and zone framework
+
+Evidence-backed HR calibration principle: HRmax can be estimated as the maximum observed HR across
+validated maximal efforts over a long window. The cited TRIMP implementation uses the highest observed
+HR in testing/training over a 12-month span. 28
+
+
+Deterministic estimation hierarchy (decision-complete):
+1) If user_profile.HRmax exists: HRmax_est = user_profile.HRmax .
+2) Else: HRmax_est = max( workout.max_hr_bpm over last 365 days ) , with QA rules: - Reject if
+max_hr_bpm < 140 or if derived from a workout with duration < 5 min (likely artifact).
+3) If no valid history: HRmax_est = 200 (heuristic placeholder; confidence reduced).
+
+
+Resting HR:
+- HRrest_est = median( resting_hr_bpm over last 14 valid days ) (fallback: latest value).
+This is a pragmatic baseline approach for within-person deltas; elevated RHR often reflects fatigue/illness
+though individual responses vary. 29
+
+
+
+
+                                                      7
+Zone model options (required by spec):
+- %HRmax (simple): easy but ignores HRrest and inter-individual variation.   30
+
+- %HRR (Karvonen / HR reserve): uses (HR - HRrest)/(HRmax - HRrest) ; commonly used for
+prescription and aligns directly with TRIMP formulations that rely on HR reserve. 31
+- Threshold-based (LTHR): highly useful for endurance but needs a test or strong inference; not reliably
+derivable from listed inputs alone without additional protocols. 30
+
+
+Recommendation: Use %HRR for TRIMP and universal zone computations; optionally support LTHR if user
+provides it (future input). This matches established TRIMP practice.   28
+
+
+
+
+Workout difficulty and TRIMP computation
+
+Primary TRIMP (HR-reserve exponential; “TRIMP-B”)
+
+From the cited TRIMP definition:
+- ΔHRratio = (HRexercise - HRrest) / (HRmax - HRrest)
+- TRIMP = D * (ΔHRratio) * exp( b * ΔHRratio )
+where D = session duration and b = 1.67 (female), 1.92 (male) .              28
+
+
+
+
+Implementation details:
+- If minute-level HR is available, compute per minute and sum:
+- TRIMP_session = Σ_{m=1..D} 1 * ΔHRratio_m * exp(b*ΔHRratio_m)
+- Else use average HR:
+- TRIMP_session = D * ΔHRratio_avg * exp(b*ΔHRratio_avg)
+- If sex is unknown: b = 1.80 (default; heuristic midpoint of sex-specific values).   28
+
+
+
+
+Secondary TRIMP (zone-time; “TRIMP-E / Edwards-style”)
+
+When HR series exists but you prefer more robustness or when only HRmax-based zones are available:
+- Zones: 50–60%, 60–70%, 70–80%, 80–90%, 90–100% of HRmax, weights 1–5 respectively. 28
+- TRIMP_E = Σ_{z=1..5} minutes_in_zone_z * weight_z 28
+
+
+HR-missing fallback (required)
+
+If HR is missing or partial (common in swimming and some edge cases), estimate “proxy internal load” with
+explicitly reduced confidence.
+
+
+Fallback ladder (highest to lowest):
+1) HR series → TRIMP_B per minute.
+2) Avg HR → TRIMP_B via avg HR.
+3) Distance + duration (walk/run) → estimate MET from speed using ACSM metabolic equations (grade
+assumed 0), then map MET to HRR-proxy and TRIMP-proxy. ACSM walking/running equations are widely
+used in exercise physiology contexts. 32
+4) Active energy + duration → define kcal_per_min and normalize within-person vs 42-day same-activity
+baseline (purely heuristic but often directionally useful).
+5) If none: TRIMP_session = 0 and mark workout as “unscored” (confidence floor).
+
+
+
+
+                                                      8
+Deterministic (walk/run) MET proxy (heuristic grade=0):
+Let speed v_m_min = (distance_km*1000) / duration_min .
+- Walking VO2: VO2 = 0.1*v_m_min + 3.5 (grade=0).          33
+
+- Running VO2: VO2 = 0.2*v_m_min + 3.5 (grade=0).           34
+
+- MET = VO2 / 3.5 .
+Mapping from MET to TRIMP is heuristic and handled via within-person calibration once HR returns.
+
+
+Cardio load dynamics (required decay model)
+
+Define daily physical impulse:
+- u(t) = Σ TRIMP_session on day t
+
+
+Define EWMA update: for any series X with time constant τ (days),
+- k(τ) = 1 - exp(-1/τ)
+- X(t) = X(t-1) + k(τ) * (u(t) - X(t-1))
+
+
+Set:
+- CTL(t) uses τ_CTL=42 days
+- ATL(t) uses τ_ATL=7 days
+These time constants are standard defaults in endurance load-management tooling and are described as
+nominal values informed by the literature; precise values have limited impact compared with consistent
+use. 19
+
+
+Define:
+- TSB(t) = CTL(t) - ATL(t)
+
+
+Physical strain scaling (user-facing severity)
+
+Define a saturating mapping from daily impulse to 0–100 strain:
+- u_ref = max(150, p95(u over last 180 days)) else u_ref=300 (cold start; heuristic).
+- u0 = 30 (shape parameter; heuristic).
+- PhysicalStrain(t) = clip( 100 * ln(1 + u(t)/u0) / ln(1 + u_ref/u0), 0, 100 )
+This produces diminishing returns at high loads (a common design pattern in strain scores). The exact
+transform is heuristic.
+
+
+Recovery score
+
+Evidence-backed inputs: HRV can be used to monitor training adaptation and stress responses (though
+findings are not always consistent), and resting HR and respiratory rate deviations can reflect illness/stress
+states. 35
+Implementation (baseline-relative, robust):
+Let baseline medians be rolling 28-day medians; HRV baseline is computed on log scale:
+- HRV_ln = ln(hrv_sdnn_ms)
+- HRV_ln_med = median(HRV_ln over last 28 valid days)
+- HRV_ln_MAD = median(|HRV_ln - HRV_ln_med|)
+- σ_HRV = 1.4826 * HRV_ln_MAD (robust scale; heuristic but standard robust practice)
+
+
+
+
+                                                      9
+Compute z-like deltas (lower RHR/RR is “better”):
+- z_HRV = (HRV_ln_today - HRV_ln_med) / σ_HRV
+- z_RHR = (RHR_med - RHR_today) / (1.4826*MAD_RHR)
+- z_RR    = (RR_med     - RR_today)     / (1.4826*MAD_RR)
+
+
+Component maps (heuristic linear; clip to [0,100]):
+- Comp_HRV = clip(50 + 20*z_HRV, 0, 100)
+- Comp_RHR = clip(50 + 20*z_RHR, 0, 100)
+- Comp_RR    = clip(50 + 15*z_RR,        0, 100)
+
+
+Base readiness:
+- RecoveryBase = weighted_mean([Comp_HRV, Comp_RHR, Comp_RR, SleepScore], [0.35,
+0.25, 0.15, 0.25] over available)
+Penalize yesterday’s load (small, to capture non-autonomic fatigue not always in HRV):
+-   RecoveryScore          =    clip(       RecoveryBase      -    0.10*PhysicalStrain(t-1)      -
+0.05*MentalStrain(t-1), 0, 100 )
+Penalty weights are heuristic.
+
+
+Mental load, mental strain, and mental recovery
+
+Evidence basis: mental fatigue increases with time-on-task and can impair performance; the time-on-task
+paradigm and mental fatigue definitions support a load-like accumulation concept. 2 Spaced/distributed
+practice improves learning outcomes versus massed practice, supporting a “productive zone” rather than
+extreme underload or cram overload. 36
+
+
+Exam urgency (0–1):
+For each upcoming exam e :
+- d = days_until(exam.date)
+- u_e = (exam.importance/5) * exp(-d/10) (10-day decay is heuristic)
+- ExamUrgency(t) = max_e u_e
+
+
+Study impulse per session (time-on-task nonlinearity; heuristic):
+For each study session duration d_min :
+- session_load = d_min * (1 + 0.003*max(0, d_min - 60))
+Daily mental impulse:
+- m(t) = (Σ session_load) * (1 + 0.5*ExamUrgency(t)) (heuristic scaling)
+
+
+Mental chronic/acute loads (decay):
+- MCL(t) EWMA with τ=21 days (heuristic)
+- MAL(t) EWMA with τ=3 days (heuristic)
+
+
+Mental strain scaling (0–100):
+- m_ref = max(200, p95(m over last 180 days)) else m_ref=600 (heuristic)
+- m0 = 60 (heuristic)
+- MentalStrain(t) = 100 * ln(1 + m(t)/m0) / ln(1 + m_ref/m0)
+
+
+
+
+                                                      10
+Mental recovery score:
+-    MentalRecovery           =      clip(       0.60*SleepScore          +       0.20*Comp_HRV      +
+0.20*Score_sleep_regularity - 0.05*MentalStrain(t-1), 0, 100 )
+Rationale: sleep continuity/regularity strongly supports cognition and academic performance, and HRV is a
+general stress marker; exact weights are heuristic. 37
+
+
+State machines, targets, explainability, confidence
+D) State machine / zone framework
+The system yields both physical load state and mental load state each day.
+
+
+Physical cardio-load states (six-state)
+
+Define:
+- FI = CTL(t) / CTL_ref where CTL_ref = median(CTL over last 90 valid days) (fallback:
+30-day median; cold start: 50). (Heuristic reference window; see registry.)
+- AI = (ATL(t) - CTL(t)) / CTL_ref (acute overload relative to reference)
+
+
+State priority rules (deterministic):
+1) overtraining risk (recommended rename from “overtraining”)
+- Trigger if: AI ≥ 0.35 for ≥7 of the last 10 days and RecoveryScore ≤ 45 for ≥3 consecutive days.
+- Rationale: persistent overload + sustained physiological suppression resembles “non-functional
+overreaching / overtraining syndrome risk,” but diagnosis requires clinical context and longer timelines. 38
+- Thresholds are heuristic but anchored to the consensus distinction that maladaptation is defined by
+persistence and recovery time. 39
+
+
+2) fatigued
+- Trigger if: AI ≥ 0.25 OR ( AI ≥ 0.15 AND RecoveryScore < 45 ).
+- Interpretation: functional overreaching / acute fatigue zone (days to weeks).   40
+
+
+
+
+3) peaking
+- Trigger if: FI ≥ 1.15 AND -0.10 ≤ AI ≤ 0.15 AND RecoveryScore ≥ 55 .
+- Interpretation: high chronic fitness with manageable fatigue; appropriate for performance or controlled
+overload blocks followed by taper. Tapering evidence suggests 41–60% volume reduction for ~2 weeks can
+maximize performance when intensity maintained. 41
+
+
+4) productive
+- Trigger if: 0.90 ≤ FI ≤ 1.15 AND 0.05 ≤ AI ≤ 0.25 AND RecoveryScore ≥ 45 .
+- Goal state for most users: progressive overload without sustained maladaptation (this is the “stay
+productive” requirement).
+
+
+5) maintaining
+- Trigger if: 0.75 ≤ FI < 0.95 AND -0.05 ≤ AI < 0.15 .
+- Interpretation: sustaining fitness without strong build stimulus.
+
+
+
+
+                                                      11
+6) detraining
+- Trigger if: FI < 0.75 .
+- Evidence rationale for a ~0.75 boundary: endurance decrement can occur after ~2 weeks of cessation, and
+many training-induced gains reverse after ~2–4 weeks, consistent with a 42-day exponential chronic-load
+decay in which ~2 weeks corresponds to ~0.72 retention and ~4 weeks to ~0.51 retention. 9
+
+
+Mental load states (six-state analog)
+
+Define:
+- MFI = MCL/MCL_ref where MCL_ref = median(MCL over last 90 days) (heuristic).
+- MAI = (MAL - MCL)/MCL_ref .
+
+
+State rules (deterministic priority):
+1) burnout risk
+- Trigger if: burnout_persist_flag = true (≥7 of last 10 days had MAI ≥ 0.25 or MentalRecovery <
+50) AND today MentalRecovery < 50 or MAI ≥ 0.25 .
+- Evidence rationale: persistent mental fatigue is recognized as transient but can become chronic with
+sustained stress and inadequate recovery; physiological representations remain unclear, so this is “risk” not
+diagnosis. 42
+
+
+2) fatigued
+- Trigger if: MentalRecovery < 40 AND MFI ≥ 0.75 , OR MAI ≥ 0.25 , OR ( MAI ≥ 0.15 AND
+MentalRecovery < 50 ).
+- Evidence rationale: time-on-task effects on cognition and sustained demand produce measurable fatigue.
+ 2
+
+
+
+
+3) peaking
+- Trigger if:   MFI   ≥   1.15   AND    -0.10   ≤   MAI    ≤   0.15   AND    MentalRecovery     ≥    60   AND
+ExamUrgency ≥ 0.40 .
+- Interpretation: high studying capacity with freshness, likely during managed pre-exam ramp.
+
+
+4) productive
+- Trigger if: 0.90 ≤ MFI ≤ 1.15 AND 0.05 ≤ MAI ≤ 0.25 AND MentalRecovery ≥ 55 .
+- Learning rationale: sustained practice tends to improve retention versus sporadic cramming.   36
+
+
+
+
+5) maintaining
+- Trigger if: 0.75 ≤ MFI < 0.95 AND -0.05 ≤ MAI < 0.15 .
+
+
+6) underloaded
+- Trigger if: MFI < 0.75 AND ExamUrgency < 0.40 .
+- Rationale: too little distributed practice can harm long-term retention and readiness.   36
+
+
+
+
+Daily target ranges (physical and mental strain)
+
+Goal: Keep users in productive zones while adapting to current recovery and upcoming exams/deadlines.
+
+
+
+
+                                                      12
+Physical target range
+
+Let base_mult(state) be:
+- detraining 1.25
+- maintaining 1.00
+- productive 1.35
+- peaking 0.60 (taper-like; aligns directionally with taper evidence emphasizing reduced volume while
+maintaining intensity) 43
+- fatigued 0.30
+- overtraining risk 0.10
+
+
+Adjustments:
+- mult_recovery = 0.5 + RecoveryScore/200 (0.5–1.0; heuristic)
+- mult_exam = 0.85 if ExamUrgency ≥ 0.70 else 0.95 if ExamUrgency ≥ 0.40 else 1.0
+- u_target_center = CTL(t) * base_mult * mult_recovery * mult_exam
+- Convert to strain range (default ±20% band):
+- if state ∈ {fatigued, overtraining risk}: [0, u_target_center]
+- else: [0.8*u_target_center, 1.2*u_target_center]
+- cap upper bound to avoid spikes: u_max ≤ 1.6*CTL(t) for build states, else u_max ≤ 1.3*CTL(t)
+(heuristic spike guard).
+Finally: PhysicalTargetRange = (Strain(u_min), Strain(u_max)) .
+
+
+Cognitive compatibility note: Moderate exercise bouts can have small beneficial effects on cognition in
+meta-analytic literature, supporting a “moderate floor” rather than always prescribing zero exercise near
+exams. 44 Intense fatigue, however, is undesirable due to recovery costs and mental fatigue interactions.
+    45
+
+
+
+
+Mental target range
+
+Let base_mult_mental(state) be:
+- underloaded 1.20
+- maintaining 1.00
+- productive 1.10
+- peaking 1.25
+- fatigued 0.70
+- burnout risk 0.50
+
+
+Adjust:
+- mult_mrec = 0.5 + MentalRecovery/200
+- mult_exam = 1.25 if ExamUrgency ≥ 0.70 else 1.10 if ExamUrgency ≥ 0.40 else 1.0
+- mult_physical = 0.90 if PhysicalState ∈ {fatigued, overtraining risk} else 1.0
+-        m_target_center   =   MCL(t)   *   base_mult_mental       *   mult_mrec   *   mult_exam     *
+mult_physical
+Range:
+- if mental state ∈ {fatigued, burnout risk}: [0, m_target_center]
+- else: [0.8*m_target_center, 1.2*m_target_center]
+Cap: m_max ≤ 1.6*MCL(t) .
+
+
+
+
+                                                   13
+E) Explainability mapping
+Outputs            include:             reason_codes[] ,                 user_messages[] ,                 and
+contribution_breakdown{component:points} .
+
+
+Reason codes (deterministic triggers)
+
+Sleep score reason codes
+- SLEEP_UNDERSLEPT : if S < N - 30 .
+- SLEEP_FRAGMENTED : if sleep_efficiency < 0.85 or WASO > 30 .                46
+
+- SLEEP_IRREGULAR_TIMING : if Δmid > 60 .           14
+
+- SLEEP_STAGE_LOW_CONFIDENCE : if stage data missing or wearable stage confidence low (device-level
+uncertainty). 12
+- SLEEP_OVERSLEPT_NEUTRAL : if S > N + 60 and sleep_efficiency ≥ 0.85 , message should be
+neutral (no “punishment”), consistent with the no-upper-limit consensus stance. 47
+- SLEEP_LONG_IN_BED_LOW_EFF : if B - S > 90 (time in bed much larger than sleep).
+
+
+Recovery reason codes
+- RECOVERY_HRV_LOW : if z_HRV ≤ -1 .       48
+
+- RECOVERY_RHR_HIGH : if z_RHR ≤ -1 .          16
+
+- RECOVERY_RR_HIGH : if z_RR ≤ -1 .       17
+
+- RECOVERY_SLEEP_LOW : if SleepScore < 60 .
+- RECOVERY_LOAD_PENALTY : if yesterday PhysicalStrain > 70 or MentalStrain > 70 .
+- RECOVERY_DATA_SPARSE : if HRV or RR missing (confidence drop).
+
+
+Physical load reason codes
+- LOAD_SPIKE : if u(t) > 1.6*CTL(t-1) (spike guard; heuristic).
+- STATE_DETRAINING : if FI < 0.75 (and optionally u(t)=0 ). Detraining can occur meaningfully
+within 2–4 weeks of cessation. 49
+- STATE_FATIGUED : if AI ≥ 0.25 or recovery low.
+- STATE_OVERTRAINING_RISK : if persistence + low recovery; label as risk, not diagnosis.     50
+
+
+
+
+Mental load reason codes
+- MENTAL_UNDERLOADED : if MFI < 0.75 and exam urgency is low.           36
+
+- MENTAL_CRAMMING : if ExamUrgency ≥ 0.7 and MAI ≥ 0.25 .
+- MENTAL_BURNOUT_RISK : if persistence + low mental recovery.      42
+
+
+
+
+User-facing message templates (examples)
+
+Use placeholders: {S} , {N} , {Δmid} , {SleepEff} , {HRVΔ} , {RHRΔ} , {RRΔ} , {CTL} , {ATL} ,
+{State} , {TargetMin} , {TargetMax} , {ExamUrgency} .
+
+
+     • Sleep:
+     • “You slept {S/60:.1f}h vs your current need of {N/60:.1f}h. Main limiter: {top_reason}.”
+     • “Sleep continuity was reduced (efficiency {SleepEff:.0%}, awake ~{WASO} min).” 13
+
+     • “Your sleep timing shifted by {Δmid} minutes; larger shifts can impact learning and consistency.”   14
+
+
+
+
+                                                         14
+       • Recovery:
+
+
+       • “Recovery is lower because HRV is below your baseline and resting HR is elevated.”    51
+
+
+
+       • “Respiratory rate is higher than usual; consider extra recovery and monitor for illness.”   17
+
+
+
+
+       • Targets:
+
+
+       • “Today’s cardio target is {TargetMin}–{TargetMax} strain. You’re in {State}.”
+       • “With an exam coming up (urgency {ExamUrgency:.2f}), keep exercise moderate to support focus.”
+          44
+
+
+
+Numerical contribution example (SleepScore)
+
+Example inputs: N=480 , S=390 (6.5h), E=0.81 , Δmid=120 , stages present.
+- Duration: deficit 90 → Score_sleep_duration ≈ 71 (heuristic curve).
+- Continuity: Score_eff≈40 , WASO penalty maybe 5–10 → continuity ~30–35.
+- Regularity: Score≈36 .
+- Final weighted:     SleepScore     ≈   0.5*71    +   0.25*33    +   0.15*36    +   0.10*stage      ≈    ~50–55
+(illustrative).
+
+
+F) Confidence model (availability, noise, history, fallbacks)
+Confidence is reported per metric and as an overall value in [0,1].
+
+
+Confidence components
+
+       • C_availability : fraction of required inputs present.
+       • C_history : baseline stability (0.3 at <7 days, 0.7 at 7–13 days, 1.0 at ≥14 days; heuristic).
+       • C_consistency : penalize outliers (e.g., HRV SDNN <5 ms or >400 ms, RHR jump >25 bpm) as likely
+        artifacts.
+       • C_sensor_domain : stage estimates get a lower multiplier by design because multi-class staging is
+        less robust than sleep–wake detection.     4
+
+
+
+Deterministic confidence formulas
+
+       • SleepConfidence = 1.0 * (0.90 if midpoint missing else 1.0) * (0.85 if any
+        stage missing else 1.0)
+       • RecoveryConfidence = (sum of weights used in RecoveryBase) / 1.0 (e.g., missing
+        HRV and RR halves confidence)
+       • PhysicalLoadConfidence :
+       • 0.90 if HR series or avg HR present
+       • 0.65 if HR missing and MET/energy fallback used
+       • MentalLoadConfidence :
+       • 0.90 if study sessions are instrumented and present (or explicitly confirmed none)
+       • 0.70 if no study data (possible logging gaps)
+       • OverallConfidence = 0.25*SleepConf + 0.35*RecoveryConf + 0.25*PhysicalConf +
+        0.15*MentalConf
+
+
+
+
+                                                       15
+Fallback hierarchy per output (must be deterministic)
+
+     • SleepScore:
+       1) Duration + in-bed + midpoint + WASO + stages
+       2) If stages missing: omit stage component, renormalize
+       3) If midpoint missing: omit regularity component, renormalize
+     • RecoveryScore:
+       1) HRV + RHR + RR + SleepScore
+       2) If HRV missing: redistribute to RHR/RR/Sleep
+       3) If RR missing: redistribute to HRV/RHR/Sleep
+       4) If only SleepScore exists: RecoveryScore = SleepScore with low confidence
+     • Physical load:
+       1) TRIMP from HR series
+       2) TRIMP from avg HR
+       3) Fallback from pace/speed (ACSM MET) for walk/run with grade=0 assumption     32
+
+       4) Energy-rate normalization (within-person)
+     • Mental load:
+       1) Study sessions + exam urgency
+       2) If study missing: mental impulse from exam urgency alone:
+        m(t)=m_ref_default*ExamUrgency (heuristic), with very low confidence.
+
+
+Daily pipeline and validation
+G) Deterministic pseudocode for daily pipeline
+Pseudocode is intentionally “decision-complete” (no tuning left to the implementer).
+
+
+
+  INPUTS (day t):
+    sleep: sleep_asleep_min, sleep_inbed_min, stage mins (optional),
+  sleep_midpoint (optional)
+    physiology: hrv_sdnn_ms (optional), resting_hr_bpm (optional), resp_rate
+  (optional)
+    workouts: list of sessions with HR series/avg HR (optional), duration,
+  distance, energy
+    study: list of study sessions with duration
+    exams: list of (date, importance)
+
+  STATE (stored history):
+    HRmax_est, HRrest_est
+    u(t-1), CTL(t-1), ATL(t-1)
+    m(t-1), MCL(t-1), MAL(t-1)
+    baselines: rolling medians/MAD for HRV_ln, RHR, RR; baseline sleep midpoint;
+  CTL_ref, MCL_ref
+    persistence flags: overtrain_persist_flag, burnout_persist_flag
+
+  PIPELINE:
+  1) Validate inputs; coerce units; discard physiologically impossible points
+
+
+
+
+                                                     16
+  (hard bounds).
+  2) Update HRmax_est:
+       If profile HRmax exists: keep.
+       Else: HRmax_est = max(valid workout max_hr over last 365d), else 200 (low
+  confidence).
+  3) Update HRrest_est:
+       HRrest_est = median(resting_hr over last 14 valid days), else latest.
+  4) Compute ExamUrgency(t) from upcoming exams.
+  5) Compute workout TRIMP_session for each workout (HR series > avg HR >
+  fallback).
+  6) Compute daily physical impulse u(t) = sum(TRIMP_session).
+  7) Update CTL(t), ATL(t), TSB(t) via EWMA with τ=42 and τ=7.
+  8) Compute PhysicalStrain(t) via log mapping.
+  9) Compute mental impulse m(t) from study sessions and ExamUrgency(t).
+  10) Update MCL(t), MAL(t) via EWMA with τ=21 and τ=3.
+  11) Compute MentalStrain(t) via log mapping.
+  12) Estimate sleep_need_min(t) (personalized if sufficient history else anchor).
+  13) Compute SleepScore(t) from duration, continuity, regularity, stages
+  (renormalize missing).
+  14) Compute RecoveryScore(t) from HRV/RHR/RR/SleepScore baseline-relative +
+  penalties.
+  15) Compute MentalRecovery(t) from SleepScore + HRV component + regularity +
+  penalty.
+  16) Update persistence flags:
+       overtrain_persist_flag = (count last 10 days with AI>=0.35) >= 7
+       burnout_persist_flag    = (count last 10 days with MAI>=0.25 or
+  MentalRecovery<50) >= 7
+  17) Determine PhysicalState(t) using FI, AI, RecoveryScore, persistence.
+  18) Determine MentalState(t) using MFI, MAI, MentalRecovery, persistence.
+  19) Compute PhysicalTargetRange(t) and MentalTargetRange(t).
+  20) Generate explainability:
+       - reason codes per metric
+       - message templates filled with top 2–3 contributors
+       - contribution breakdown for UI
+  21) Compute confidences for Sleep/Recovery/Physical/Mental and Overall.
+  22) Persist day t outputs and updated state.
+  OUTPUTS:
+    SleepScore, RecoveryScore, CTL/ATL/TSB, PhysicalStrain, PhysicalState,
+    MCL/MAL, MentalStrain, MentalRecovery, MentalState,
+    Target ranges, reason codes/messages, confidences.
+
+
+H) Validation protocol (scenario tests, acceptance thresholds, stress tests)
+Validation is split into correctness (math), behavioral monotonicity, and robustness.
+
+
+
+
+                                                     17
+Scenario tests (must pass)
+
+1) No-training decay: If u(t)=0 for 28 consecutive days, CTL decreases monotonically and approaches
+~0.51 of its starting value by day 28 (because exp(-28/42) ≈ 0.51). 19
+2) Single hard workout spike: A single day with high TRIMP increases ATL substantially more than CTL (τ=7
+responds faster than τ=42). 52
+3) Two-week cessation: FI should cross the detraining boundary (~0.75) around ~2 weeks of no training if
+CTL_ref is anchored to pre-cessation fitness, consistent with detraining evidence windows. 53
+4) Severe undersleep: SleepScore drops sharply when sleep is far below need; RecoveryScore drops if HRV
+low and RHR high, consistent with health/performance impacts of chronic insufficient sleep. 24
+5) Oversleep with good efficiency: If sleep exceeds need by ≤1 hour with high efficiency, SleepScore
+should not decrease meaningfully (≤2 points), consistent with no strict upper limit guidance and uncertain
+causality for long sleep. 54
+
+
+Acceptance thresholds (engineering)
+
+      • Scores always in [0,100].
+      • Missing components renormalize (no “divide by zero”).
+      • Confidence decreases with missing signals (monotonic).
+      • State machine is deterministic and stable:
+      • Minor noise (±5% in HRV) should not flip state unless near boundary (define boundary hysteresis
+        optional as future improvement; heuristic).
+
+Stress tests for missing/outlier data
+
+      • All HR missing for a week: engine still outputs CTL/ATL using pace/energy fallback but
+        PhysicalLoadConfidence ≤0.65.
+      • Sleep midpoint missing for weeks: SleepScore remains valid, SleepConfidence reduced, regularity
+        omitted.
+      • HRV missing intermittently: RecoveryConfidence reflects reduced weight usage; HRV baseline
+        updates skip missing days.
+      • Outliers: one-day HRV SDNN>400ms is excluded from baselines; same for RHR spikes >25 bpm
+        unless repeated (possible illness). 55
+
+I) Ten deterministic test vectors with expected outputs
+All vectors assume: sleep_need=480 , HRrest=55 , HRmax=195 , b=1.8 , u_ref=300 , m_ref=600 ,
+sufficient baseline history unless stated. Targets are strain ranges (0–100). Confidence values are in [0,1].
+
+
+            Key
+  Vector                   SleepScore      RecoveryScore      PhysicalStrain    PhysicalState        PhysicalTargetRange   Ment
+            condition
+
+            No
+       1    training,              96.3              67.1                0.0    detraining           (44.5, 56.3)
+            FI<0.75
+
+            Light run,
+       2    mild                   89.8              51.4               51.2    maintaining          (44.5, 56.3)
+            undersleep
+
+
+
+
+                                                       18
+           Key
+ Vector                    SleepScore    RecoveryScore   PhysicalStrain    PhysicalState       PhysicalTargetRange   Ment
+           condition
+
+           High
+      3    TRIMP day,            98.3             57.9            83.8     productive          (56.8, 70.0)
+           AI≈0.19
+
+           High CTL,
+      4                          99.2             76.7            54.2     peaking             (42.2, 53.7)
+           fresh
+
+           Very poor
+      5    sleep +               42.3              8.6            93.1     fatigued            (0.0, 18.5)
+           overload
+
+           Persistent
+           overload +
+      6                          60.5             11.1            88.4     overtraining_risk   (0.0, 7.9)
+           low
+           recovery
+
+           No study,
+      7                          98.6             64.2            61.2     maintaining         (45.5, 57.4)
+           low MFI
+
+           Heavy
+           study
+      8                          97.1             54.8            54.2     maintaining         (46.6, 58.6)
+           block,
+           MAI≈0.16
+
+           Extreme
+           cram +
+      9                          10.1              0.0             0.0     maintaining         (33.2, 43.3)
+           extreme
+           undersleep
+
+           Missing
+           HRV/RR/
+     10    stages/               82.6             55.8            45.8     maintaining         (40.7, 52.0)
+           midpoint,
+           HR fallback
+
+
+Citation table and heuristic registry
+J) Citation table (claim → source → evidence strength → exact constant origin)
+
+
+                                                                Evidence
+ Claim / constant               Source                                       Constant origin
+                                                                strength
+
+                                American Academy of Sleep
+ Adults should sleep ≥7h
+                                Medicine 56 / Sleep                          7h threshold from
+ regularly; <7h links to                                            High
+                                Research Society 57                          consensus 58
+ adverse outcomes
+                                consensus statement
+
+
+
+
+                                                   19
+                                                                Evidence
+Claim / constant                Source                                     Constant origin
+                                                                strength
+
+Appropriateness of ≥9h in
+                                                                           “No upper limit” policy;
+adults cannot be                AASM/SRS methods + AASM
+                                                                   High    supports asymmetric
+ascertained; no strict upper    statement
+                                                                           oversleep penalty 59
+limit
+
+Teenagers typically need 8–     National Sleep Foundation
+                                                                   High    8–10h range for teens      61
+10h                              60 recommendations
+
+
+Both short and long sleep                                                  Motivates small oversleep
+                                Meta-analyses/systematic
+associate with mortality (U-                                       High    penalty, strong
+                                reviews
+shaped)                                                                    undersleep penalty 7
+
+Sleep efficiency = TST / time   Sleep study interpretation +               85% threshold used
+in bed; ~85% is “normal” in     insomnia guideline             Med–High    clinically; scaling in score
+many contexts                   materials                                  is heuristic 22
+
+WASO reflects                                                              Used directionally; exact
+                                Digital measure guidance +
+fragmentation and relates                                       Medium     penalty scaling heuristic
+                                sleep references
+to impaired functioning                                                     13
+
+
+Irregular sleep associated                                                 Supports regularity
+                                Phillips 2017; social jetlag
+with worse academic                                                High    component; exact
+                                academic study
+performance in students                                                    function heuristic    14
+
+
+TRIMP exponential formula
+                                                                           b=1.67/1.92 from cited
+using HR reserve; sex-          TRIMP formula citation             High
+                                                                           TRIMP definition 28
+specific b values
+
+CTL/ATL time constants                                                     τ_CTL=42, τ_ATL=7 from
+                                TrainingPeaks scientific
+42d/7d are nominal,                                             Medium     industry+literature
+                                description
+literature-aligned defaults                                                tradition 52
+
+Overreaching vs
+overtraining syndrome                                                      Justifies renaming
+                                ACSM/ECSS consensus
+differs by recovery time                                           High    “overtraining” →
+                                statement
+(days–weeks vs weeks–                                                      “overtraining risk”   39
+
+months)
+
+Detraining meaningfully
+                                                                           Anchors detraining
+degrades endurance after
+                                Detraining reviews                 High    boundary near FI~0.75
+~2 weeks; many gains
+                                                                            49
+reverse 2–4 weeks
+
+A 2-week taper with 41–
+                                                                           Guides peaking/taper
+60% volume reduction is         Taper meta-analysis                High
+                                                                           targets 41
+often optimal
+
+
+
+
+                                                     20
+                                                                   Evidence
+ Claim / constant                Source                                         Constant origin
+                                                                   strength
+
+ Mental fatigue increases                                                       Supports nonlinear
+ with time-on-task; impairs      Mental fatigue reviews                High     session weighting;
+ performance                                                                    constants heuristic    2
+
+
+ Distributed practice                                                           Supports avoiding mental
+ improves retention vs           Cepeda meta-analysis                  High     underload and cram
+ massed practice                                                                spikes 36
+
+ Acute moderate exercise                                                        Supports “moderate
+                                                                  Medium–
+ yields small cognitive          Meta-analyses                                  exercise near exams”
+                                                                     High
+ benefits in meta-analyses                                                      guidance 44
+
+                                                                                Engine does not rely on
+ ACWR “sweet spot” is
+                                 Gabbett 2016 vs Impellizzeri                   ACWR for decisions;
+ contested; ratio can be                                              Mixed
+                                 2020                                           optional diagnostics only
+ flawed
+                                                                                 62
+
+
+
+K) Heuristic registry (every heuristic, why unavoidable, future data to replace)
+
+
+                                                     Why unavoidable with        Recommended future
+ Heuristic                           Where used
+                                                     current inputs              data to replace/upgrade
+
+                                                                                 Age/DOB; self-reported
+  sleep_need_anchor=8h cold                          Age not guaranteed;
+                                     Sleep need                                  “sleep need” or morning
+ start                                               sleep need is individual
+                                                                                 sleepiness; nap tracking
+
+                                                                                 Short daily subjective
+ Personalized sleep need from                        No direct measure of
+                                     Sleep need                                  check-in; reaction-time
+ “good days” median                                  sleepiness/performance
+                                                                                 task
+
+                                     Sleep           No single evidence-         Calibrate vs user
+ Duration undersleep curvature
+                                     duration        backed curve for            outcomes (mood,
+ constant (0.35·N)
+                                     score           consumer scoring            grades, performance)
+
+                                                                                 Illness markers
+                                     Sleep           Long sleep causality
+ Oversleep grace (60 min) and                                                    (temperature,
+                                     duration        uncertain; need product
+ max penalty (10 pts)                                                            symptoms), clinical
+                                     score           behavior
+                                                                                 flags, naps
+
+                                                     Thresholds vary by age/     Higher fidelity WASO/
+ Continuity mapping (0.75–0.90       Sleep
+                                                     condition; wearables        arousal estimates;
+ efficiency normalization)           continuity
+                                                     vary                        apnea risk screening
+
+                                                                                 Device-specific
+ Stage floors (deep 13%, REM         Sleep           Wearable staging
+                                                                                 validation; optional PSG
+ 20%) and penalties                  stages          uncertainty; no PSG
+                                                                                 import
+
+
+
+
+                                                    21
+                                                     Why unavoidable with        Recommended future
+ Heuristic                           Where used
+                                                     current inputs              data to replace/upgrade
+
+                                                     Evidence indicates          Longer-term academic/
+ Regularity curve and 90-min         Sleep
+                                                     direction, not exact        performance feedback;
+ scale                               regularity
+                                                     mapping                     chronotype survey
+
+                                                                                 Optional guided max/
+ HRmax estimation from max           HR              True max effort may be
+                                                                                 threshold tests; user-
+ observed HR                         calibration     absent
+                                                                                 entered HRmax
+
+                                                     Sex not guaranteed in
+ Sex-unknown b=1.80                  TRIMP                                       Optional sex field
+                                                     listed inputs
+
+                                                     No universal mapping        Add session RPE (very
+ TRIMP-to-strain log transform       Physical
+                                                     to “felt strain” without    easy to log) and
+ (u0, u_ref rules)                   strain
+                                                     RPE                         calibrate transform 30
+
+                                                                                 Lightweight self-report:
+ Mental impulse nonlinear                            No direct workload
+                                     Mental load                                 difficulty (1–5), focus
+ weighting (after 60 min)                            intensity signal
+                                                                                 quality
+
+                                                     Sparse empirical            Passive cognitive
+ Mental time constants τ=21/3        Mental CTL/
+                                                     parameterization for        performance tasks;
+ days                                ATL
+                                                     cognitive load decay        stress/self-report
+
+                                                     Need deterministic          Personal calibration via
+ State threshold numbers (FI, AI     State
+                                                     boundaries; individual      outcomes (injury,
+ cutoffs)                            machine
+                                                     responses differ            burnout, performance)
+
+                                                                                 Longer history +
+                                                     Needed to separate
+ Persistence rules (7 of last 10                                                 symptom reports;
+                                     Risk states     “bad day” vs sustained
+ days)                                                                           clinician-validated
+                                                     issue
+                                                                                 datasets
+
+                                                                                 Training goals (race
+                                                     Targets must be
+                                                                                 date), subjective
+ Target multipliers per state        Targets         emitted daily; no coach
+                                                                                 readiness, muscle
+                                                     context
+                                                                                 soreness
+
+                                                                                 User-perceived exam
+                                     Exam            Importance scale
+ Exam urgency decay τ=10 days                                                    stress, hours remaining,
+                                     coupling        coarse; stress varies
+                                                                                 task breakdown
+
+                                                     Combined fatigue            Mood/stress survey;
+ Physical–mental coupling factor
+                                     Targets         interactions vary;          cognitive performance
+ (0.90)
+                                                     limited signals             outcomes
+
+Minimal additional input that yields disproportionate benefit (optional but high ROI):
+A single daily 10-second check-in with (1) “How recovered do you feel?” (0–10) and (2) “How mentally drained
+do you feel?” (0–10) would materially improve calibration of both strain scaling and mental recovery targets
+
+
+
+
+                                                    22
+while keeping logging burden extremely low. This aligns with the broader training-load literature that often
+pairs physiological measures with perceived exertion for stronger interpretability. 30
+
+
+
+ 1   28   31   https://www.jssm.org/volume20/iss1/cap/jssm-20-101.pdf
+https://www.jssm.org/volume20/iss1/cap/jssm-20-101.pdf
+
+ 2   https://pmc.ncbi.nlm.nih.gov/articles/PMC9643466/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC9643466/
+
+ 3    5   20   23   24   57   58   Recommended Amount of Sleep for a Healthy Adult - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC4434546/?utm_source=chatgpt.com
+
+ 4   12   https://pubmed.ncbi.nlm.nih.gov/38083143/
+https://pubmed.ncbi.nlm.nih.gov/38083143/
+
+ 6   https://www.scribd.com/document/354264933/22
+https://www.scribd.com/document/354264933/22
+
+ 7   Sleep duration and all-cause mortality: a systematic review ...
+https://pubmed.ncbi.nlm.nih.gov/20469800/?utm_source=chatgpt.com
+
+ 8   38   39   40https://www.sportgeneeskunde.com/wp-content/uploads/Meeusen-et-al-2013-
+                    50
+
+Overtraining-Consensus-ECSS-ACSM.pdf
+https://www.sportgeneeskunde.com/wp-content/uploads/Meeusen-et-al-2013-Overtraining-Consensus-ECSS-ACSM.pdf
+
+ 9   49   https://www.thieme-connect.com/products/ejournals/pdf/10.1055/a-0975-9471.pdf
+https://www.thieme-connect.com/products/ejournals/pdf/10.1055/a-0975-9471.pdf
+
+10   11   22   60   https://pmc.ncbi.nlm.nih.gov/articles/PMC4246141/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC4246141/
+
+13 https://datacc.dimesociety.org/wp-content/uploads/2024/04/Frequently-Asked-Questions-about-Sleep-
+Onset-WASO.pdf
+https://datacc.dimesociety.org/wp-content/uploads/2024/04/Frequently-Asked-Questions-about-Sleep-Onset-WASO.pdf
+
+14   27   37   56   https://www.nature.com/articles/s41598-017-03171-4
+https://www.nature.com/articles/s41598-017-03171-4
+
+15   https://pubmed.ncbi.nlm.nih.gov/8598068/
+https://pubmed.ncbi.nlm.nih.gov/8598068/
+
+16   29   https://www.nature.com/articles/s41598-025-13540-z
+https://www.nature.com/articles/s41598-025-13540-z
+
+17   https://www.nature.com/articles/s41746-021-00493-6
+https://www.nature.com/articles/s41746-021-00493-6
+
+18   30   https://pmc.ncbi.nlm.nih.gov/articles/PMC4213373/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC4213373/
+
+19   52   https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/
+https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/
+
+21   61   National Sleep Foundation's sleep time duration ...
+https://pubmed.ncbi.nlm.nih.gov/29073412/?utm_source=chatgpt.com
+
+
+
+
+                                                            23
+25   47   54   Seven or more hours of sleep per night: A health necessity ...
+https://aasm.org/seven-or-more-hours-of-sleep-per-night-a-health-necessity-for-adults/?utm_source=chatgpt.com
+
+26 https://www.childrensmn.org/downloads/2017/05/
+carespecialties.sleepdisorders.understandingpolysomnogram.pdf
+https://www.childrensmn.org/downloads/2017/05/carespecialties.sleepdisorders.understandingpolysomnogram.pdf
+
+32   33   https://pmc.ncbi.nlm.nih.gov/articles/PMC7896743/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7896743/
+
+34   https://pmc.ncbi.nlm.nih.gov/articles/PMC3743617/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC3743617/
+
+35   48   51   https://pubmed.ncbi.nlm.nih.gov/23852425/
+https://pubmed.ncbi.nlm.nih.gov/23852425/
+
+36   https://pubmed.ncbi.nlm.nih.gov/16719566/
+https://pubmed.ncbi.nlm.nih.gov/16719566/
+
+41   43   https://pubmed.ncbi.nlm.nih.gov/17762369/
+https://pubmed.ncbi.nlm.nih.gov/17762369/
+
+42   https://link.springer.com/article/10.3758/s13428-025-02620-7
+https://link.springer.com/article/10.3758/s13428-025-02620-7
+
+44   https://pubmed.ncbi.nlm.nih.gov/27556572/
+https://pubmed.ncbi.nlm.nih.gov/27556572/
+
+45   https://pubmed.ncbi.nlm.nih.gov/28044281/
+https://pubmed.ncbi.nlm.nih.gov/28044281/
+
+46   https://pmc.ncbi.nlm.nih.gov/articles/PMC9092657/
+https://pmc.ncbi.nlm.nih.gov/articles/PMC9092657/
+
+53   https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2023.1334766/full
+https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2023.1334766/full
+
+55   https://www.sciencedirect.com/science/article/pii/S258975002200019X
+https://www.sciencedirect.com/science/article/pii/S258975002200019X
+
+59   Recommended Amount of Sleep for a Healthy Adult
+https://aasm.org/resources/pdf/pressroom/adult-sleep-duration-methods.pdf?utm_source=chatgpt.com
+
+62   https://bjsm.bmj.com/content/50/5/273
+https://bjsm.bmj.com/content/50/5/273
+
+
+
+
+                                                               24
+

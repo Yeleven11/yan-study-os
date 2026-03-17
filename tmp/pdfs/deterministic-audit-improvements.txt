@@ -1,0 +1,2417 @@
+Deterministic Sports and Cognitive Biometrics
+Science Engine Audit and Evidence-Based
+Improvements
+Executive summary
+• The sleep pipeline is directionally strong (duration, continuity, and regularity as primary pillars), but
+it underutilizes the newly available exact bedtime and wake-up timestamps; sleep timing regularity
+should be upgraded from a single “midpoint deviation” feature to a multi-feature timing model using
+validated constructs such as the Sleep Regularity Index (SRI) and social jetlag. 1
+• The current sleep-need anchor (480 min) and lower clamp (420 min) are likely misaligned with a
+student-heavy user base; consensus guidance indicates teens should sleep 8–10 hours and that <8
+or >10 hours “on a regular basis” is inappropriate. 2
+• Continuity thresholds can be made more evidence-aligned by explicitly anchoring efficiency and
+WASO to consensus cutpoints (e.g., sleep efficiency ≥85% as a “good quality” indicator; WASO ≤20
+min as “good quality,” and higher WASO ranges as “not good quality”). 3
+• Sleep-stage penalties should be de-emphasized and capped because: (1) expert consensus is weaker
+for architecture than for continuity variables, and (2) consumer wearables have limited stageclassification agreement with PSG, making stage deficits noisy as a student-facing “score driver.” 4
+• Physical load modeling (TRIMP-like impulse + CTL/ATL with 42d/7d time constants) is broadly
+acceptable and aligns with widely used impulse-response implementations; literature and training
+platforms commonly cite 42 days (fitness) and 7 days (fatigue) as nominal parameters. 5
+• Recovery inputs (log-HRV, RHR, RR) are directionally correct; RR is supported as a wearable-derived
+physiological measure and has been used in illness/strain detection contexts, but you should
+strengthen baselining, missingness handling, and “trend vs. snapshot” decomposition. 6
+• Mental load modeling is the weakest subsystem scientifically (expected, given the field), but the
+bigger engineering issue is stability: MAI-like ratios can explode when the chronic reference/
+denominator is small and session coverage is sparse. This is solvable deterministically with floors,
+shrinkage, calibration gating, and confidence-linked clamping.
+• The “urgency-only impulse” fallback (600·urgency) is likely to create artifacts (high mental strain
+without studying) and can amplify MAI instability; a better design is to separate “pressure” (urgency)
+from “work done” (study impulse) and only allow urgency to modulate targets/states rather than
+create large load by itself. 7
+• Calibration should be formalized (physical and mental): many successful consumer systems delay or
+down-weight training-status interpretations until sufficient history exists (e.g., Garmin training status
+needing ~1–2 weeks, training-load focus needing ≥7 days and improving after ~4 weeks; Polar uses
+7-day “strain” vs 28-day “tolerance”). 8
+• The highest-impact near-term changes are: (1) replace sleep regularity with SRI + social jetlag + drift
+features, (2) implement sparse-data stabilization for MAI and mental states (denominator floor +
+shrinkage + gating), and (3) add explicit calibrationStatus/readiness objects and denominator
+diagnostics to the API contract to prevent misinterpretation and debugging blind spots.
+
+1
+
+Formula-by-formula audit table
+metric
+
+Sleep need
+
+Sleep
+duration
+score
+
+current formula summary
+
+verdict
+
+Anchor 480 min, clamp [420,600],
+personalize from “good days”
+
+Asymmetric: strong convex
+undersleep penalty with scale
+0.35·need; oversleep grace 60,
+mild quadratic beyond grace, max
+
+risk
+
+recommended change
+
+directionally
+correct but
+weak
+
+student users likely
+under-anchored;
+circularity risk if
+“good day”
+depends on sleepderived metrics
+
+Make anchor age-aware
+(or student-default),
+apply Bayesian
+shrinkage to
+personalization, and
+back out SleepScore
+from “good day” filters
+(use physiology-only
+recovery for selection)
+
+correct/
+acceptable
+
+undersleep penalty
+OK; oversleep may
+be too punitive for
+catch-up sleep if
+need
+underestimates
+
+Keep asymmetry;
+increase oversleep
+grace and/or widen
+penalty window; add 14day sleep-debt term so
+nightly oversleep isn’t
+penalized when
+repaying debt
+
+directionally
+correct but
+weak
+
+thresholds not
+aligned to
+consensus
+cutpoints; can
+under-penalize SE
+0.80–0.85
+
+directionally
+correct but
+weak
+
+span too wide
+relative to sleepquality consensus;
+device biases in
+wake detection
+
+Keep base 20; tighten
+span to reach max
+penalty by ~60 min;
+down-weight if wakedetection confidence
+low
+
+likely
+flawed
+(given new
+data)
+
+midpoint-only
+misses bedtime vs
+wake asymmetries,
+weekday/weekend
+effects, drift, and
+social jetlag; can be
+gamed
+
+Replace with SRI (14day), plus social jetlag
+and drift features (all
+deterministic)
+
+−10
+
+Continuity:
+efficiency
+mapping
+
+Continuity:
+WASO
+penalty
+
+Regularity
+
+Maps efficiency via min=0.75,
+span=0.15
+
+Base=20 min, span=80 min, max
+20 points
+
+Circular midpoint deviation vs 21day baseline, inverse-quadratic
+scale ~90 min
+
+2
+
+Re-anchor to SE ≥0.85
+as “good” and explicitly
+treat SE ≤0.74 as
+“poor”; use piecewiselinear mapping centered
+at 0.85
+
+metric
+
+Stages
+
+Sleep
+aggregation
+weights
+
+Session
+impulse
+(physical)
+
+Daily
+impulse u(t)
+
+CTL/ATL
+
+Physical
+strain
+mapping
+
+Recovery
+deltas
+
+Recovery
+blend
+
+current formula summary
+
+verdict
+
+risk
+
+recommended change
+
+directionally
+correct but
+weak
+
+architecture
+consensus weaker;
+wearable stage
+accuracy limited
+
+Cap stage penalties;
+treat only extreme
+deficits as meaningful;
+reduce weight unless
+device is high-quality
+
+directionally
+correct but
+weak
+
+timing
+underweighted
+given evidence on
+regularity; stages
+overweighted given
+measurement limits
+
+Shift weight toward
+timing regularity;
+reduce architecture
+weight (e.g., 0.05)
+
+correct/
+acceptable
+
+fallbacks can
+change units/scale;
+discontinuities
+
+Keep HR TRIMP core;
+explicitly rescale
+fallbacks to match HRTRIMP distribution via
+calibration factors
+
+correct/
+acceptable
+
+none major
+
+Keep; add per-session
+quality flags and clamp
+extreme outliers
+
+TSB=CTL−ATL
+
+correct/
+acceptable
+
+parameters are
+nominal, not
+individualized; coldstart bias
+
+Keep 42/7 as default;
+add calibration gating
+and optional
+personalization (τ
+ranges)
+
+Log-saturating to [0,100], ref from
+rolling p95 + cold priors (u0=30,
+cold_ref=300, min_ref=150)
+
+directionally
+correct but
+weak
+
+depends on stable
+unit scale; ref
+unstable early; p95
+noisy
+
+Add shrinkage and
+minimum sample
+requirements for p95;
+report ref diagnostics
+and calibrationStatus
+
+Robust z-like deltas from baseline
+for ln(HRV), RHR, RR
+
+correct/
+acceptable
+
+baseline drift and
+missingness can
+bias
+
+Add explicit baseline
+windowing (e.g., 60-day
+median) and robust
+scale (MAD) with
+winsorization
+
+Weights HRV 0.35, RHR 0.25, RR
+0.15, Sleep 0.25
+
+directionally
+correct but
+weak
+
+weights are
+heuristic; sleep
+already drives
+recovery (double
+counting)
+
+Keep weights but
+separate “physiologyonly recovery” vs
+“composite recovery” to
+reduce circularity
+
+Deep/REM deficit penalties with
+floors deep≈13%, REM≈20%
+
+duration 0.50, continuity 0.25,
+regularity 0.15, stages 0.10
+
+HR-reserve exponential TRIMPlike; fallbacks HR→pace/
+MET→energy normalization
+
+Sum session impulses
+
+EWMA τ=42d and τ=7d;
+
+3
+
+metric
+Load
+penalty on
+recovery
+
+Exam
+urgency
+
+current formula summary
+−0.10·prior physical strain
+−0.05·prior mental strain
+
+max over events: (importance/
+5)·exp(−days/10)
+
+verdict
+
+risk
+
+recommended change
+
+directionally
+correct but
+weak
+
+can over-penalize
+when strain is itself
+uncertain
+
+Multiply penalties by
+prior-day confidence
+and calibration status
+
+directionally
+correct but
+weak
+
+decay constant
+arbitrary; unilateral
+exponential may
+not match
+academic stress
+timelines
+
+Treat as “pressure” not
+“load”; consider a longer
+half-life or event-typespecific decay
+
+directionally
+correct but
+weak
+
+long sessions
+inflate; no break
+modeling
+
+Keep but cap
+nonlinearity; optionally
+incorporate “session
+fragmentation” (multiple
+short sessions)
+Remove or drastically
+reduce urgency-only
+impulse; separate
+“pressure score” from
+“study load”
+
+Mental
+session
+load
+
+duration·(1+0.003·max(0,dur−60))
+
+Mental
+impulse
+
+sum(session_load)·(1+0.5·urgency);
+fallback urgency-only
+(600·urgency)
+
+likely
+flawed
+
+can create large
+load without
+behavior; amplifies
+sparse-history
+artifacts
+
+MCL/MAL
+
+EWMA τ=21d and τ=3d
+
+directionally
+correct but
+weak
+
+τ choices heuristic;
+sparse sessions
+create unstable
+ratios
+
+Keep τ but add
+“coverage-aware EWMA”
+and mental calibration
+gating
+
+Mental
+strain
+mapping
+
+Log-saturating with m0=60,
+cold_ref=600, min_ref=200
+
+directionally
+correct but
+weak
+
+unit scale arbitrary;
+early ref instability
+
+Same fix as physical:
+shrinkage + minimum
+samples + ref
+diagnostics
+
+Sleep + regularity + optional HRV −
+prior strain penalty
+
+directionally
+correct but
+weak
+
+circularity if sleep/
+regularity already
+score; optional HRV
+not standardized
+
+Use physiology-only
+baseline + timing
+stability; expose
+contributions clearly
+
+thresholds on FI and AI plus
+recovery and persistence
+
+directionally
+correct but
+weak
+
+thresholds largely
+heuristic and unitscale dependent
+
+Keep but gate “highrisk” states by
+calibration/confidence;
+add ramp-rate feature
+optionally
+
+Mental
+recovery
+
+Physical
+states
+
+4
+
+metric
+
+current formula summary
+
+verdict
+
+risk
+
+recommended change
+
+Mental
+states
+
+thresholds on MFI and MAI, exam
+urgency, mental recovery,
+persistence
+
+likely
+flawed
+(stability)
+
+MAI explosion
+under sparse data;
+urgency and
+recovery interplay
+can misclassify
+
+Replace MAI with
+stabilized MAI*; add
+denominator floors,
+shrinkage, and state
+gating
+
+Targets
+(physical)
+
+state multipliers + recovery/exam
+modifiers + caps
+
+directionally
+correct but
+weak
+
+targets can be
+wrong during
+calibration or
+missingness
+
+Hide or widen targets
+during calibration; link
+guidance strength to
+confidence
+
+Targets
+(mental)
+
+state multipliers +
+mentalRecovery/exam/physical
+modifiers + cap
+
+directionally
+correct but
+weak
+
+urgency may overamplify; under
+sparse history
+targets can be
+nonsensical
+
+Use calibrated
+baselineStudyHours;
+shrink toward baseline
+on low confidence
+
+Study
+target
+conversion
+
+baselineStudyHours · (0.65 +
+0.9·center/100), clipping and band
+logic
+
+directionally
+correct but
+weak
+
+output feels
+arbitrary if
+baselineStudyHours
+stale
+
+Make
+baselineStudyHours
+adaptive (30–90d
+median) with calibration
+and “last-updated”
+
+directionally
+correct but
+weak
+
+step functions
+create jumps;
+confidence not tied
+to denominator
+stability
+
+Compute continuous
+confidence from
+coverage, recency,
+signal quality, and
+denominator
+diagnostics
+
+correct/
+acceptable
+
+shift workers/travel;
+sleep episode
+straddles boundary
+
+Keep; but assign the
+“sleep day” using wake
+timestamp logic and
+report attribution fields
+
+Confidence
+
+Operational
+day
+boundary
+
+stepwise history factor; base
+confidences by signal; overall
+weighted blend
+
+fixed 04:00 local
+
+Revised formulas
+All formulas below preserve determinism and interpretability. Constants are given as exact values where
+evidence supports a cutpoint; otherwise they are explicitly labeled heuristic and constrained to narrow
+ranges.
+
+Core utilities used across domains
+Time constant EWMA (daily sampling). For any daily input series ut and state xt :
+
+α(τ ) = 1 − exp(−1/τ ),
+
+xt = (1 − α)xt−1 + αut
+
+5
+
+This matches a continuous-time first-order low-pass with time constant τ (days) when sampled daily
+(deterministic numerical discretization).
+
+9
+
+Robust baseline and z-delta (for physiology). For a metric yt , define baseline location and scale using
+median and MAD:
+
+med = median(yt−k:t−1 ),
+
+MAD = median(∣y − med∣)
+
+σrob = 1.4826 ⋅ MAD + ε, ε = 10−6
+
+zt = clip (
+
+yt − med
+, −4, +4)
+σrob
+
+The factor 1.4826 is the Gaussian-consistency correction for MAD (evidence-backed).
+
+10
+
+Sleep scoring redesign using bedtime and wake-up timestamps
+Sleep day attribution with a 04:00 boundary
+Given exact bedtime timestamp B and wake timestamp W (local), define the “sleep day” date Ds as:
+- Let Wclock be the local time-of-day of W .
+- If Wclock ≥ 04:00, assign Ds = date(W ); else Ds = date(W ) − 1.
+This preserves the existing operational day boundary while ensuring the sleep episode is attributed
+consistently to the “post-sleep day.” (Operational design choice; deterministic.)
+Sleep need Nt (minutes)
+Evidence constraint: for teens (13–18), 8–10 h is recommended; <8 and >10 h “on a regular basis” is
+inappropriate. 2
+Because this is a student-focused product, recommended deterministic anchor:
+• If age is known and age ≤ 18:
+
+Nanchor = 540,
+
+Nmin = 480,
+
+Nmax = 600
+
+Nmin = 420,
+
+Nmax = 600
+
+• Else (age unknown or adult):
+
+Nanchor = 480,
+
+Rationale: use the teen consensus window when appropriate, otherwise preserve your current adultlike clamp window. 2
+
+6
+
+Personalization (heuristic, shrinkage-based, non-circular).
+Define a set of “physiology-good” nights G over the
+
+last
+
+H = 60 sleep days where: -
+
+RecoveryPhysOnlyd+1 ≥ 60 (recovery from lnHRV/RHR/RR only; excludes SleepScore to reduce
+circularity).
+- sleepEfficiencyd ≥ 0.85. 3
+- Prior-day physical strain ≤ 70 (heuristic) and prior-day mental strain ≤ 70 (heuristic).
+Let nG = ∣G∣. Compute:
+
+Ndata = quantile0.60 (TSTd d ∈ G)
+Shrink toward anchor with prior strength κN = 14 nights (heuristic but bounded) :
+
+w=
+
+κN
+,
+κN + n G
+
+Nt = clip (wNanchor + (1 − w)Ndata , Nmin , Nmax )
+
+Design intent: avoids overfitting when “good nights” are sparse and remains deterministic.
+Sleep sub-scores (0–100)
+All sub-scores are computed per sleep day.
+Duration score Sdur
+
+Let T = TST (minutes). Use TIB only if TST missing.
+Undersleep penalty (keeps your 0.35·need scale; heuristic but stable):
+
+⎧100 ⋅ exp (− ( Nt −T )2 ) ,
+0.35Nt
+Sdur = ⎨
+⎩
+100 − Pover ,
+
+T ≤ Nt
+T > Nt
+
+Oversleep penalty (conservative; partially evidence-motivated by catch-up sleep findings): weekend
+catch-up sleep can be protective in some studies, and social jetlag literature emphasizes misalignment
+rather than oversleep per se. 11
+Recommended replacements: - oversleep grace g = 90 min (heuristic, conservative)
+- oversleep penalty window w = 360 min (heuristic)
+- max oversleep penalty Pmax = 8 points (heuristic)
+
+Pover = Pmax ⋅ min (1, (
+
+2
+
+max(0, T − Nt − g)
+))
+w
+
+Continuity score Scont
+
+Use sleep efficiency E ∈ [0, 1] and WASO in minutes.
+
+7
+
+Evidence anchors: sleep efficiency ≥85% indicates good sleep quality across age groups; WASO ≤20 min
+indicates good sleep quality; higher WASO ranges (≥41–51 min depending on age band) do not indicate
+good sleep quality. 3
+Efficiency mapping (recommended replacement of min/span): - Egood = 0.85 (evidence-backed)
+
+3
+
+- Epoor = 0.74 (evidence-backed as “does not indicate good quality” for most age groups; treat as floor)
+
+SE = 100 ⋅ clip (
+
+12
+
+E − Epoor
+, 0, 1)
+Egood − Epoor
+
+WASO penalty (recommended replacement): - Wgood = 20 min (evidence-backed)
+
+12
+
+- Wmax = 60 min (evidence-backed as clearly “not good quality” in consensus ranges; choose 60 as a
+practical cap) 12
+- max WASO penalty = 20 points (keeps your current scale; heuristic)
+
+PWASO = 20 ⋅ clip (
+
+WASO − Wgood
+, 0, 1)
+Wmax − Wgood
+
+Scont = clip(SE − PWASO , 0, 100)
+Timing score Stime : bedtime/wake trends, weekday/weekend, social jetlag, drift
+
+This replaces the current “midpoint deviation vs 21-day baseline” design.
+Construct 1: Sleep Regularity Index (SRI).
+SRI measures the probability of being in the same sleep/wake state at times 24h apart (0–100). It was
+introduced in undergraduates and associated with circadian timing and academic performance; it is also
+used in large-cohort health work. 13
+Deterministic SRI approximation using bed/wake intervals (30-minute bins).
+For each day d in the last Nsri = 14 sleep days, define sleep interval Id = [Bd , Wd ). For each bin k ∈
+
+{1, … , 48} representing time-of-day tk in minutes (0,30,…,1410), define indicator:
+sd (k) = 1{tk ∈ Id }
+Then:
+M
+
+48
+
+1
+SRI14 = 100 ⋅
+∑ ∑ 1{sd (k) = sd−1 (k)}
+48 ⋅ (M − 1)
+d=2 k=1
+
+where M is the number of valid days (require M ≥ 4; else SRI is “insufficient history”). This preserves the
+SRI meaning and determinism.
+
+14
+
+Map to subscore:
+
+SSRI = SRI14
+
+8
+
+Construct 2: Social jetlag (SJL).
+Defined as the difference between midsleep on workdays and free days.
+
+15
+
+Let midsleep Md = Bd + 12 (Wd − Bd ) as time-of-day in minutes modulo 1440, and define weekday
+
+workdays as wake on Mon–Fri, free days as wake on Sat–Sun (deterministic proxy; heuristic for flexible
+schedules).
+
+SJL = ∣circMean(Md ∣ work) − circMean(Md ∣ free)∣circDist
+Map to score (conservative; thresholds are heuristic because systematic reviews note linear associations
+and limited threshold consensus, but SJL itself is evidence-backed): 11
+- θ0 = 60 min (no penalty) (heuristic)
+- θ1 = 180 min (max penalty) (heuristic)
+
+SSJL = 100 ⋅ (1 − clip (
+
+SJL − θ0
+, 0, 1))
+θ1 − θ0
+
+Construct 3: Timing drift (trend direction).
+Define bedtime time-of-day bd (minutes modulo 1440). Compute an “unwrapped” series over the last 14
+valid days by choosing daily shifts of ±1440 to minimize jumps >720 minutes (deterministic). Fit slope with
+ordinary least squares:
+
+βb =
+
+∑(t − tˉ)(b − ˉb)
+∑(t − tˉ)2
+
+where t is day index (0..K−1). βb is minutes/day.
+Map to score (heuristic but narrow): - drift tolerance = +10 min/day (no penalty)
+- drift severe = +30 min/day (max penalty)
+
+Sdrift = 100 ⋅ (1 − clip (
+
+∣βb ∣ − 10
+, 0, 1))
+30 − 10
+
+Timing subscore blend (weights heuristic but interpretable):
+
+Stime = 0.60SSRI + 0.25SSJL + 0.15Sdrift
+Stages score Sstage (capped and de-weighted)
+
+Evidence anchors: Expert consensus supports some sleep-architecture ranges (e.g., adult REM 21–30% and
+adult N3 16–20% as indicators of good sleep quality), but also notes weaker consensus overall for
+architecture relative to continuity measures. 16
+Measurement caution: consumer wearables show limited stage-classification agreement with PSG, so
+stage penalties must be conservative to avoid false negatives. 17
+Let pREM and pN3 be fractions of total sleep time.
+
+9
+
+Use only “extreme deficit” penalties (evidence-backed cutpoints, conservative mapping): - pREM,low = 0.10
+(≤10% does not indicate good quality for teens and some groups)
+- pREM,ok = 0.21 (adult good-quality lower bound) 12
+
+12
+
+- pN3,low = 0.05 (≤5% does not indicate good quality for teens/young adults/adults)
+- pN3,ok = 0.16 (adult good-quality lower bound)
+
+18
+
+18
+
+SREM = 100 ⋅ clip (
+
+pREM − pREM,low
+, 0, 1)
+pREM,ok − pREM,low
+
+SN3 = 100 ⋅ clip (
+
+pN3 − pN3,low
+, 0, 1)
+pN3,ok − pN3,low
+
+Sstage = 0.5SREM + 0.5SN3
+Additionally cap stage influence at ±5 points contribution to the final SleepScore (enforced by low weight
+below).
+SleepScore aggregation
+
+Recommended weights (heuristic, but aligned to evidence that timing regularity is highly predictive and
+stage data is noisy):
+- duration 0.45
+- continuity 0.25
+- timing 0.25
+- stages 0.05
+
+SleepScore =
+
+∑i wi Si
+over available components
+∑i wi
+
+Sleep confidence Csleep
+Replace stepwise history factors with a continuous, coverage-based confidence:
+Let n14 be number of valid sleep days in last 14.
+
+Chist =
+
+n14
+14
+
+Let Cstage = 0.85 if stage missing else 1.0 (keeps your intent; heuristic).
+Let Cmid = 0.90 if bed or wake missing else 1.0 (heuristic).
+
+Csleep = clip(Chist ⋅ Cstage ⋅ Cmid , 0, 1)
+This avoids confidence “jumps” at day 7/14 and makes uncertainty monotone in data availability
+(deterministic).
+
+10
+
+Physical load and strain
+Session impulse (HR-based TRIMP, evidence-backed constants)
+If heart rate data exists, use Banister-style TRIMP scaling (evidence-backed formula structure and
+constants): 19
+For session time spent in each HR bin i with minutes Di , define HR reserve fraction:
+
+HRri =
+
+HRi − HRrest
+HRmax − HRrest
+
+Then:
+
+TRIMP = ∑ Di ⋅ HRri ⋅ 0.64 ⋅ e1.92⋅HRri
+
+(men)
+
+TRIMP = ∑ Di ⋅ HRri ⋅ 0.86 ⋅ e1.67⋅HRri
+
+(women)
+
+i
+
+i
+
+If sex is unknown, use the mean of coefficients as a deterministic compromise (heuristic): - multiplier a =
+
+0.75
+- exponent k = 1.795
+Qualifying training vs “incidental activity”
+To support calibration and avoid walks dominating “cardio training” calibration, classify sessions using
+intensity thresholds consistent with common exercise-intensity definitions.
+Evidence anchors: moderate intensity often corresponds to ~40–59% HRR, and moderate intensity is
+commonly defined as 3–<6 METs. 20
+Define a session as qualifying cardio training if: - HR available and HRr ≥ 0.40 for ≥20 minutes, or estimated MET ≥3 for ≥30 minutes (fallback),
+else mark as incidental/low-intensity.
+This is used for calibration inputs and states/targets, not for raw daily activity summaries. (Deterministic
+classification; thresholds evidence-based.)
+Daily impulse and CTL/ATL (kept, evidence-aligned defaults)
+Daily impulse:
+
+ut =
+
+∑
+
+TRIMPs
+
+sessions on day t
+
+CTL/ATL:
+
+CTLt = EWMAτ =42 (ut ),
+
+ATLt = EWMAτ =7 (ut ),
+
+11
+
+TSBt = CTLt − ATLt
+
+These defaults are widely used as nominal parameters in practice and described in impulse-response
+contexts. 9
+Physical strain mapping (deterministic, ref-stabilized)
+Keep log-saturating intent but stabilize reference:
+Let u95 be the 95th percentile of valid daily impulses over a rolling 120 days, requiring at least 20 valid
+days; else undefined. (Heuristic sample requirement.)
+Define reference with shrinkage (heuristic but decision-complete): - cold_ref = 300 (existing)
+- min_ref = 150 (existing)
+- κu = 20 days
+
+refu = {
+
+max(min_ref, u95 ),
+cold_ref,
+
+nvalid ≥ 20
+otherwise
+
+If nvalid ≥ 20, optionally shrink:
+
+w=
+
+κu
+, refu ← w ⋅ cold_ref + (1 − w) ⋅ refu
+κu + nvalid
+
+Strain:
+
+PhysicalStraint = 100 ⋅ clip (
+
+ln(1 + ut /u0 )
+, 0, 1)
+ln(1 + refu /u0 )
+
+with u0 = 30 (existing; heuristic scale parameter).
+
+Recovery
+Physiology-only recovery components
+Use ln(HRV) (e.g., lnRMSSD) as your primary HRV feature (evidence-backed transformation used in athlete
+monitoring contexts). 21
+Define:
+
+ytHRV = ln(HRVt ),
+
+ytRHR = RHRt ,
+
+ytRR = RRt
+
+Baselines over the last 60 valid days (heuristic window, consistent with consumer “long-term” framing) and
+robust scale:
+(m)
+
+zt
+
+(m)
+
+= robustZ(yt ; 60d window), m ∈ {HRV, RHR, RR}
+
+Map z to 0–100 (heuristic but monotone and symmetric):
+
+12
+
+(m)
+
+St
+
+(m)
+
+= 50 − 12.5 ⋅ zt
+
+Interpretation: a +2 SD “worse” deviation reduces by 25 points; a −2 SD “better” increases by 25 points.
+(Heuristic scaling; deterministic.)
+RR as a wearable-derived metric is feasible and has been validated/used in respiratory-rate estimation
+contexts; RR and other physiology shifts have been leveraged for illness detection. 22
+Composite RecoveryScore (with confidence-aware penalties)
+Let SleepScore be as defined above.
+Weights (keep your current weights, but separate “physiology-only” as an internal diagnostic):
+
+0.35StHRV + 0.25StRHR + 0.15StRR + 0.25SleepScoret
+renorm
+
+RecoveryRawt =
+
+Apply prior-day strain penalties scaled by prior-day confidence to avoid over-penalizing based on uncertain
+strain:
+
+RecoveryScoret = clip (RecoveryRawt − 0.10 ⋅ CphysStrain,t−1 ⋅ PhysicalStraint−1 − 0.05 ⋅ CmentStrain,t−1 ⋅ MentalStrain
+Penalty coefficients are retained as heuristics; the improvement is confidence coupling.
+
+Mental load, strain, recovery, and stabilized MAI
+Separate “study load” from “pressure”
+Rationale: Social jetlag/chronotype work and mental fatigue literature support that stress and fatigue can
+impair performance, but equating “exam urgency” to large load without behavior is a model artifact risk.
+23
+
+Keep urgency as a pressure signal:
+
+Ut = max (
+events
+
+importance
+daysToEvent
+) exp (−
+)
+5
+10
+
+(Decay=10 days remains heuristic; see References registry.)
+Define a separate PressureScore (0–100):
+
+PressureScoret = 100 ⋅ clip(Ut , 0, 1)
+Study session load (keep structure, add caps)
+Current:
+
+13
+
+Ls = ds (1 + 0.003 max(0, ds − 60))
+Recommended stabilizing cap (heuristic):
+
+L∗s = min(Ls , 3.0 ⋅ ds )
+This prevents runaway growth for very long sessions while preserving the intended “fatigue grows with
+time-on-task” shape (qualitatively consistent with mental fatigue findings). 24
+Daily study impulse:
+
+mt = ∑ L∗s
+s
+
+Urgency should modulate targets and state thresholds, not inflate load directly. Replace: - mental urgency
+multiplier (1+0.5·urgency) → remove from impulse, keep for targets/states (recommended)
+Replace urgency-only impulse fallback: - Remove
+
+600 ⋅ Ut (likely flawed) - Use a small, bounded
+
+“background cognitive load” only if product requires it (heuristic):
+
+mbg
+t = 30 ⋅ Ut
+and only when mt = 0. This makes “pressure days” visible without dominating the chronic load.
+Final daily mental impulse:
+
+mfinal
+={
+t
+
+mt ,
+mbg
+t ,
+
+mt > 0
+mt = 0
+
+MCL/MAL EWMAs (keep taus; add coverage diagnostics)
+
+MCLt = EWMAτ =21 (mfinal
+),
+t
+
+MALt = EWMAτ =3 (mfinal
+)
+t
+
+Taus remain heuristic (no strong literature for study-load kinetics).
+Mental strain mapping (ref-stabilized)
+Use the same log-saturating form as physical with your constants but stabilized reference:
+Existing: - m0 = 60, cold_ref=600, min_ref=200
+Define m95 over last 120 days requiring ≥20 valid days; shrinkage with κm = 20 (heuristic). Then:
+
+MentalStraint = 100 ⋅ clip (
+
+14
+
+ln(1 + mfinal
+/m0 )
+t
+, 0, 1)
+ln(1 + refm /m0 )
+
+Stabilized MAI (critical fix)
+Current:
+
+MAIraw =
+
+MALt − MCLt
+MCL_ref
+
+This explodes when MCL_ref is underestimated early or when session coverage is sparse (small chronic
+base). This is a generic ratio-instability failure mode in short-history EWMAs.
+Step 1: define a deterministic, floored denominator.
+Use:
+
+MCL_ref∗ = max(MCL_ref, 0.5 ⋅ min_ref)
+With min_ref=200, this yields a hard floor of 100 (units). (Heuristic but bounded; uses your existing min_ref.)
+Step 2: shrink MAI toward 0 when study coverage is sparse.
+Let coverage over last 14 days:
+
+cov14 =
+
+#{d ∈ [t − 13, t] : md > 0}
+14
+
+Define shrink factor:
+
+s=
+
+clip(cov14 , 0, 1)
+
+(Heuristic; deterministic; ensures 1/10 days → s ≈ 0.316.)
+Step 3: clamp MAI to a calibrated operational range.
+Because your state thresholds assume MAI in roughly −0.1…0.35 bands, implement:
+
+MAI∗ = clip (s ⋅
+
+MALt − MCLt
+, −0.25, +0.75)
+MCL_ref∗
+
+Clamps are heuristic but explicitly aligned to your state-machine threshold bands to prevent absurd
+classification.
+Step 4: state gating rule (hard safety).
+If cov14 < 0.20 (fewer than ~3 study days in 14), then: - Force mental state ∈ {underloaded, maintaining}
+unless exam urgency is high and mental recovery is very low (burnout-risk gating still requires multi-signal
+confirmation).
+This is deterministic and directly addresses “1 day out of 10” cases.
+
+15
+
+Trend features across all scores (registry)
+proposed
+trend
+feature
+
+formula
+
+Sleep
+Regularity
+Index (SRI)
+
+min
+history
+
+expected benefit
+
+failure mode / artifact
+risk
+
+SRI14 via 30-min bins
+over bed/wake
+intervals
+
+4 sleepdays
+
+captures day-to-day
+regularity; associated
+with academic
+performance and
+health outcomes
+
+travel/shift changes
+look “irregular”;
+requires clear sleep
+episode detection 13
+
+Social jetlag
+(SJL)
+
+∣midSleepf ree −
+midSleepwork ∣
+
+2 work +
+2 free
+
+captures weekday/
+weekend misalignment
+construct
+
+day-of-week proxy
+fails for students with
+nonstandard
+schedules 15
+
+Bedtime
+drift
+
+slope βb over 14 days
+
+7 days
+
+detects timing drift
+early, improves
+guidance
+
+DST/time-zone
+changes; missing
+nights bias
+
+Wake-time
+drift
+
+same as bedtime but
+on wake time
+
+7 days
+
+wake time is often the
+bigger anchor for
+schedule intervention
+
+alarms, late
+weekends, naps not
+included
+
+with partial
+repayment factor
+
+7 days
+
+distinguishes “one long
+sleep night” as catch-up
+vs oversleep
+
+depends on correct
+need estimate; naps
+missing can inflate
+debt 25
+
+HRV
+balance
+
+compare 14-day avg
+lnHRV vs 60–90d
+baseline
+
+10 valid
+HRV
+nights
+
+separates chronic
+suppression from
+single-night noise
+
+irregular
+measurement time,
+sensor artifacts 26
+
+RHR drift
+
+mean3d − mean21d
+
+7 days
+
+short-term illness/stress
+indicator
+
+alcohol, late meals,
+missed wear-time;
+confounding 27
+
+RR drift
+
+mean3d − mean21d
+
+7 days
+
+useful in early illness
+detection contexts
+
+14-day
+sleep debt
+
+(unwrapped)
+
+∑ max(0, N − T )
+
+Physical
+ramp rate
+
+ΔCTL7d =
+CTLt − CTLt−7
+
+Training
+load ratio
+
+ATL/CTL or
+(ATL −
+CTL)/CTL
+
+apnea/low SNR nights;
+device-specific biases
+28
+
+21 days
+
+detects rapid load
+increases; improves
+state gating
+
+depends on
+consistent load units;
+may over-warn in
+beginners 29
+
+21 days
+
+aligns with fitnessfatigue interpretation
+
+ratio instability when
+CTL small (needs
+floors) 9
+
+16
+
+proposed
+trend
+feature
+
+formula
+
+min
+history
+
+expected benefit
+
+failure mode / artifact
+risk
+can misclassify
+students who batchstudy weekly
+sparse sessions create
+false ramps (needs
+shrinkage)
+
+Study
+coverage
+
+cov14
+
+14 days
+
+stabilizes mental states
+and MAI interpretation
+
+Study ramp
+
+ΔMCL7d and
+MAL − MCL
+
+21 days
+
+detects acute overload
+against habits
+
+Calibration protocol
+This protocol is decision-complete and designed to (a) prevent misleading states/targets early, (b) use 365day history immediately when present, and (c) scale cleanly to multi-year histories.
+
+Definitions
+• A qualifying cardio session is one that meets at least one evidence-aligned intensity criterion:
+• HR-based: ≥20 min with mean HRR ≥0.40 (moderate intensity threshold). 30
+• MET-based fallback: ≥30 min with estimated MET ≥3.
+
+31
+
+• A valid training day is a day with ≥1 qualifying cardio session.
+• A valid impulse day is a day with any computed impulse ut > 0 (qualifying or not), but only
+qualifying days count toward calibration status for training states/targets.
+
+Calibration states
+Return a calibrationStatus.physical object with:
+• phase ∈ {uninitialized, calibrating, calibrated, degraded}
+• effectiveTrainingDays28 (count of valid training days in last 28)
+• effectiveTrainingDays42 (count of valid training days in last 42)
+• qualifyingSessionCount42
+• lastQualifyingSessionDate
+• reasonCodes[]
+Uninitialized
+Criteria: - No qualifying sessions in last 42 days, and lifetime qualifying sessions < 3.
+Behavior: - Compute raw impulse/strain but: - Hide training states (productive/peaking/fatigued/
+overtraining_risk) and show only {no_status} . - Targets shown as “baseline movement” suggestions, not
+load targets. - Confidence for physical domain hard-capped: Cphys ≤ 0.40.
+Justification: consumer ecosystems commonly require initial history before training status stabilizes.
+
+17
+
+8
+
+Calibrating
+Criteria (any): - 3–9 lifetime qualifying sessions, or -
+
+effectiveTrainingDays28
+
+<
+
+7 , or -
+
+effectiveTrainingDays42 < 10 .
+Behavior: - Show CTL/ATL curves but label them as calibrating. - States limited to {detraining, maintaining}
+unless Recovery is consistently low and acute load is clearly high. - Targets: - Provide a wide band (±30%)
+around center. - Cap build-state targets at 1.2·CTL (tighter than normal). - Confidence cap: Cphys ≤ 0.70.
+Evidence alignment: Garmin reports training load focus needs at least 7 days and improves after 4 weeks;
+Polar uses 7-day vs 28-day concepts for short vs longer-term load tolerance. 8
+Calibrated
+Criteria (all): -
+
+effectiveTrainingDays28 ≥ 7
+
+and -
+
+effectiveTrainingDays42 ≥ 10
+
+and -
+
+qualifyingSessionCount42 ≥ 12 .
+Behavior: - Full state machine enabled. - Normal target caps (your existing 1.6·CTL build max; 1.3·CTL
+otherwise) can apply. - Confidence no longer capped; computed from coverage/quality.
+Degraded (re-calibration trigger)
+Criteria: - No qualifying cardio sessions for ≥14 consecutive days.
+Behavior: - Keep CTL/ATL but mark as degraded. - Disallow “peaking” and “productive” until ≥3 qualifying
+sessions occur again. - Confidence multiplier: Cphys ← 0.8 ⋅ Cphys until re-qualified.
+Industry precedent: devices recognize that training-status interpretations degrade during breaks and
+emphasize that trends are best over weeks/months; Garmin guidance explicitly notes needing history for
+load focus and status. 8
+
+Using 365-day (and multi-year) history immediately
+If 365 days exist: - Compute CTL/ATL forward using EWMA across the full history. - Set physical calibration to
+calibrated immediately if the above calibrated criteria are met in the most recent 42 days. - Set
+reference refu using the last 120 days; also compute an annual reference for diagnostics (p95_365), and
+expose both.
+For 2–3 years: - Keep the rolling 120-day ref for “current scale.” - Add optional seasonal normalization
+diagnostic: p95 by quarter or school term (report-only; deterministic).
+
+Treatment of non-qualifying activity
+• Non-qualifying sessions (easy walks below intensity thresholds) should still contribute to general
+activity summaries and even the raw impulse series (if you want), but they should not:
+• drive calibration phase transitions, or
+
+18
+
+• unlock high-stakes training states (peaking/overtraining_risk),
+because adaptation/fitness models are most meaningful when the training stimulus is sufficient to
+be “training” rather than incidental activity. Intensity cutpoints are anchored in moderate-intensity
+definitions. 30
+
+Sparse-data robustness protocol
+This is decision-complete and focuses on preventing MAI explosions and nonsensical mental states when
+study history is sparse (including “1 day out of 10”).
+
+Diagnosis: why MAI explodes under sparse study history
+MAI is structurally a ratio of an acute–chronic difference divided by a chronic reference. Under sparse data: MCL remains small (long τ , lots of zeros), while MAL can jump after a single large day (short τ ).
+- If MCL_ref is estimated from early/small history (or tied to MCL itself), it can become too small, making
+division yield extreme values.
+- An urgency-only impulse can create load on “no study” days, altering MAL/MCL dynamics and
+compounding instability.
+These are deterministic mathematical consequences of EWMA dynamics and ratio scaling, not “data
+glitches.”
+
+Safeguards (must all be implemented together)
+Denominator floors (hard safety)
+• Define:
+
+MCL_ref∗ = max(MCL_ref, 100)
+using your existing min_ref=200 ⇒ 0.5·min_ref floor = 100.
+Also apply the same idea to physical AI:
+
+CTL_ref∗ = max(CTL_ref, 0.5 ⋅ min_refu )
+with min_refu =150 ⇒ floor 75 (heuristic mapping).
+Bayesian/shrinkage priors (reference stabilization)
+For any reference derived from history (p95-style): - Require minimum valid sample nmin = 20 days. - Else
+use cold_ref. - When valid, shrink to cold_ref with κ = 20 days as in the revised formulas.
+This prevents “tiny denominators” from short history.
+Coverage-aware shrinkage of MAI
+Compute cov14 and shrink MAI by
+
+cov14 exactly as defined in Revised formulas.
+
+19
+
+This makes 1/10-day scenarios automatically conservative without requiring subjective tuning.
+Clipping/winsorization (output-level safety)
+Clamp MAI to [−0.25, +0.75] and expose both raw and clamped in outputs: - maiRaw , maiClamped ,
+maiShrinkFactor , mclRefEffective .
+This preserves auditability and protects state logic.
+Confidence penalties tied to sparsity and denominator diagnostics
+Define mental confidence:
+
+Cment = 0.9 ⋅
+study
+
+where n14
+
+counts days with md > 0 (true study days).
+
+nstudy
+14
+14
+study
+
+If urgency-only background is used, it must not count toward n14
+
+.
+
+∗
+
+Additionally: - If MCL_ref equals its floor, apply Cment ← 0.7Cment .
+State gating rules (prevents absurd labels)
+study
+
+If any of the following are true: - n14
+
+<3
+
+- Cment < 0.5
+∗
+
+- MCL_ref is at floor
+Then: - Disallow peaking , fatigued , burnout_risk - Allow only underloaded or maintaining ,
+unless (a) mentalRecovery is extremely low (e.g., <35) for ≥3 of last 5 days and (b) PressureScore ≥70. This
+ensures “risk” labels require multi-signal persistence.
+
+Validation plan
+This plan is engineered for deterministic systems: fixed test vectors, monotonicity checks, and stress tests.
+
+Deterministic test vectors (golden files)
+Create JSON fixtures with day-by-day inputs and expected outputs.
+Sleep vectors - Duration monotonicity: Fix N = 480, hold continuity/timing/stages constant. Test TST =
+{300, 360, 420, 480, 540, 600}. Expect SleepScore nondecreasing from 300→480; oversleep penalty mild
+from 480→600.
+- Timing regularity vs drift: 14-day schedule with constant duration/efficiency: - Case A: bedtime/wake
+fixed (SRI high).
+- Case B: bedtime shifts +30 min/day (SRI lower, drift penalty).
+Expect Stime A > B and the drift subscore penalizes.
+
+20
+
+- Social jetlag: Work mid-sleep 03:00, free mid-sleep 05:00 (SJL=120 min). Expect SJL penalty to activate but
+not dominate.
+Physical vectors - Single session TRIMP check using known HRR bins and compare to computed TRIMP
+formula terms (men/women/unknown-sex branch). Expect exact numeric match to within 1e-6. 19
+- CTL/ATL step response: impulse u=100 for 30 days then 0. Verify CTL and ATL decay behavior matches
+EWMA with α(τ ) = 1 − e−1/τ .
+Mental vectors (sparse stability) - 14-day window with exactly 1 study day (6h) and no others. - Confirm:
+cov14=1/14 , maiShrinkFactor≈0.267 (sqrt) or ≈0.316 depending on definition (lock the exact
+definition), MAI clamped within bounds, and mental state gated to underloaded/maintaining. - Urgencyonly days: - With PressureScore high but no study, confirm MentalStrain remains low-to-moderate
+(background load), and MAI does not spike.
+
+Monotonicity and invariants (property tests)
+Implement automated checks: - Increasing sleep efficiency (holding TST constant) must not decrease Scont .
+3
+
+- Increasing WASO (holding efficiency constant) must not increase Scont .
+- Increasing SRI must not decrease Stime .
+
+12
+
+14
+
+- MAI invariants: - If MCL_refEffective is floored, MAI must stay within clamp and mental high-risk states
+must be gated off. - Confidence invariants: - Adding valid days cannot reduce history-derived confidence
+(coverage monotonicity).
+
+Stress tests for missing/outlier data
+• Missing sleep stage fields: ensure stage weight renormalizes and no NaNs.
+• Outlier physiology:
+• HRV <5 or >400 (existing rule) plus robust z-scale; ensure confidence decreases and RecoveryScore
+remains bounded.
+• DST transitions and time-zone shifts:
+• Simulate a 60-minute offset in bed/wake; verify drift detection does not falsely penalize when a
+“timezoneChange” flag is present (recommended new input/flag).
+
+Acceptance thresholds (recommendations)
+• Sleep: correlation of SleepScore with (TST, SE, SRI) should be positive under controlled fixtures; no
+single component should change final SleepScore by >35 points in one night unless TST deficit is
+extreme (heuristic stability criterion). 32
+• Mental stability: With cov14 ≤ 0.15, MAI magnitude must be ≤0.35 after shrink+clamp and mental
+state must not enter fatigued/burnout_risk.
+• Calibration UX: while calibrating, targets must be either hidden or have ≥±30% bands and must
+include calibration reason codes.
+
+21
+
+Ranked roadmap
+Impact is ranked by expected reduction in user-visible errors and improvement in construct validity;
+complexity includes engineering effort and risk.
+
+Impact vs complexity matrix
+change
+
+impact
+
+complexity
+
+data dependency
+
+Replace sleep regularity with SRI + SJL
++ drift
+
+very high
+
+medium
+
+requires bed & wake
+timestamps (now available)
+
+Stabilize MAI with floors + shrinkage +
+gating + diagnostics
+
+very high
+
+medium
+
+uses existing study session
+history
+
+Remove/replace urgency-only
+impulse; separate pressure score
+
+high
+
+low–
+medium
+
+uses exam events (already
+present)
+
+Add calibrationStatus + readiness
+objects to output contract
+
+high
+
+low
+
+none
+
+Confidence redesign from stepwise to
+coverage-based
+
+high
+
+low
+
+none
+
+De-weight/cap sleep stages; add
+stage-confidence
+
+medium–
+high
+
+low
+
+uses existing stage inputs
+
+Ref stabilization for strain (p95
+shrinkage + min samples)
+
+medium–
+high
+
+low–
+medium
+
+needs history windowing
+
+Coverage-aware targets (hide/widen
+bands during calibration)
+
+medium
+
+low
+
+calibrationStatus
+
+Add HRV/RHR/RR “balance” trends
+(14d vs 60–90d)
+
+medium
+
+medium
+
+requires consistent nighttime
+vitals 33
+
+Add physical ramp-rate feature (ΔCTL)
+for state gating
+
+medium
+
+medium
+
+needs >21d training history
+34
+
+Best next 3 changes
+1) Sleep timing overhaul (SRI + social jetlag + drift): highest validity gain from new timestamps; improves
+guidance without ML. 35
+2) MAI stability package (floors + shrinkage + clamping + state gating + API diagnostics): directly fixes
+the “absurdly high MAI” critical defect in sparse histories.
+3) Calibration + output contract (calibrationStatus + denominator diagnostics + confidence
+smoothing): prevents future misinterpretations and makes debugging deterministic.
+
+22
+
+Best next 10 changes
+Include the top 3 above, plus: 4) Remove urgency-only impulse; introduce PressureScore (separate channel).
+36
+
+5) Evidence-aligned continuity thresholds (SE, WASO) and update constants accordingly. 3
+6) De-weight/cap stage penalties; stage-confidence based on device class. 37
+7) Reference shrinkage for strain (physical and mental) with minimum sample sizes and reporting of ref
+quality. 29
+8) Add physiology-only recovery output alongside composite RecoveryScore to reduce circularity in
+analyses. 38
+9) Add HRV/RHR/RR trend “balance” features (14d vs 60–90d) for recovery smoothing. 33
+10) Add “timezoneChange/DST” flags to avoid false drift penalties (requires app-level event detection;
+deterministic).
+
+References
+Constant registry (recommended replacements, evidence tag)
+constant
+
+sleep_need_anchor_min
+
+sleep_need clamp
+
+undersleep curvature
+scale
+
+current
+
+480
+
+recommended
+
+540 if age≤18 else
+480
+
+if age≤18:
+[480,600]; else
+[420,600]
+
+[420,600]
+
+0.35·need
+
+keep 0.35·need
+
+evidence tag
+
+support
+
+evidencebacked
+
+teen 8–10h
+consensus
+supports 480–
+
+(range) +
+heuristic
+(anchor
+choice)
+evidencebacked (teen
+bounds)
+
+600 and labels
+<8 and >10
+inappropriate
+2
+
+teen bounds
+explicitly 8–10h
+2
+
+heuristic
+
+chosen for
+stable convexity;
+no direct
+constant in
+consensus
+
+oversleep grace
+
+60
+
+90
+
+heuristic
+(conservative)
+
+catch-up sleep
+can be
+protective;
+oversleep
+associations
+confounded 39
+
+oversleep penalty
+window
+
+240
+
+360
+
+heuristic
+
+same rationale
+as above 39
+
+23
+
+constant
+
+max oversleep penalty
+
+current
+
+recommended
+
+10
+
+8
+
+evidence tag
+
+heuristic
+
+support
+keep oversleep
+penalty
+conservative
+39
+
+efficiency mapping
+min/span
+
+WASO base/span/max
+
+regularity scale
+
+stage floors
+
+sleep weights
+
+CTL/ATL tau
+
+TRIMP constants
+
+MCL/MAL tau
+
+exam urgency decay
+
+min=0.75
+span=0.15
+
+use Epoor = 0.74,
+
+Egood = 0.85
+
+base=20 span=80
+max=20
+
+base=20, max
+reached by 60
+(span=40), max=20
+
+90 min inversequadratic
+
+replace with SRI14
++SJL+drift
+
+deep=0.13
+REM=0.20
+
+use deficit anchors
+N3: low 0.05, ok
+0.16; REM: low
+0.10, ok 0.21
+
+0.50/0.25/0.15/0.10
+
+0.45/0.25/0.25/0.05
+
+42/7
+
+keep 42/7
+
+implicit
+
+use 0.64/1.92
+(men), 0.86/1.67
+(women)
+
+21/3
+
+keep 21/3 + add
+gating
+
+10d
+
+keep 10d but treat
+as pressure
+
+24
+
+evidencebacked
+
+SE ≥85% good;
+≤74% not good
+(most ages) 3
+
+evidencebacked (base)
++ heuristic
+(span)
+
+WASO ≤20
+good; higher
+ranges not good
+quality 12
+
+evidence-
+
+SRI definition
+
+backed
+(constructs)
+
+and relevance
+40
+
+evidencebacked
+
+NSF consensus
+ranges for N3 &
+REM 41
+
+evidenceinformed +
+heuristic
+
+timing regularity
+predicts
+outcomes
+strongly;
+architecture less
+reliable 42
+
+evidencebacked
+(nominal)
+
+impulseresponse
+implementations
+and platforms
+cite 42/7 9
+
+evidencebacked
+
+Banister
+exponential
+TRIMP constants
+reported 19
+
+heuristic
+
+no strong
+literature for
+study-load
+kinetics
+
+heuristic
+
+design choice;
+stress timelines
+vary 43
+
+constant
+
+urgency multiplier
+
+no-study fallback
+impulse
+
+recovery weights
+
+current
+
+recommended
+
+1+0.5U
+
+remove from
+impulse; keep for
+targets
+
+600·U
+
+replace with 30·U
+(background) or 0
+
+keep but add
+physiology-only
+output
+
+0.35/0.25/0.15/0.25
+
+evidence tag
+
+support
+
+heuristic
+
+prevents loadwithoutbehavior
+artifacts 44
+
+heuristic
+
+avoids spurious
+load; keeps
+pressure
+visibility
+
+heuristic
+
+consumer
+systems use
+multicontributor
+readiness;
+weights not
+standardized
+45
+
+MAD scale factor
+
+1.4826
+
+moderate HRR
+threshold (qualifying)
+
+n/a
+
+keep 1.4826
+
+0.40 HRR for ≥20
+min
+
+≥7 days/28 and
+calibration thresholds
+
+n/a
+
+≥10 days/42 and
+≥12 sessions/42
+
+evidencebacked
+
+robust statistics
+correction factor
+10
+
+evidencebacked
+
+moderate
+intensity by HRR
+ranges 30
+
+evidenceinformed +
+heuristic
+
+consumer
+systems need
+days/weeks;
+Garmin/Polar
+describe similar
+horizons 8
+
+Key scientific sources cited (non-exhaustive)
+• American Academy of Sleep Medicine 46 teen sleep duration consensus (8–10h; <8 and >10
+inappropriate regularly).
+
+2
+
+• National Sleep Foundation 47 sleep quality consensus: SE ≥85% and WASO ≤20 min as goodquality indicators; architecture evidence weaker. 16
+• Andrew J.K. Phillips 48 SRI construct and use in undergraduates; association with academic
+performance and circadian timing. 49
+• UK Biobank 50 SRI definition and prospective analysis context. 51
+• Marc Wittmann 52 social jetlag definition and framing. 43
+• Hilkka Kontro 53 impulse-response modeling notes: platforms often use 42d/7d time constants;
+time constants vary and personalization is ideal. 34
+• TrainingPeaks 54 public description of impulse-response model and nominal 42/7 example. 55
+
+25
+
+• TRIMP formula constants and structure (Banister-style exponential HR scaling) reported in peerreviewed usage. 19
+• Wearable sleep staging limitations and moderate accuracy vs PSG (supports stage de-weighting/
+capping). 17
+• HRV lnRMSSD as a monitoring metric and its log transform (supports ln(HRV) choice). 21
+• Respiratory rate estimation from wearables and its use in physiological-change detection contexts
+(supports RR inclusion with robust baselines). 22
+• Garmin 56 documentation indicating training history requirements (≥7 days for load focus; more
+detailed after 4 weeks; 1–2 weeks for training status). 57
+• Polar 58 documentation/white paper describing 7-day “strain” and 28-day “tolerance” concepts.
+
+1
+
+13
+
+49
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC5468315/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC5468315/
+2
+
+32
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC5078711/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC5078711/
+
+https://fatiguemanagersnetwork.org/wp-content/uploads/Ohayon-et-al.
+2017_National-Sleep-Foundations-Sleep-Quality-Recommendations.pdf
+3
+
+4
+
+12
+
+16
+
+18
+
+41
+
+47
+
+53
+
+https://fatiguemanagersnetwork.org/wp-content/uploads/Ohayon-et-al.2017_National-Sleep-Foundations-Sleep-QualityRecommendations.pdf
+5
+
+9
+
+55
+
+https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/
+
+https://www.trainingpeaks.com/learn/articles/the-science-of-the-performance-manager/
+6
+
+28
+
+56
+
+https://www.nature.com/articles/s41746-020-00363-7
+
+https://www.nature.com/articles/s41746-020-00363-7
+7
+
+15
+
+23
+
+36
+
+43
+
+54
+
+https://pubmed.ncbi.nlm.nih.gov/16687322/
+
+https://pubmed.ncbi.nlm.nih.gov/16687322/
+
+https://www8.garmin.com/manuals-apac/webhelp/fenix7series/EN-SG/
+GUID-6F726699-0535-4A66-8F51-84A31CE81CD5-8601.html
+8
+
+48
+
+57
+
+https://www8.garmin.com/manuals-apac/webhelp/fenix7series/EN-SG/
+GUID-6F726699-0535-4A66-8F51-84A31CE81CD5-8601.html
+
+https://wis.kuleuven.be/stat/robust/papers/publications-2018/rousseeuwhubert-anomalydetectionwires-dmkd-2018.pdf
+10
+
+https://wis.kuleuven.be/stat/robust/papers/publications-2018/rousseeuwhubert-anomalydetection-wires-dmkd-2018.pdf
+11
+
+39
+
+44
+
+https://pdfs.semanticscholar.org/c417/f936beb7e9882f75f6de954da8370947698d.pdf
+
+https://pdfs.semanticscholar.org/c417/f936beb7e9882f75f6de954da8370947698d.pdf
+14
+
+35
+
+40
+
+46
+
+51
+
+52
+
+https://elifesciences.org/articles/88359
+
+https://elifesciences.org/articles/88359
+17
+
+58
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC10654909/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC10654909/
+19
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6561225/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6561225/
+
+26
+
+59
+
+20
+
+30
+
+50
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6719814/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6719814/
+21
+
+38
+
+https://www.jssm.org/jssm-13-535.xml-Fulltext
+
+https://www.jssm.org/jssm-13-535.xml-Fulltext
+22
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC8443549/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC8443549/
+24
+
+https://kar.kent.ac.uk/60767/1/SPOA-D-16-00188_R4.pdf
+
+https://kar.kent.ac.uk/60767/1/SPOA-D-16-00188_R4.pdf
+25
+
+26
+
+27
+
+33
+
+45
+
+https://support.ouraring.com/hc/en-us/articles/360057791533-Readiness-Contributors
+
+https://support.ouraring.com/hc/en-us/articles/360057791533-Readiness-Contributors
+29
+
+34
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC12880663/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC12880663/
+31
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7719906/
+
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7719906/
+37
+
+https://www.nature.com/articles/s41746-024-01016-9
+
+https://www.nature.com/articles/s41746-024-01016-9
+42
+
+https://academic.oup.com/sleep/article/47/1/zsad253/7280269
+
+https://academic.oup.com/sleep/article/47/1/zsad253/7280269
+
+https://www.polar.com/img/static/whitepapers/pdf/polar-training-load-pro-white-paper.pdf?
+srsltid=AfmBOorpNXjR-_Bnx_CMU9vDTHXlqZkGa0cC7vEF8mPNQz3ozuGCuFOb
+59
+
+https://www.polar.com/img/static/whitepapers/pdf/polar-training-load-pro-white-paper.pdf?srsltid=AfmBOorpNXjR_Bnx_CMU9vDTHXlqZkGa0cC7vEF8mPNQz3ozuGCuFOb
+
+27
+
+

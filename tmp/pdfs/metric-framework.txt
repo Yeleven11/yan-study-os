@@ -1,0 +1,1585 @@
+Metric Framework for Sleep, Recovery, Physical
+Strain, and Mental Strain
+Executive Summary
+A) Executive Summary
+
+
+This design specifies an explicit, deterministic, daily-recomputed metric system for a web + iOS product that
+ingests Apple Health/Watch-derived physiology/activity data and study behavior logs. It produces WHOOP-
+style core metrics (Sleep, Recovery, Physical Strain) and adds a new, mathematically parallel metric family
+for cognition (Mental Recovery, Mental Strain) with optimal daily target ranges for both strain types.
+
+
+Final recommended architecture
+
+The framework is a two-domain impulse-and-recovery model:
+
+
+     • Physical domain
+     • Load input: heart-rate-derived training impulse (TRIMP-like) aggregated daily. 1
+     • State variables: acute physical fatigue and chronic physical capacity, updated via explicit exponentially
+       weighted moving averages (EWMAs) over 7d and 28d, with a 180d+ baseline for personalization and
+       drift control. 2
+
+     • Outputs: Physical Strain (0–21), Physical target range [low, high] (0–21), and contributions to
+       Recovery.
+
+
+     • Mental domain
+
+
+     • Load input: study-session “cognitive TRIMP” (minutes × intensity multipliers) plus deadline/exam
+       pressure terms (as a background stressor), all daily. (Intensity and pressure mappings are explicitly
+       defined; pressure and circadian disruption are partly heuristic but grounded in stress and circadian-
+       misalignment evidence.) 3
+     • State variables: acute mental fatigue and chronic mental capacity, updated via the same multi-
+       horizon mechanics.
+
+     • Outputs: Mental Recovery (0–100), Mental Strain (0–21), Mental target range [low, high] (0–21).
+
+
+     • Cross-domain recovery
+       Recovery is computed primarily from sleep and autonomic physiology (HRV, resting HR, respiratory
+       rate) interpreted relative to each user’s long-term baseline and recent load states. HRV is explicitly
+       treated as a stress-sensitive autonomic marker and must be interpreted longitudinally. 4
+
+
+
+
+                                                      1
+     • Robustness + confidence
+       Every metric is emitted with a confidence score that depends on: (a) signal availability, (b) sensor
+       quality proxies and outlier checks, and (c) amount of historical context (up to 180d+). Sleep-stage
+       components are down-weighted because sleep staging accuracy in consumer devices is imperfect
+       and device-dependent. 5
+
+
+Why this improves over typical simple readiness/load blends
+
+    1. Explicit multi-horizon dynamics (7d, 28d, 180d+) are first-class rather than incidental EWMAs.
+       Acute state and chronic capacity are separate, and long-term baselines are used for calibration, drift
+       detection, and confidence management. 2
+    2. Sleep is decomposed into duration, continuity/efficiency, regularity, and timing, aligned with
+       established sleep science (including circadian/homeostatic concepts) and modern regularity metrics
+       (SRI). 6
+    3. Mental Strain is structurally parallel to Physical Strain (impulse accumulation + recovery
+       dynamics), making it interpretable and implementable instead of being a vague “productivity score.”
+    4. Targets are ranges, not points, and are computed from recovery + recent under/over-load, so they
+       can expand or contract in a mathematically guaranteed way:
+    5. Better recovery → higher optimal strain (both domains).
+    6. High mental recovery + ~2 days of low study → target mental strain increases (explicitly encoded in
+       the target equation).
+    7. Heuristics are isolated (e.g., time-of-day multipliers, deadline-pressure mapping) and separable
+       from evidence-backed foundations (TRIMP, sleep regularity, stress–HRV links).
+
+
+Source Table
+B) Source Table
+
+
+                                                           Evidence
+                                                           Strength
+ Claim                                Source                  (High/   Notes
+                                                               Med/
+                                                                Low)
+
+                                      Joint
+                                      consensus
+                                      statement:
+ Adults should generally sleep
+                                      American                         Use as population constraint and for cold-start sleep-need
+ ≥7 hours/night for health;
+                                      Academy of               High    priors; personalize later. Link: https://
+ sleeping <7h is associated with
+                                      Sleep Medicine                   pmc.ncbi.nlm.nih.gov/articles/PMC4442216/
+ adverse outcomes
+                                        7 + Sleep
+
+                                      Research
+                                      Society 8    9
+
+
+
+
+                                                       2
+                                                         Evidence
+                                                         Strength
+Claim                              Source                   (High/   Notes
+                                                             Med/
+                                                              Low)
+
+Sleep–wake regulation is           Two-process                       Supports time-of-day/circadian disruption penalties as
+classically modeled as             model                             scientifically coherent (though specific multipliers remain
+                                                             High
+interaction of homeostatic and     reappraisal                       heuristic). Link: https://pubmed.ncbi.nlm.nih.gov/
+circadian processes                 10                               26762182/
+
+                                   Clinical
+Sleep efficiency is % of time in                                     Directly used in SleepScore continuity component. Link:
+                                   definition and            High
+bed spent asleep (TST/TIB)                                           https://pmc.ncbi.nlm.nih.gov/articles/PMC4246141/
+                                   formula 11
+
+                                   Digital
+                                                                     Practical implementation guidance; complements clinical
+Digital measurement guidance       Medicine
+                                                                     definition. Link: https://datacc.dimesociety.org/wp-
+describes sleep efficiency as      Society 12                Med
+                                                                     content/uploads/2024/04/Core-Digital-Measure-of-Sleep-
+TST / sleep opportunity            digital measure
+                                                                     Sleep-efficiency-Percentage.pdf
+                                   brief 13
+
+Sleep regularity index (SRI)
+                                                                     Used to compute an explicit regularity feature from sleep
+quantifies probability of being    Phillips et al.
+                                                             High    stage timestamps. Link: https://www.nature.com/articles/
+in same sleep/wake state 24h       (Sci Rep) 14
+                                                                     s41598-017-03171-4
+apart
+
+Sleep regularity predicts health   Prospective                       Justifies giving regularity meaningful weight (not just
+outcomes and mortality risk in     cohort                    High    sleep duration). Link: https://pmc.ncbi.nlm.nih.gov/
+large cohorts                      evidence 15                       articles/PMC10782501/
+
+Consumer wearable sleep
+                                   PSG validation                    Supports down-weighting stage composition and
+staging has meaningful error;
+                                   of multiple               High    attaching lower confidence to stage-driven components.
+accuracy differs by device and
+                                   wearables 16                      Link: https://pmc.ncbi.nlm.nih.gov/articles/PMC12038347
+stage
+
+                                   Scoping review
+Wearables sleep staging                                              Use to justify conservative weighting and confidence
+                                   of wearable
+literature shows variability and                             Med     adjustment. Link: https://www.nature.com/articles/
+                                   sleep staging
+evolving methods                                                     s41746-024-01016-9
+                                    17
+
+
+                                                                     Useful for feasibility and expectations; not a gold-
+Apple Watch sleep stages           Apple
+                                                                     standard substitute. Link: https://www.apple.com/health/
+feature has a published            whitepaper                Med
+                                                                     pdf/
+development/validation paper        18
+                                                                     Estimating_Sleep_Stages_from_Apple_Watch_Oct_2025.pd
+
+HRV is related to stress/
+                                   Stress and HRV
+autonomic regulation; stress                                         Anchors HRV’s role in Recovery and Mental Recovery. Link
+                                   meta-analysis             High
+tends to reduce HRV (meta-                                           https://pmc.ncbi.nlm.nih.gov/articles/PMC5900369/
+                                    19
+analysis)
+
+
+
+
+                                                     3
+                                                          Evidence
+                                                          Strength
+Claim                               Source                   (High/   Notes
+                                                              Med/
+                                                               Low)
+
+Routine near-daily HRV
+measurement and weekly              HRV
+                                                                      Supports 7d rolling aggregates and variability features.
+averages/CV are useful for          monitoring                Med
+                                                                      Link: https://www.mdpi.com/1424-8220/26/1/3
+monitoring training adaptation      review 20
+and recovery
+
+                                                                      Defines what HRV is available from the platform (SDNN).
+                                                                      Links: https://developer.apple.com/documentation/
+HealthKit provides HRV as SDNN      Apple
+                                                                      healthkit/hkquantitytypeidentifier/
+via                                 developer docs            High
+                                                                      heartratevariabilitysdnn and https://developer.apple.com
+ heartRateVariabilitySDNN            21
+                                                                      documentation/healthkit/hkquantitytypeidentifier/
+                                                                      heartratevariabilitysdnn?language=objc
+
+HealthKit sleep analysis includes   Apple                             Feasibility: sleep stages can be derived from timestamped
+Awake, Core, Deep, REM              developer docs            High    samples. Link: https://developer.apple.com/
+categories                           22                               documentation/healthkit/hkcategoryvaluesleepanalysis
+
+TRIMP (HR-based training            TRIMP formula
+                                                                      Used as Physical Strain raw units; not proprietary. Links:
+impulse) integrates duration        stated in peer-
+                                                              High    https://pmc.ncbi.nlm.nih.gov/articles/PMC7798120/ and
+and intensity using %HRR and        reviewed
+                                                                      https://pmc.ncbi.nlm.nih.gov/articles/PMC9536392/
+exponential weighting               sources 1
+
+Fitness–fatigue impulse-
+response models use                 Classic model                     Used as a candidate model family; we adopt a simplified
+exponential decay for fitness       description               Med     EWMA state version for stability. Link: https://
+and fatigue responses to             23                               pubmed.ncbi.nlm.nih.gov/2246166/
+training impulse
+
+Fitness–fatigue models have                                           Motivates guardrails and default EWMA approach instead
+                                    Commentary
+pitfalls; parameter                                           Med     of full free-parameter fitting by default. Link: https://
+                                    on pitfalls 24
+interpretation requires caution                                       pubmed.ncbi.nlm.nih.gov/35320776/
+
+Mental fatigue tends to impair                                        Supports treating cognitive load as a real contributor to
+                                    Systematic
+endurance performance and                                     High    readiness and strain targets. Link: https://
+                                    review 25
+increases perceived exertion                                          pubmed.ncbi.nlm.nih.gov/28044281/
+
+                                                                      Supports time-of-day and sleep timing penalties in Menta
+Circadian misalignment
+                                    Experimental                      Strain and Mental Recovery. Links: https://
+increases cognitive vulnerability                             High
+                                    evidence 26                       pmc.ncbi.nlm.nih.gov/articles/PMC6346005/ and https://
+and degrades performance
+                                                                      www.nature.com/articles/s41598-018-20707-4
+
+Exam periods correlate with                                           Supports modeling exam pressure as a stressor affecting
+                                    Exam-period
+poorer sleep quality and                                      Med     sleep and recovery. Link: https://pmc.ncbi.nlm.nih.gov/
+                                    study 27
+increased fatigue in students                                         articles/PMC10487416/
+
+
+
+
+                                                      4
+                                                                  Evidence
+                                                                  Strength
+  Claim                                 Source                       (High/   Notes
+                                                                      Med/
+                                                                       Low)
+
+                                        University                            Supports linking exam pressure to mental recovery and
+  Real exam stress measurably
+                                        exam HRV                       Med    autonomic stress proxies. Link: https://
+  affects autonomic function/HRV
+                                        study 28                              pmc.ncbi.nlm.nih.gov/articles/PMC6358958/
+
+                                                                              Optional user-input signal for calibrating mental intensity
+                                                                              improves model identifiability. Links: https://archive.org/
+  NASA-TLX is a widely used             NASA 29 TLX
+                                                                       High   download/nasa_techdoc_20000004342/20000004342.pdf
+  subjective workload instrument        docs 30
+                                                                              and https://human-factors.arc.nasa.gov/groups/TLX/
+                                                                              downloads/HFES_2006_Paper.pdf
+
+  EWMA vs rolling-average               Acute:chronic
+                                                                              We use EWMAs but do not claim injury “sweet spots.” Link
+  matters in acute:chronic              EWMA paper                     Med
+                                                                              https://pubmed.ncbi.nlm.nih.gov/28003238/
+  workload ratio computations            31
+
+
+                                                                              We use acute/chronic ratios only as stability/overreach
+  ACWR “sweet spot” logic has           Methodological
+                                                                       Med    indicators, not injury probability. Link: https://
+  methodological critiques              critique 32
+                                                                              www.lukebornn.com/papers/impellizzeri_jospt_2020b.pdf
+
+
+Mathematical Definitions and Candidate Model Families
+C) Mathematical Definitions
+
+
+Indexing and day boundaries
+
+Let day index be d ∈ Z with daily recomputation once per day (e.g., after morning sync). Define a consistent
+“physiology day” boundary to avoid splitting a night’s sleep across calendar days. A practical default is 15:00
+local time to 15:00 next day (common in wearable pipelines); this is a heuristic but operationally robust.
+
+
+Raw inputs (as provided)
+
+     • Sleep:
+     • TSTd = sleepAsleepHours (hours)
+     • T IBd = sleepInBedHours (hours)
+     • Deepd , REMd , Cored , Awaked = stage hours (hours)
+     • Autonomic:
+     • HRVd = hrvMs (milliseconds), HealthKit SDNN                21
+
+     • RHRd = restingHrBpm (beats/min)             33
+
+     • RRd = respiratoryRateBpm (breaths/min)                34
+
+     • Activity:
+     • Workouts s ∈ Sd : durd,s (minutes), HRavg,d,s , time series HRd,s (t) if available
+     • Study:
+     • Study sessions i ∈ Id : durd,i (minutes), start time tstart,d,i
+
+
+
+
+                                                         5
+      • Exam/deadline context: days-to-next-exam, deadline urgency signals
+
+Derived features
+
+Sleep efficiency
+
+                                                        TSTd
+                                       SEd =                                  ∈ [0, 1]
+                                                    max(T IBd , 0.1)
+
+Definition aligns with clinical usage.       35
+
+
+
+
+Sleep Regularity Index (SRI)
+
+Compute a binary sleep–wake state series S(t) ∈ {0, 1} on a fixed grid (e.g., 30-second or 1-minute
+epochs) using timestamped HealthKit sleep samples (Awake/Core/Deep/REM). HealthKit provides stage
+categories with timestamps. 22
+
+
+Let t range over all grid points excluding the first 24 hours. Then:
+
+                                                     1
+                                   SRI = 100 ⋅         ∑ 1{S(t) = S(t − 24h)}
+                                                     N t
+
+SRI is explicitly defined this way in Phillips et al.   14
+
+
+
+
+Robust baselines and robust z-scores (180d+)
+
+For each scalar variable xd , define a valid-day set over a lookback window W days (preferably W ≥ 180
+when available):
+
+
+      • Robust center:
+
+                                      (W )
+                                    μx,d = median{xd−k : k ∈ [1, W ], xd−k valid}
+
+      • Robust scale via MAD:
+
+                                             (W )                                        (W )
+                                         σx,d = 1.4826 ⋅ median{∣xd−k − μx,d ∣}
+
+        with σ ← max(σ, ϵ), ϵ ≈ 10−6 .
+
+
+      • Robust z-score (clipped):
+
+                                                                    (W )
+                                         zx,d = clip (                     , −zmax , zmax )
+                                                         xd − μx,d
+                                                                 (W )
+                                                             σx,d
+
+        Use zmax = 4 by default.
+
+
+
+
+                                                             6
+HRV transform and normalization (platform-aware)
+
+HealthKit exposes HRV as SDNN. 21
+To stabilize variance and reduce scale sensitivity: - Normalize by mean inter-beat interval derived from
+resting HR (dimensionless):
+
+                                       60000                             HRVd
+                           IBId =                 ms,        nHRVd =
+                                    max(RHRd , 1)                        IBId
+
+- Log-transform:
+
+                                   LHRVd = ln(max(nHRVd , 10−6 ))
+
+HRV should be interpreted longitudinally and in context; weekly aggregation is often more stable than
+single-day readings. 36
+
+
+Scales for product display
+
+     • Sleep score: 0–100
+     • Recovery score: 0–100
+     • Physical strain score: 0–21 (bounded, diminishing returns; “WHOOP-like” in shape only)
+     • Mental recovery score: 0–100
+     • Mental strain score: 0–21
+     • Confidence: 0–1 per metric (and optionally 0–100 UI)
+
+
+
+D) Candidate Model Families
+
+
+Family one: TRIMP-like daily load + multi-horizon EWMAs
+
+Definition: compute daily load Ld (TRIMP for physical, “cognitive TRIMP” for mental), then compute: - acute
+Ad = EW M A7d (L) - chronic Cd = EW M A28d (L) - long-term baseline Bd = EW M A180d (L) (or
+robust median/MAD)
+
+
+Pros: simple, stable, interpretable, deterministic; easy to implement daily; robust to missing days via EWMA
+decay. 37
+Cons: EWMAs approximate physiology; without richer modeling, it does not explicitly estimate fitness/
+fatigue separately.
+Failure modes: sparse HR data can undercount physical load; sparse study logging can undercount mental
+load unless background pressure is modeled.
+
+
+Family two: Fitness–fatigue impulse-response model (Banister/Morton style)
+
+Definition: maintain two latent states from training impulse: fitness and fatigue, each with exponential
+decay, and combine them to predict readiness/performance. 23
+
+
+Pros: strong conceptual grounding; explicitly separates acute fatigue from slower adaptation.
+Cons: parameter identification can be unstable; requires careful priors/guardrails and/or observed
+
+
+
+
+                                                     7
+performance markers; pitfalls and sensitivity to initialization are documented. 24
+Failure modes: overfitting and non-identifiable parameters without additional outcome signals (e.g., actual
+performance tests).
+
+
+Family three: Latent recovery state-space model (Kalman / Bayesian DLM)
+
+Definition: treat “recovery” as a latent state updated by noisy observed indicators (sleep features, HRV,
+RHR, RR) with physically plausible dynamics.
+
+
+Pros: naturally handles missing/noisy data and yields principled uncertainty (confidence intervals).
+Cons: higher implementation complexity; requires careful tuning/priors; harder to explain to users
+compared to deterministic weighted sums.
+
+
+Family four: Cognitive load accumulation with time-of-day and deadline pressure
+
+Definition: daily mental load from study sessions + “pressure background”; mental recovery depends on
+sleep and autonomic markers; circadian misalignment modifies both. This directly matches evidence that
+circadian disruption impairs cognition and that exam stress affects sleep and autonomic activity. 38
+
+
+Pros: implementable from available data; interpretable and directly connected to user behavior; supports
+explicit target-range rule for “under-studying + high recovery.”
+Cons: intensity estimation is partially heuristic without subjective ratings; optional self-report (e.g., NASA-
+TLX) can improve calibration. 30
+
+
+Recommendation: Implement Family one + Family four as the production default (deterministic and
+stable), and optionally add a Family three layer later for uncertainty modeling once historical datasets are
+large and validated.
+
+
+Final Recommended Formula Set
+E) Final Recommended Formula Set
+
+
+Below, every output is computable daily from explicit equations. Items labeled (Heuristic) are explicitly
+heuristic; everything else is grounded in cited constructs.
+
+
+Common helper functions
+                         1
+     • Sigmoid: σ(x) = 1+e −x
+
+     • Clip: clip(x, a, b)
+     • EWMA with half-life h days:
+     • decay λ = ln(2)/h
+     • update:
+
+                              EW M Ah (x)d = e−λ EW M Ah (x)d−1 + (1 − e−λ )xd
+
+       This is deterministic and handles gaps by repeated decays if days are missing.
+
+
+
+
+                                                      8
+Sleep score Sleepd ∈ [0, 100]
+
+Step one: estimate personal sleep need N eedd (hours)
+
+Cold start: N eedd = 8.0 hours, clipped to [7.0, 9.5]. Grounded by adult sleep recommendations.      9
+
+
+
+
+Personalization (after ≥30 valid days): 1. Compute “good recovery days” set G = days where provisional
+recovery (or autonomic composite) is in top 20% and strain is not extreme (details in Calibration section). 2.
+Set:
+
+
+                              N eedd = median{TSTk : k ∈ G ∩ [d − 180, d − 1]}
+
+then clip to [7.0, 9.5].
+
+
+This is a pragmatic estimator of “sleep amount associated with better next-day physiology” (not claiming
+causality).
+
+
+Step two: compute components
+
+1) Duration component (asymmetric Gaussian; oversleep less penalized):
+Let Δ = TSTd − N eedd . Set σ − = 1.0h, σ + = 1.5h. (Heuristic choice)
+
+
+
+                                                   σΔ = { +
+                                                         σ−      Δ<0
+                                                         σ       Δ≥0
+
+                                                                      Δ2
+                                         Sdur,d = 100 ⋅ exp (−          2 )
+                                                                      2σΔ
+
+2) Continuity component from sleep efficiency:
+
+                                                               SEd − 0.70
+                                    Seff ,d = 100 ⋅ clip (                 , 0, 1)
+                                                               0.95 − 0.70
+
+Sleep efficiency is clinically meaningful.    35
+
+
+
+
+3) Regularity component from SRI:
+
+
+                                                     Sreg,d = SRId
+
+SRI definition and usage are evidence-backed.         39
+
+
+
+
+4) Timing stability component (penalize shifts in sleep midpoint):
+Let M idd be the midpoint clock time (hours since local midnight) of the main sleep episode. Define baseline
+                (28)
+midpoint M idd         as 28d median. Then:
+
+                                                           (28)                      (28)
+                           ΔM idd = min(∣M idd − M idd ∣, 24 − ∣M idd − M idd ∣)
+
+
+
+
+                                                           9
+                                                               (ΔM idd )2
+                                     Stim,d = 100 ⋅ exp (−                 )
+                                                                2 ⋅ (1.5)2
+
+Circadian misalignment affects cognition; this motivates including timing stability.     40
+
+(Exact 1.5h scale is Heuristic, used as a stable default.)
+
+
+5) Stage composition component (very low weight due to staging uncertainty):
+                   Deep +REM                    (180)
+Let StageIdxd = max(TST
+                    d
+                        ,0.1) . Let StageIdxd
+                            d
+                                                        be the 180d median. Then:
+                           d
+
+
+                                                                               (180) 2
+                        Sstage,d = 100 ⋅ exp (−                                          )
+                                                   (StageIdxd − StageIdxd           )
+                                                            2 ⋅ (0.05)2
+
+Stage estimation from wearables is imperfect; use conservative weighting and confidence penalties.        5
+
+
+
+
+Step three: weighted sum
+
+Weights reflect: strong role of duration and regularity, meaningful role for efficiency, smaller role for timing,
+minimal role for stages (measurement uncertainty).
+
+
+                Sleepd = 0.35Sdur,d + 0.25Seff ,d + 0.25Sreg,d + 0.10Stim,d + 0.05Sstage,d
+
+Monotonicity expectations: - Increasing TSTd toward N eedd increases Sleepd . - Increasing SEd
+increases Sleepd . - Increasing SRI increases Sleepd . - Larger midpoint disruptions lower Sleepd .
+
+
+Worked example (Sleep)
+
+Assume: - N eedd = 8.0h - TSTd = 7.0h ⇒ Δ = −1.0 ⇒ Sdur = 100e−0.5 ≈ 60.7 - T IBd = 7.9h ⇒
+SE = 0.886 ⇒ Seff = 0.886−0.70 0.25  ⋅ 100 ≈ 74.4 - SRI = 78 ⇒ Sreg = 78 - ΔM id = 1.0h ⇒ Stim =
+    −12 /(2⋅1.52 )
+100e               ≈ 80.1 - Sstage = 90 (close to baseline)
+
+Then:
+
+
+             Sleepd ≈ 0.35(60.7) + 0.25(74.4) + 0.25(78) + 0.10(80.1) + 0.05(90) ≈ 71.6
+
+
+
+Recovery score Recd ∈ [0, 100]
+
+Recovery is a bounded transform of an autonomic + sleep composite minus load-related fatigue penalties,
+with all physiology interpreted relative to robust baselines. HRV is used as an autonomic stress marker
+(meta-analytic support), and longitudinal interpretation is emphasized. 41
+
+
+Step one: compute robust z-scores (180d window preferred)
+
+Use zLHRV ,d , zRHR,d , zRR,d , and zSleep,d computed as described in section C.
+
+
+
+
+                                                         10
+Step two: define acute load penalties from physical and mental domains
+
+Let: - P Lrawd = physical strain raw units (defined below) - M Lrawd = mental strain raw units (defined
+below)
+
+
+Compute acute EWMAs:
+
+
+                   AP Ld = EW M A7d (P Lraw)d ,          AM Ld = EW M A7d (M Lraw)d
+
+Define robust z-scores zAP L,d , zAM L,d relative to 180d baselines.
+
+
+Step three: recovery logit and score
+
+
+         rd = 0.90 zLHRV ,d − 0.70 zRHR,d − 0.50 zRR,d + 0.60 zSleep,d − 0.50 zAP L,d − 0.40 zAM L,d
+
+                                              Recd = 100 ⋅ σ(rd )
+
+Monotonicity expectations: - Higher-than-baseline HRV increases Recd .     41
+
+- Higher-than-baseline RHR and RR decrease Recd (stress/illness proxy logic).
+- Higher sleep score increases Recd .
+- Higher acute loads decrease Recd .
+
+
+Worked example (Recovery)
+
+Assume 180d baselines yield: - zLHRV = +1.0, zRHR = −0.5 (meaning RHR below baseline), zRR = +0.2,
+- zSleep = +0.3, zAP L = +0.8, zAM L = −0.2
+
+
+Then:
+
+
+                 r = 0.9(1.0) − 0.7(−0.5) − 0.5(0.2) + 0.6(0.3) − 0.5(0.8) − 0.4(−0.2)
+
+                             r = 0.9 + 0.35 − 0.1 + 0.18 − 0.4 + 0.08 = 1.01
+
+                                          Rec = 100σ(1.01) ≈ 73.3
+
+
+
+Physical strain (daily cumulative)
+
+Step one: raw physiological load via TRIMP (evidence-backed)
+
+For each session s with duration durd,s minutes and HR data:
+
+
+Compute heart rate reserve fraction:
+
+
+                                                HRavg,d,s − HRrest(base)
+                           HRRd,s = clip (                               , 0, 1)
+                                               HRmax(est) − HRrest(base)
+
+
+
+
+                                                       11
+- HRrest(base) : user baseline resting HR (180d median). - HRmax(est) : estimated max HR as the 180d 99th
+percentile of observed HR maxima or a safe default until enough data.
+
+
+Banister-style TRIMP (as used in peer-reviewed sources): - men:
+
+
+                         TRIM Pd,s = durd,s ⋅ HRRd,s ⋅ 0.64 ⋅ exp(1.92 ⋅ HRRd,s )
+
+- women:
+
+                         TRIM Pd,s = durd,s ⋅ HRRd,s ⋅ 0.86 ⋅ exp(1.67 ⋅ HRRd,s )
+
+This formula is explicitly stated in peer-reviewed sources.   1
+
+
+
+
+If sex is unknown, use a unisex blend (Heuristic):
+
+
+                         TRIM Pd,s = durd,s ⋅ HRRd,s ⋅ 0.75 ⋅ exp(1.80 ⋅ HRRd,s )
+
+Daily raw physical load:
+
+
+                                P Lrawd = ∑ TRIM Pd,s + P Lnonworkout,d
+                                             s∈Sd
+
+where P Lnonworkout,d is a conservative estimate from steps/active energy when no workout HR is available
+(Heuristic, see Missing Data section).
+
+
+Step two: map raw load to 0–21 strain score
+
+Use a bounded log mapping with a personalized cap to get diminishing returns:
+
+         phys
+Let Capd        = max(P 95180 (P Lraw), 150), where P 95180 is the 95th percentile of valid P Lraw values
+over 180d (or all available history up to 180d).
+
+
+
+                            P hysStraind = 21 ⋅ clip (                        , 0, 1)
+                                                           ln(1 + P Lrawd )
+                                                           ln(1 + Capphys
+                                                                     d    )
+
+Worked example (Physical strain)
+
+Assume: - dur = 60 min, HRavg = 150, HRrest = 60, HRmax = 190
+
+                                               150 − 60    90
+                                     HRR =              =     ≈ 0.692
+                                               190 − 60   130
+Men’s TRIMP:
+
+                              TRIMP ≈ 60 ⋅ 0.692 ⋅ 0.64 ⋅ e1.92⋅0.692 ≈ 100.4
+
+(Computed value aligns with the published form; the exact number depends on inputs.)    42
+
+
+
+
+If Capphys = 300, then:
+
+
+
+                                                      12
+                                        ln(1 + 100.4)        ln(101.4)        4.62
+                 P hysStrain = 21 ⋅                   ≈ 21 ⋅           ≈ 21 ⋅      ≈ 17.0
+                                         ln(1 + 300)          ln(301)         5.71
+
+
+
+Mental recovery MRecd ∈ [0, 100]
+
+Mental recovery is designed to be separable from general recovery: it upweights sleep and mental-load
+history and includes pressure context.
+
+
+Step one: define a daily pressure scalar Pd ∈ [0, 1]
+
+Let Pd be computed from exam schedule and deadline urgency.
+
+
+A practical mapping (Heuristic) that captures “pressure ramps up as deadlines approach”: - For each
+upcoming exam/deadline j , with days remaining Δd,j ≥ 0 and importance Impj ∈ [0, 1]:
+
+
+                                                             D0 − Δd,j
+                                        Pd,j = Impj ⋅ σ (              )
+                                                                sD
+
+Use defaults D0 = 14 days, sD = 3 days. Then:
+
+                                            Pd = 1 − ∏(1 − Pd,j )
+                                                         j
+
+This makes multiple deadlines combine sub-additively.
+
+
+This is consistent with evidence that exam periods are associated with worse sleep and stress, but the exact
+mapping is heuristic. 43
+
+
+Step two: mental recovery logit and score
+
+Let zSleep,d , zLHRV ,d , zRHR,d , zRR,d as before, and let zAM L,d be acute mental load z-score.
+
+
+         md = 0.90 zSleep,d + 0.60 zLHRV ,d − 0.50 zRHR,d − 0.40 zRR,d − 0.70 zAM L,d − 0.40 Pd
+
+                                            MRecd = 100 ⋅ σ(md )
+
+Monotonicity expectations: - Better sleep increases mental recovery. 44
+- Higher pressure decreases mental recovery (as a proxy for stress load). 45
+- Higher acute mental load decreases mental recovery.
+
+
+
+
+Mental strain (daily cumulative)
+
+Step one: define per-session cognitive impulse
+
+For study session i ∈ Id with duration durd,i minutes:
+
+
+
+
+                                                        13
+                       Id,i = (1 + 0.50 Pd ) ⋅ (1 + 0.30 Lated,i ) ⋅ (1 + 0.20 Switchd )
+
+All multiplier coefficients are Heuristic, chosen for interpretability and boundedness.
+
+
+     • Late factor Lated,i ∈ [0, 1]: 1 if the session overlaps the user’s usual sleep window, else 0, with
+       smoothing:
+     • Estimate usual bedtime Bed(28) from sleep samples (28d median).
+     • Let hstart be session start time in hours from local midnight.
+
+     • Define:
+
+
+                                                       hstart − (Bed(28) − 2)
+                                      Lated,i = σ (                           )
+                                                                 0.5
+
+       This is motivated by evidence that circadian misalignment worsens cognition.        26
+
+
+
+
+     • Switching factor Switchd ∈ [0, 1]: proxy for task switching and fragmentation:
+
+
+                                                               ∣Id ∣ − 1
+                                         Switchd = clip (                , 0, 1)
+                                                                   5
+
+       (Heuristic.)
+
+
+Per-session impulse:
+
+
+                                          M Impd,i = durd,i ⋅ Id,i
+
+Step two: add “background pressure load”
+
+To reflect that looming deadlines can impose cognitive stress even on days with little logged study
+(Heuristic but grounded in exam-stress literature):
+
+
+                                             MBackd = 30 ⋅ Pd
+
+Interpreted as “up to 30 equivalent minutes” of mental burden at extreme pressure.
+
+
+Daily raw mental load:
+
+
+                                   M Lrawd = ∑ M Impd,i + MBackd
+                                                i∈Id
+
+
+Step three: map to 0–21 mental strain score
+
+Let Capment
+       d    = max(P 95180 (M Lraw), 120).
+
+                                                            ln(1 + M Lrawd )
+                           M entStraind = 21 ⋅ clip (                         , 0, 1)
+                                                             ln(1 + Capment
+                                                                       d    )
+
+
+
+
+                                                       14
+Worked example (Mental strain)
+
+Assume: - Pressure Pd = 0.6 - Two sessions: 90 min at 20:00 (not late), 60 min at 23:30 (late) - Switchd =
+(2 − 1)/5 = 0.2
+
+Session 1: - Late = 0
+
+
+                    I = (1 + 0.5 ⋅ 0.6)(1 + 0)(1 + 0.2 ⋅ 0.2) = (1.3)(1)(1.04) = 1.352
+
+                                        M Imp1 = 90 ⋅ 1.352 = 121.7
+
+Session 2: - Late ≈ 1
+
+
+                             I = (1.3)(1 + 0.3)(1.04) = (1.3)(1.3)(1.04) = 1.757
+
+                                        M Imp2 = 60 ⋅ 1.757 = 105.4
+
+Background:
+
+
+                                          MBack = 30 ⋅ 0.6 = 18
+
+Total:
+
+                                   M Lraw = 121.7 + 105.4 + 18 = 245.1
+
+If Capment = 300:
+
+                                                   ln(246.1)        5.51
+                              M entStrain ≈ 21 ⋅             ≈ 21 ⋅      = 20.3
+                                                    ln(301)         5.71
+
+This indicates a very high mental-load day driven by long duration + late study + pressure.
+
+
+
+                                               high
+Physical target strain range [Pdlow , Pd              ]
+Targets are ranges in the same 0–21 scale, derived from: - Recovery (today’s state) - Chronic capacity (28d) -
+Overreach signals (acute-to-chronic)
+
+
+Define: - AP Ld = EW M A7d (P Lraw) - CP Ld = EW M A28d (P Lraw) - Acute-chronic ratio (with ϵ =
+1 to avoid division by 0):
+
+                                                          AP Ld + ϵ
+                                             Rdphys =
+                                                          CP Ld + ϵ
+We use this only as a stability indicator, not an injury predictor.   46
+
+
+
+
+Define a recovery factor:
+
+
+
+
+                                                          15
+                                                                      Recd
+                                             Fdrec = 0.7 + 0.9 ⋅
+                                                                      100
+so Fdrec ∈ [0.7, 1.6] and is strictly increasing in Recd .
+
+
+Define an overreach penalty:
+
+
+                                  Fdover = exp(−0.35 ⋅ max(Rdphys − 1.2, 0))
+
+(Heuristic; monotone decreasing in overreach.)
+
+
+Define a raw target center:
+
+                                            phys
+                                      Centerraw,d = CP Ld ⋅ Fdrec ⋅ Fdover
+
+Define a raw target width:
+
+
+                                           Widthphys
+                                                raw,d = 0.35 ⋅ CP Ld
+
+(Heuristic; later widened if confidence is low.)
+
+
+Convert raw center and endpoints to 0–21 using the same strain mapping:
+
+                                  phys
+          Pdcenter = fphys (Centerraw,d ),                               phys
+                                                Pdlow = fphys (max(Centerraw,d − 12 Widthphys
+                                                                                         raw,d , 0))
+
+                                 Pdhigh = fphys (Centerraw,d
+                                                       phys
+                                                             + 12 Widthphys
+                                                                       raw,d )
+
+where
+
+
+                                fphys (x) = 21 ⋅ clip (                          , 0, 1)
+                                                                   ln(1 + x)
+                                                              ln(1 + Capphys
+                                                                        d    )
+
+                                                              phys
+Guarantee: since Fdrec increases with Recd , Centerraw,d increases with Recd (holding other terms fixed),
+satisfying requirement (1).
+
+
+
+                                                   high
+Mental target strain range [Mdlow , Md                    ]
+Define: - AM Ld = EW M A7d (M Lraw) - CM Ld = EW M A28d (M Lraw) - Ratio:
+
+                                                              AM Ld + ϵ
+                                              Rdment =
+                                                              CM Ld + ϵ
+
+Base recovery factor:
+
+                                                                     MRecd
+                                           Grec
+                                            d = 0.7 + 0.9 ⋅
+                                                                      100
+
+
+
+                                                              16
+Overreach penalty:
+
+
+                                Gover
+                                 d    = exp(−0.35 ⋅ max(Rdment − 1.2, 0))
+
+Under-studying boost (requirement-critical)
+
+Let the recent 2-day mental strain average in score space be:
+
+                                               M entStraind−1 + M entStraind−2
+                          M entStrain2d =
+                                                              2
+Let Qment
+     25   be the 25th percentile of MentStrain over the past 180 valid days (or available history). Define:
+
+                                                     Qment − M entStrain2d
+                               U nderloadd = σ (      25
+                                                                           )
+                                                              1.0
+
+and a “high mental recovery gate”:
+
+                                                         MRecd − 70
+                                         Gated = σ (                )
+                                                            10
+
+Then define a multiplicative boost:
+
+                                  Gunder
+                                   d     = 1 + 0.25 ⋅ U nderloadd ⋅ Gated
+
+This explicitly enforces: if mental recovery is good (large MRecd ) and study/mental strain has been low for
+~2 days (small M entStrain2d ), targets increase.
+
+
+Final center and range
+
+                                      ment
+                                Centerraw,d = CM Ld ⋅ Grec  over
+                                                       d ⋅ Gd    ⋅ Gunder
+                                                                    d
+
+Width:
+
+                                         Widthment
+                                              raw,d = 0.40 ⋅ CM Ld
+
+Then map via:
+
+                                                            ln(1 + x)
+                               fment (x) = 21 ⋅ clip (                    , 0, 1)
+                                                         ln(1 + Capment
+                                                                    d   )
+
+and:
+
+ Mdlow = fment (max(Centerraw,d
+                          ment
+                                − 12 Widthment
+                                          raw,d , 0)),         Mdhigh = fment (Centerraw,d
+                                                                                     ment
+                                                                                           + 12 Widthment
+                                                                                                     raw,d )
+
+
+
+Multi-Horizon Trend Integration and Personalization
+F) Multi-Horizon Trend Integration
+
+
+This system explicitly uses three horizons, each with a distinct role:
+
+
+
+
+                                                       17
+Seven-day horizon
+
+Role: acute fatigue and recent perturbation detection. - EW M A7d for physical (APL) and mental (AML)
+load - also compute 7d variability of HRV (optional): weekly mean and CV are commonly used in athlete
+monitoring discussions. 20
+
+
+Operationally: - If AP Ld or AM Ld is high relative to baseline, Recovery and Mental Recovery are penalized
+                         phys
+via zAP L , zAM L . - If Rd     or Rdment rises above ~1.2, targets are automatically reduced (overreach penalty).
+
+
+Twenty-eight-day horizon
+
+Role: “current capacity” estimate and near-term adaptation. - EW M A28d for chronic physical load CP Ld
+and chronic mental load CM Ld . - Targets are primarily anchored to these chronic values and then
+modulated by same-day recovery.
+
+
+One-hundred-eighty-day (or more) horizon
+
+Role: personalization baseline, drift control, seasonality, calibration anchors. - Robust medians/MADs for
+physiology (HRV, RHR, RR, sleep duration, sleep midpoint, stage index), and quantiles for strain and mental
+load. - Helps distinguish “today is abnormal for you” from “you have adapted over months.” - Controls cap
+parameters Capphys , Capment and underload thresholds.
+
+
+When long-term baseline dominates vs acute dominates
+
+      • Acute dominates when (a) z-scores are extreme (e.g., HRV drops far below baseline, RHR/RR jump),
+        or (b) acute-to-chronic ratio indicates rapid ramp. This corresponds to day-level homeostatic
+        perturbations. 47
+      • Long-term dominates when acute signals are missing/noisy or low-confidence, and the user has
+        stable long-term patterns. In that case, targets lean on CP Ld , CM Ld and long-term baselines, with
+        wider ranges.
+
+Adaptation logic
+
+Adaptation is treated as gradual changes in chronic loads and baselines: - If CP Ld steadily increases over
+weeks with stable recovery, future target ranges rise because “capacity” has grown. - If recovery is
+chronically low while CP Ld stays high, ranges narrow and shift downward until recovery improves.
+
+
+This avoids overclaiming causal “fitness gain” without performance tests, and avoids the known
+interpretational pitfalls of fully fitted fitness–fatigue models. 24
+
+
+
+G) Personalization + Calibration
+
+
+
+
+                                                          18
+Cold-start defaults
+
+For users with <30 valid days: - Use population priors: - N eed = 8.0h (clipped to [7, 9.5])     9   - Capphys =
+200, Cap   ment
+                  = 180 (heuristics) - Physiological baselines use the median of whatever history exists
+(minimum 7 days), but confidence is reduced.
+
+
+Per-user calibration over time
+
+After 30–60 valid days: 1. Sleep need estimation (already defined): median TST on best physiological days.
+2. Coefficient tuning (optional, recommended): - Fit only a small set of scaling coefficients via robust
+regression using the user’s own history: - Predict next-day zLHRV or next-day Rec from sleep components
+and prior loads. - Constrain coefficients to preserve monotonicity (e.g., sleep duration weight non-negative,
+RHR weight non-positive).
+
+
+This yields personalization without fully free latent-state models.
+
+
+Anti-instability guardrails
+
+     • Cap daily changes in displayed scores:
+     • ∣Recd − Recd−1 ∣ ≤ 25 unless clear outlier event (illness-like spike in RR/RHR), in which case allow
+       35.
+     • Cap target range movement:
+     • ∣Pdcenter − Pd−1
+                    center
+                           ∣ ≤ 3 strain units.
+     • Require a minimum of 14 valid days before enabling underload-boost logic for mental targets (to
+       avoid misleading pushes early).
+
+
+Missing Data and Data Quality
+H) Missing Data + Data Quality
+
+
+Fallback hierarchy by metric
+
+Sleep score fallbacks
+
+     • If TSTd missing but T IBd present: approximate TSTd = 0.85 T IBd (Heuristic) and reduce
+       confidence sharply.
+     • If stages (Deep/REM/Core) missing: skip Sstage (set to neutral 50) and reduce sleep confidence; this is
+       justified because consumer stage accuracy varies and should not dominate. 48
+     • If timestamps missing (cannot compute SRI): approximate regularity with 7d SD of sleep midpoint
+       and bedtime (if available) or with variability of TST. Use Fischer-style regularity metrics as inspiration
+       (but label as heuristic approximation if not true SRI). 49
+
+Recovery score fallbacks
+
+If HRV missing (common): - Use:
+
+
+                  rd′ = −0.70zRHR,d − 0.50zRR,d + 0.60zSleep,d − 0.50zAP L,d − 0.40zAM L,d
+
+
+
+                                                       19
+and then Recd = 100σ(rd′ ), with reduced confidence.
+
+
+If RR missing: - Drop the RR term only, recompute, reduce confidence.
+
+
+Physical strain fallbacks
+
+     • If workout time series HR missing but average HR is present: compute session TRIMP from average
+       HR (still valid for TRIMP form). 1
+     • If average HR missing but active energy and duration exist: estimate intensity from energy rate. This
+       is Heuristic and should be bounded to low/moderate zones.
+     • If no workouts logged:
+     • Set P Lrawd = ksteps stepsd + kae activeEnergyKJd with small constants and low
+       confidence, to capture low-intensity daily activity.
+
+Mental strain fallbacks
+
+     • If the user does not log study sessions reliably:
+     • Set session sum to 0 but keep background MBackd from pressure.
+     • Encourage optional “study timer” integration to reduce missingness.
+     • If exam schedule/urgency is absent:
+     • Set Pd = 0 (no pressure) and compute mental strain only from study time.
+
+Outlier handling and sanity checks
+
+Apply pre-scoring validation: - Future-dated samples: discard and flag data quality issue. - Impossible
+physiological values: - RHRd < 25 or > 140: mark invalid. - RRd < 6 or > 40: mark invalid. - HRVd ≤ 0
+or > 500 ms for SDNN: mark suspicious (not impossible but high); winsorize. - Sleep sanity: - TSTd > 16h:
+mark invalid unless multiple sleep episodes are confirmed via timestamps.
+
+
+Confidence scoring Conf ∈ [0, 1]
+
+Emit per-metric confidence:
+
+
+                              Confdmetric = Confdavail ⋅ Confdnoise ⋅ Confdhist
+
+     • Availability:
+     • Recovery: 0.4 HRV + 0.3 RHR + 0.2 RR + 0.1 Sleep presence (normalized).
+     • Noise:
+     • Penalize if z-scores are extreme but data source count is low (suggesting sensor artifact).
+     • History:
+     • Conf hist = clip(#validDays/180, 0.2, 1.0)
+
+Range widening with low confidence: If confidence is low, widen target ranges:
+
+
+                            Widthphys         phys                     phys
+                                 raw,d ← Widthraw,d ⋅ (1 + 0.5(1 − Confd    ))
+
+and similarly for mental.
+
+
+
+
+                                                       20
+Validation Plan
+I) Validation Plan
+
+
+Offline backtesting protocol
+
+Using de-identified historical users with ≥180 days:
+
+
+    1. Recompute all metrics day-by-day as if in production (no peeking into future).
+    2. Evaluate internal consistency and predictive validity against proxy outcomes:
+    3. next-day autonomic markers (LHRV , RHR, RR) residuals
+    4. next-day subjective fatigue if available (optional future)
+    5. adherence metrics: whether target-range guidance increases consistent load without increasing low-
+       recovery days
+
+Scenario tests (must-pass)
+
+     • Recovery monotonicity: hold sleep and autonomic inputs constant; increase APL and AML →
+       Recovery must decrease.
+     • Target rule enforcement:
+     • Set MRecd high (e.g., 80–90), set last 2 days mental strain very low → mental target center and high
+       bound must increase vs identical case without underload.
+     • Sleep staging missingness: remove stage data; SleepScore should remain stable within a bounded
+       deviation and confidence should drop appropriately. 48
+     • Exam pressure: during known exam windows, pressure term should increase mental load and
+       reduce mental recovery even at constant sleep, within bounded limits consistent with known exam-
+       stress effects. 50
+
+Acceptance thresholds (practical)
+
+     • Median absolute day-to-day jitter (when inputs stable):
+     • Sleep: <8 points
+     • Recovery: <10 points
+     • Strain: <1.5 units
+     • Correlation targets (proxy validation):
+     • SleepScore vs next-day Recovery: positive correlation at user level (not necessarily large, but
+       consistent).
+     • Acute load vs next-day Recovery: negative correlation.
+
+Drift monitoring in production
+
+     • Track distribution drift of key baselines (RHR, RR, HRV) and strain caps.
+     • Detect device-level shifts (OS updates, sensor changes) by abrupt baseline jumps; confidence should
+       drop until recalibrated.
+
+
+
+
+                                                       21
+Implementation-Ready Artifacts
+J) Implementation-Ready Artifacts
+
+
+Daily computation pipeline pseudocode (deterministic)
+
+
+  INPUTS (for day d):
+    DailyAggregates[d]: sleep*, hrvMs, restingHrBpm, respiratoryRateBpm, steps,
+  energy...
+    Workouts[d]: list of sessions with duration, hrAvg/hrMin/hrMax, HR time series
+  optional
+    StudySessions[d]: list of sessions with start time, duration
+    ExamSchedule: upcoming exams/deadlines with dates + importance
+    HistoricalStore: prior computed metrics and raw features (>=180d if available)
+
+  PIPELINE:
+  1) Validate and clean raw inputs
+     - drop future-dated samples
+     - mark impossible values invalid
+     - winsorize extreme HRV/RHR/RR using robust bounds from 180d history
+
+  2) Derive sleep episode timestamps (if available from HealthKit samples)
+     - compute main sleep start/end/midpoint
+     - build sleep/wake binary grid for last N days (N>=7, ideally 28+)
+     - compute SRI_d
+
+  3) Compute robust baselines (prefer 180d)
+     - for each key scalar x in {LHRV, RHR, RR, SleepScore components, PLraw,
+  MLraw}:
+         mu_x = median(last W valid x)
+         sigma_x = 1.4826 * MAD(last W valid x)
+         store mu_x, sigma_x
+
+  4) Compute SleepScore_d
+     - Need_d: cold-start 8h or median TST on best days (if enough history)
+     - compute S_dur, S_eff, S_reg, S_tim, S_stage
+     - Sleep_d = weighted sum
+     - Conf_sleep_d based on availability of TST/TIB/timestamps/stages
+
+  5) Compute physical raw load PLraw_d
+     - for each workout s:
+         HRR_s = (HRavg_s - HRrest_base)/(HRmax_est - HRrest_base), clipped
+         TRIMP_s = duration_s * HRR_s * A * exp(B*HRR_s)
+     - add non-workout activity estimate if needed (low confidence)
+     - PhysStrainScore_d = 21 * ln(1+PLraw_d) / ln(1+CapPhys_d)
+
+
+
+
+                                         22
+6) Compute pressure scalar P_d from ExamSchedule (heuristic)
+   - combine upcoming events via logistic ramp and sub-additive union formula
+
+7) Compute mental raw load MLraw_d
+   - for each study session i:
+       Late_i = logistic((startHour - (bedtime28-2))/0.5)
+       Switch_d = clip((numSessions-1)/5,0,1)
+       I_i = (1+0.5*P_d)*(1+0.3*Late_i)*(1+0.2*Switch_d)
+       MImp_i = duration_i * I_i
+   - MLraw_d = sum(MImp_i) + 30*P_d
+   - MentStrainScore_d = 21 * ln(1+MLraw_d) / ln(1+CapMent_d)
+
+8) Update multi-horizon EWMAs
+   - APL_d = EWMA7(PLraw), CPL_d = EWMA28(PLraw)
+   - AML_d = EWMA7(MLraw), CML_d = EWMA28(MLraw)
+
+9) Compute z-scores for physiology and loads
+   - z_LHRV, z_RHR, z_RR, z_Sleep, z_APL, z_AML
+
+10) Compute RecoveryScore_d and MentalRecoveryScore_d
+    - Rec_d = 100 * sigmoid(0.90 z_LHRV -0.70 z_RHR -0.50 z_RR +0.60 z_Sleep
+-0.50 z_APL -0.40 z_AML)
+    - MRec_d = 100 * sigmoid(0.90 z_Sleep +0.60 z_LHRV -0.50 z_RHR -0.40 z_RR
+-0.70 z_AML -0.40 P_d)
+
+11) Compute target ranges
+    - physical:
+        R_phys = (APL_d+1)/(CPL_d+1)
+        F_rec = 0.7 + 0.9*(Rec_d/100)
+        F_over = exp(-0.35*max(R_phys-1.2,0))
+        CenterPhysRaw = CPL_d * F_rec * F_over
+        WidthPhysRaw = 0.35*CPL_d * (1+0.5*(1-Conf_phys))
+        LowPhys = mapRawTo21(max(CenterPhysRaw-0.5*WidthPhysRaw,0), CapPhys)
+        HighPhys = mapRawTo21(CenterPhysRaw+0.5*WidthPhysRaw, CapPhys)
+
+    - mental:
+        Underload = sigmoid((Q25_ment - mean(MentStrain[d-1],MentStrain[d-2]))/
+1.0)
+        Gate = sigmoid((MRec_d-70)/10)
+        G_under = 1 + 0.25*Underload*Gate
+        R_ment = (AML_d+1)/(CML_d+1)
+        CenterMentRaw = CML_d*(0.7+0.9*MRec_d/
+100)*exp(-0.35*max(R_ment-1.2,0))*G_under
+        WidthMentRaw = 0.40*CML_d * (1+0.5*(1-Conf_ment))
+        LowMent, HighMent computed via mapRawTo21(...)
+
+12) Persist outputs for day d
+    - Sleep_d, Rec_d, PhysStrain_d, MRec_d, MentStrain_d
+
+
+
+                                       23
+          - Targets: [LowPhys, HighPhys], [LowMent, HighMent]
+          - Confidences for each metric
+
+
+Complexity estimate
+
+Let: - ns = number of workout sessions that day - ni = number of study sessions that day - W = baseline
+window size (≤180)
+
+
+Then daily compute is: - O(ns + ni + W ) for robust baseline updates if recomputed naively, - or O(ns +
+ni ) if maintaining rolling quantile/median structures (recommended).
+
+This easily supports daily recomputation for large user bases.
+
+
+Deterministic test vectors (sample inputs/outputs)
+
+Test vector one: good recovery, under-studied
+
+Inputs (day d): - Sleep: TST = 8.2h, T IB = 8.8h, SRI = 85, ΔM id = 0.3h - Autonomic: HRV SDNN =
+75ms, RHR = 52, RR = 13.5 - Physical: no workout, steps moderate - Mental: no study for 2 days
+(MentStrain_{d-1}=2.0, MentStrain_{d-2}=1.5), low pressure P = 0.1
+
+
+Expected qualitative outputs: - SleepScore high (≈80–90) - Recovery high (≈70–85) given favorable
+physiology - Physical strain low (≈0–6) - Mental recovery high - Mental target range increases vs baseline
+because U nderload ≈ 1 and Gate high, satisfying requirement (2).
+
+
+Test vector two: high physical load with low recovery
+
+Inputs: - Sleep: TST = 6.0h, T IB = 7.5h, SRI = 55, ΔM id = 2.5h - Autonomic: HRV = 35ms, RHR
+elevated, RR elevated - Physical: one 60 min run at HRavg 150 with HRrest 60, HRmax 190 (TRIMP ≈100.4 as
+shown) - Mental: moderate study, pressure moderate
+
+
+Expected: - SleepScore low/moderate - Recovery low - Physical target range shifts down (center decreases
+via F rec and overreach penalties), satisfying requirement (1) - Confidence depends on data completeness.
+
+
+These vectors are fully deterministic once the user’s baselines (μ, σ , caps, and quantiles) are specified.
+
+
+
+ 1   7    42   Hemodynamics and cardiac autonomic modulation after an ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC7798120/?utm_source=chatgpt.com
+
+ 2   23   29   Modeling human performance in running
+https://pubmed.ncbi.nlm.nih.gov/2246166/?utm_source=chatgpt.com
+
+ 3   26   38   40   Effects of circadian misalignment on cognition in chronic shift ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6346005/?utm_source=chatgpt.com
+
+
+
+
+                                                            24
+ 4   19   41   47   Stress and Heart Rate Variability: A Meta-Analysis and ... - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC5900369/?utm_source=chatgpt.com
+
+ 5   16   48   A performance validation of six commercial wrist-worn ... - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC12038347/?utm_source=chatgpt.com
+
+ 6    9   Recommended Amount of Sleep for a Healthy Adult - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC4442216/?utm_source=chatgpt.com
+
+ 8   20   36   Monitoring Training Adaptation and Recovery Status in ...
+https://www.mdpi.com/1424-8220/26/1/3?utm_source=chatgpt.com
+
+10   The two-process model of sleep regulation: a reappraisal
+https://pubmed.ncbi.nlm.nih.gov/26762182/?utm_source=chatgpt.com
+
+11   35   How to interpret the results of a sleep study - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC4246141/?utm_source=chatgpt.com
+
+12   15   Sleep regularity is a stronger predictor of mortality risk than ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC10782501/?utm_source=chatgpt.com
+
+13   Core Digital Measure of Sleep: Sleep efficiency (Percentage)
+https://datacc.dimesociety.org/wp-content/uploads/2024/04/Core-Digital-Measure-of-Sleep-Sleep-efficiency-Percentage.pdf?
+utm_source=chatgpt.com
+
+14   39   Irregular sleep/wake patterns are associated with poorer ...
+https://www.nature.com/articles/s41598-017-03171-4?utm_source=chatgpt.com
+
+17   Evaluating reliability in wearable devices for sleep staging
+https://www.nature.com/articles/s41746-024-01016-9?utm_source=chatgpt.com
+
+18   Estimating Sleep Stages from Apple Watch
+https://www.apple.com/health/pdf/Estimating_Sleep_Stages_from_Apple_Watch_Oct_2025.pdf?utm_source=chatgpt.com
+
+21   heartRateVariabilitySDNN | Apple Developer Documentation
+https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/heartratevariabilitysdnn?
+utm_source=chatgpt.com
+
+22   HKCategoryValueSleepAnalysis
+https://developer.apple.com/documentation/healthkit/hkcategoryvaluesleepanalysis?utm_source=chatgpt.com
+
+24   The Fitness-Fatigue Model: What's in the Numbers?
+https://pubmed.ncbi.nlm.nih.gov/35320776/?utm_source=chatgpt.com
+
+25   The Effects of Mental Fatigue on Physical Performance
+https://pubmed.ncbi.nlm.nih.gov/28044281/?utm_source=chatgpt.com
+
+27   43   Sleep Quality and Fatigue during Exam Periods in University ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC10487416/?utm_source=chatgpt.com
+
+28   45   50   Stress and Heart Rate Variability during University Final ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC6358958/?utm_source=chatgpt.com
+
+30   Development of NASA-TLX (Task Load Index)" Results of ...
+https://archive.org/download/nasa_techdoc_20000004342/20000004342.pdf?utm_source=chatgpt.com
+
+
+
+
+                                                             25
+31   37   Calculating acute:chronic workload ratios using ...
+https://pubmed.ncbi.nlm.nih.gov/28003238/?utm_source=chatgpt.com
+
+32   46   Training Load and Injury Part 2: Questionable Research ...
+https://www.lukebornn.com/papers/impellizzeri_jospt_2020b.pdf?utm_source=chatgpt.com
+
+33   restingHeartRate | Apple Developer Documentation
+https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/restingheartrate?utm_source=chatgpt.com
+
+34   respiratoryRate | Apple Developer Documentation
+https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/respiratoryrate?utm_source=chatgpt.com
+
+44   Sleep deprivation: Impact on cognitive performance - PMC
+https://pmc.ncbi.nlm.nih.gov/articles/PMC2656292/?utm_source=chatgpt.com
+
+49   Measuring sleep regularity: theoretical properties and ...
+https://pmc.ncbi.nlm.nih.gov/articles/PMC8503839/?utm_source=chatgpt.com
+
+
+
+
+                                                            26
+
