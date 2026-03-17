@@ -20,37 +20,37 @@ export const SUBJECTS: SubjectDefinition[] = [
     id: "math_aa_hl",
     name: "Math AA HL",
     shortName: "Math",
-    color: "#C3423F",
+    color: "#f87171",
   },
   {
     id: "physics_hl",
     name: "Physics HL",
     shortName: "Physics",
-    color: "#9BC53D",
+    color: "#34d399",
   },
   {
     id: "computer_science_hl",
     name: "Computer Science HL",
     shortName: "CS",
-    color: "#730071",
+    color: "#a78bfa",
   },
   {
     id: "german_lang_lit_sl",
     name: "German Lang Lit SL",
     shortName: "German",
-    color: "#FFAD05",
+    color: "#fbbf24",
   },
   {
     id: "english_lang_lit_sl",
     name: "English Lang Lit SL",
     shortName: "English",
-    color: "#5BC0EB",
+    color: "#38bdf8",
   },
   {
     id: "business_sl",
     name: "Business SL",
     shortName: "Business",
-    color: "#FDE74C",
+    color: "#fb923c",
   },
 ];
 

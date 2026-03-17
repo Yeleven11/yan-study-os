@@ -2,6 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  RadialBarChart,
+  RadialBar,
+  PolarAngleAxis,
+  Cell,
+} from "recharts";
+import {
   AFTERNOON_MESSAGES,
   CALENDAR_DAYS_AHEAD,
   EVENING_MESSAGES,
@@ -2132,8 +2147,8 @@ export default function StudyDashboard() {
             onSubmit={handleLogin}
             className="w-full max-w-md rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-6"
           >
-            <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Yan Study OS</p>
-            <h1 className="mt-2 text-xl font-semibold">Secure Entry</h1>
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-[var(--focus)]">Yan Study OS</p>
+            <h1 className="mt-2 text-2xl font-bold">Secure Entry</h1>
             <p className="mt-2 text-sm text-[var(--muted)]">
               Enter your personal passcode to open the dashboard.
             </p>
@@ -2147,25 +2162,25 @@ export default function StudyDashboard() {
               type="password"
               value={passcode}
               onChange={(event) => setPasscode(event.target.value)}
-              className="mt-2 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
+              className="mt-2 w-full rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
               autoComplete="current-password"
             />
             {authError ? (
-              <p className="mt-3 text-sm text-[#ff7f7f]" role="alert">
+              <p className="mt-3 text-sm text-[#f87171]" role="alert">
                 {authError}
               </p>
             ) : null}
             <div className="mt-5 grid gap-2">
               <button
                 type="submit"
-                className="w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                className="w-full rounded-xl bg-[var(--focus)] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#7c3aed] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
               >
                 Unlock Dashboard
               </button>
               <button
                 type="button"
                 onClick={handleDemoLogin}
-                className="w-full rounded-md border border-[var(--panel-border)] px-3 py-2 text-sm transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                className="w-full rounded-xl border border-[var(--panel-border)] px-3 py-2.5 text-sm transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
               >
                 Enter Demo
               </button>
@@ -2270,7 +2285,7 @@ export default function StudyDashboard() {
             >
               <div className="mb-3 flex items-center justify-between">
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Closest Exams</p>
                   <h2 className="text-sm font-semibold">Countdown Monitor</h2>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2280,7 +2295,7 @@ export default function StudyDashboard() {
                       event.stopPropagation();
                       setScientificMode((current) => !current);
                     }}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                     title="Toggle between default and scientific dashboard"
                   >
                     {scientificMode ? "Default View" : "Scientific View"}
@@ -2291,14 +2306,14 @@ export default function StudyDashboard() {
                       event.stopPropagation();
                       setIsCountdownExpanded((current) => !current);
                     }}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                   >
                     {isCountdownExpanded ? "Done" : "Edit"}
                   </button>
                 </div>
               </div>
 
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                 <span className="rounded border border-[var(--panel-border)] px-2 py-1">
                   Mode: {repository.mode.toUpperCase()}
                 </span>
@@ -2327,7 +2342,7 @@ export default function StudyDashboard() {
                   return (
                     <article
                       key={exam.id}
-                      className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
+                      className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
                     >
                       <p className="text-xs text-[var(--muted)]">
                         {SUBJECT_BY_ID[exam.subjectId].name} • {exam.paper}
@@ -2338,9 +2353,9 @@ export default function StudyDashboard() {
                           ? "Started"
                           : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m left`}
                       </p>
-                      <div className="mt-2 h-1.5 rounded bg-black/35">
+                      <div className="mt-2 h-2 rounded-full bg-white/[0.04]">
                         <div
-                          className="h-full rounded transition-all duration-300"
+                          className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${Math.max(4, countdown.progressRatio * 100)}%`,
                             backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
@@ -2374,7 +2389,7 @@ export default function StudyDashboard() {
                         return (
                           <article
                             key={`expanded-${exam.id}`}
-                            className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
+                            className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5"
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <p className="text-xs text-[var(--muted)]">
@@ -2386,9 +2401,9 @@ export default function StudyDashboard() {
                                   : `${countdown.days}d ${countdown.hours}h ${countdown.minutes}m`}
                               </p>
                             </div>
-                            <div className="mt-2 h-1.5 rounded bg-black/35">
+                            <div className="mt-2 h-2 rounded-full bg-white/[0.04]">
                               <div
-                                className="h-full rounded transition-all duration-300"
+                                className="h-full rounded-full transition-all duration-500"
                                 style={{
                                   width: `${Math.max(2, countdown.progressRatio * 100)}%`,
                                   backgroundColor: SUBJECT_BY_ID[exam.subjectId].color,
@@ -2402,7 +2417,7 @@ export default function StudyDashboard() {
                   ))}
 
                   <div className="mt-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-3">
-                    <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                       Edit Exam Schedule
                     </p>
                     <ExamEditor exams={data.exams} onSave={handleUpdateExams} />
@@ -2422,13 +2437,13 @@ export default function StudyDashboard() {
             >
               <div className="mb-3 flex items-center justify-between">
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
                   <h2 className="text-2xl font-semibold">{greeting}</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => setExpandedCard("calendar")}
-                  className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                  className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                 >
                   Expand
                 </button>
@@ -2436,10 +2451,10 @@ export default function StudyDashboard() {
 
               <div ref={focusFeedScrollRef} className="min-h-0 flex-1 overflow-auto pr-1">
                 {todayReadiness && todayRecommendation ? (
-                  <div className="mb-3 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+                  <div className="mb-3 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                           Condition
                         </p>
                         <p className="text-sm font-semibold">
@@ -2452,12 +2467,12 @@ export default function StudyDashboard() {
                       </div>
                       <div className="flex min-w-[260px] flex-1 flex-wrap items-center justify-end gap-2 text-xs text-[var(--muted)]">
                         <div className="min-w-[220px] rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5">
-                          <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                             Study Progress
                           </p>
-                          <div className="mt-1 h-1.5 rounded bg-black/35">
+                          <div className="mt-1 h-2 rounded-full bg-white/[0.04]">
                             <div
-                              className="h-full rounded bg-[#5BC0EB] transition-all duration-300"
+                              className="h-full rounded-full bg-[#8b5cf6] transition-all duration-500"
                               style={{ width: `${Math.max(0, Math.min(100, todayStudyProgressPercent))}%` }}
                             />
                           </div>
@@ -2484,7 +2499,7 @@ export default function StudyDashboard() {
                       </p>
                     </div>
                     {performanceInsights?.usingSampleData ? (
-                      <p className="mt-2 text-xs text-[#8fb9ff]">
+                      <p className="mt-2 text-xs text-[#a78bfa]">
                         Running in sample mode until real health CSV data is imported.
                       </p>
                     ) : null}
@@ -2499,9 +2514,9 @@ export default function StudyDashboard() {
                     const readiness = readinessByDate[dateKey];
                     const readinessColor =
                       readiness?.zone === "green"
-                        ? "#4ade80"
+                        ? "#34d399"
                         : readiness?.zone === "yellow"
-                          ? "#facc15"
+                          ? "#fbbf24"
                           : readiness?.zone === "orange"
                             ? "#fb923c"
                             : readiness?.zone === "red"
@@ -2590,7 +2605,7 @@ export default function StudyDashboard() {
                         ) : null}
 
                         {workouts.length > 0 ? (
-                          <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
+                          <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded-sm bg-[#8b5cf6] px-1 text-[8px] font-semibold text-white">
                             {workouts.length}
                           </span>
                         ) : null}
@@ -2618,7 +2633,7 @@ export default function StudyDashboard() {
                     maxWidth: focusTooltipMaxWidth,
                   }}
                 >
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                     {hoveredFocusModel.dateKey}
                   </p>
                   {hoveredFocusModel.state === "future" && !hoveredFocusModel.hasAnyData ? (
@@ -2719,13 +2734,13 @@ export default function StudyDashboard() {
               <section className="h-full min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Study Timer</p>
+                    <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Study Timer</p>
                     <h2 className="text-sm font-semibold">Session Recorder</h2>
                   </div>
                   <button
                     type="button"
                     onClick={() => setExpandedCard("timer")}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                   >
                     Expand
                   </button>
@@ -2733,7 +2748,7 @@ export default function StudyDashboard() {
 
                 <div className="grid gap-3 md:grid-cols-[1fr,auto] md:items-center">
                   <div>
-                    <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    <label className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                       Subject
                     </label>
                     <select
@@ -2742,7 +2757,7 @@ export default function StudyDashboard() {
                         setTimerSubjectId(event.target.value as SubjectId)
                       }
                       disabled={Boolean(activeTimer)}
-                      className="mt-1 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40 disabled:opacity-60"
+                      className="mt-1 w-full rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40 disabled:opacity-60"
                     >
                       {SUBJECTS.map((subject) => (
                         <option key={subject.id} value={subject.id}>
@@ -2753,7 +2768,7 @@ export default function StudyDashboard() {
                   </div>
 
                   <div
-                    className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] px-4 py-3 text-center text-3xl font-semibold tracking-widest"
+                    className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-4 py-3 text-center text-3xl font-semibold tracking-widest"
                     style={{
                       color: activeTimer
                         ? SUBJECT_BY_ID[activeTimer.subjectId].color
@@ -2769,7 +2784,7 @@ export default function StudyDashboard() {
                     <button
                       type="button"
                       onClick={handleStartTimer}
-                      className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                      className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                     >
                       Start
                     </button>
@@ -2778,14 +2793,14 @@ export default function StudyDashboard() {
                       <button
                         type="button"
                         onClick={handlePauseResumeTimer}
-                        className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                        className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       >
                         {activeTimer.isRunning ? "Pause" : "Resume"}
                       </button>
                       <button
                         type="button"
                         onClick={handleEndTimer}
-                        className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                        className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                       >
                         End
                       </button>
@@ -2793,8 +2808,8 @@ export default function StudyDashboard() {
                   )}
                 </div>
 
-                <div className="mt-3 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                <div className="mt-3 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                     Quick Add Missed Session
                   </p>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2822,13 +2837,13 @@ export default function StudyDashboard() {
               <section className="h-full min-h-0 overflow-auto rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Performance</p>
+                    <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Performance</p>
                     <h2 className="text-sm font-semibold">Condition + Totals</h2>
                   </div>
                   <button
                     type="button"
                     onClick={() => setExpandedCard("totals")}
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
                   >
                     Expand
                   </button>
@@ -2842,13 +2857,13 @@ export default function StudyDashboard() {
                     return (
                       <article
                         key={subject.id}
-                        className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2"
+                        className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2"
                       >
                         <p className="truncate text-xs text-[var(--muted)]">{subject.shortName}</p>
                         <p className="mt-1 text-sm font-semibold">{formatDuration(value)}</p>
-                        <div className="mt-2 h-1.5 rounded bg-black/35">
+                        <div className="mt-2 h-2 rounded-full bg-white/[0.04]">
                           <div
-                            className="h-full rounded transition-all duration-300"
+                            className="h-full rounded-full transition-all duration-500"
                             style={{
                               width: `${percent}%`,
                               backgroundColor: subject.color,
@@ -2861,8 +2876,8 @@ export default function StudyDashboard() {
                 </div>
 
                 {todayReadiness ? (
-                  <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <div className="mt-3 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                       Readiness Components
                     </p>
                     <MetricBar label="Sleep" value={todayReadiness.sleepComponent} />
@@ -2872,8 +2887,8 @@ export default function StudyDashboard() {
                   </div>
                 ) : null}
 
-                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                <div className="mt-3 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                     Training Readiness
                   </p>
                   <p className="text-xs text-[var(--muted)]">
@@ -2891,9 +2906,9 @@ export default function StudyDashboard() {
                   ) : null}
                 </div>
 
-                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                <div className="mt-3 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                       Goals
                     </p>
                     {goalsDirty ? (
@@ -2914,7 +2929,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.sleepHoursTarget ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.sleepHoursTarget}
                         </span>
                       ) : null}
@@ -2930,7 +2945,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.baselineStudyHours ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.baselineStudyHours}
                         </span>
                       ) : null}
@@ -2946,7 +2961,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.weeklyWorkoutTarget ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.weeklyWorkoutTarget}
                         </span>
                       ) : null}
@@ -2960,7 +2975,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.ageYears ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.ageYears}
                         </span>
                       ) : null}
@@ -2976,7 +2991,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.weekdayWakeTime ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.weekdayWakeTime}
                         </span>
                       ) : null}
@@ -2992,7 +3007,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.weekendWakeTime ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.weekendWakeTime}
                         </span>
                       ) : null}
@@ -3008,7 +3023,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.preferredBedtimeStart ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.preferredBedtimeStart}
                         </span>
                       ) : null}
@@ -3024,7 +3039,7 @@ export default function StudyDashboard() {
                         className="mt-1 w-full rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1 text-xs"
                       />
                       {goalsErrors.preferredBedtimeEnd ? (
-                        <span className="mt-1 block text-[11px] text-[#ff9896]">
+                        <span className="mt-1 block text-[11px] text-[#f87171]">
                           {goalsErrors.preferredBedtimeEnd}
                         </span>
                       ) : null}
@@ -3043,15 +3058,15 @@ export default function StudyDashboard() {
                       type="button"
                       onClick={handleResetGoalsDraft}
                       disabled={!goalsDraft || goalsSaving || !goalsDirty}
-                      className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                      className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
                     >
                       Reset
                     </button>
                   </div>
                 </div>
 
-                <div className="mt-3 space-y-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                <div className="mt-3 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                     Health CSV Import
                   </p>
                   <label className="block rounded border border-dashed border-[var(--panel-border)] px-2 py-2 text-xs text-[var(--muted)]">
@@ -3144,9 +3159,9 @@ export default function StudyDashboard() {
                   : "rgba(255,255,255,0.04)";
                 const readinessColor =
                   readiness?.zone === "green"
-                    ? "#4ade80"
+                    ? "#34d399"
                     : readiness?.zone === "yellow"
-                    ? "#facc15"
+                    ? "#fbbf24"
                     : readiness?.zone === "orange"
                     ? "#fb923c"
                     : readiness?.zone === "red"
@@ -3206,7 +3221,7 @@ export default function StudyDashboard() {
                         />
                       ) : null}
                       {workouts.length > 0 ? (
-                        <span className="absolute bottom-0.5 right-0.5 rounded bg-[#5BC0EB] px-1 text-[8px] text-black">
+                        <span className="absolute bottom-0.5 right-0.5 rounded-sm bg-[#8b5cf6] px-1 text-[8px] font-semibold text-white">
                           {workouts.length}
                         </span>
                       ) : null}
@@ -3303,18 +3318,19 @@ export default function StudyDashboard() {
 
 function MetricBar({ label, value }: { label: string; value: number }) {
   const safe = Math.max(0, Math.min(100, value));
+  const color = safe >= 75 ? "#34d399" : safe >= 55 ? "#fbbf24" : "#fb923c";
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
+      <div className="mb-1.5 flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--muted)]">
         <span>{label}</span>
-        <span>{Math.round(safe)}</span>
+        <span className="tabular-nums" style={{ color }}>{Math.round(safe)}</span>
       </div>
-      <div className="h-1.5 rounded bg-black/35">
+      <div className="h-2 rounded-full bg-white/[0.04]">
         <div
-          className="h-full rounded transition-all duration-300"
+          className="h-full rounded-full transition-all duration-500"
           style={{
-            width: `${safe}%`,
-            backgroundColor: safe >= 75 ? "#4ade80" : safe >= 55 ? "#facc15" : "#fb923c",
+            width: `${Math.max(2, safe)}%`,
+            backgroundColor: color,
           }}
         />
       </div>
@@ -3371,7 +3387,7 @@ function StatusStrip({
 }) {
   return (
     <header className="h-6 border-b border-[var(--panel-border)] bg-[var(--panel)] px-3 md:px-4">
-      <div className="flex h-full items-center gap-4 overflow-x-auto text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+      <div className="flex h-full items-center gap-4 overflow-x-auto text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
         <StatusStripItem
           label="Health Updated"
           value={formatRelativeTimestamp(healthUpdatedAt, nowMs)}
@@ -3492,19 +3508,19 @@ function FlashcardRail({
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Flashcards</p>
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Flashcards</p>
           <h2 className="text-sm font-semibold">Always Ready Review</h2>
         </div>
         <button
           type="button"
           onClick={() => setAdding((current) => !current)}
-          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+          className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
         >
           {adding ? "Cancel" : "+ Add"}
         </button>
       </div>
 
-      <div className="mb-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+      <div className="mb-3 flex flex-wrap gap-2 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
         <span className="rounded border border-[var(--panel-border)] px-2 py-1">
           Critical Today: {snapshot?.criticalTodayCount ?? 0}
         </span>
@@ -3521,7 +3537,7 @@ function FlashcardRail({
       {adding ? (
         <form
           onSubmit={handleCreate}
-          className="mb-3 space-y-2 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
+          className="mb-3 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3"
         >
           <input
             value={questionDraft}
@@ -3536,7 +3552,7 @@ function FlashcardRail({
             className="h-16 w-full resize-none rounded border border-[var(--panel-border)] bg-[var(--panel)] px-2 py-1.5 text-sm outline-none transition focus:border-[var(--focus)] focus:ring-2 focus:ring-[var(--focus)]/40"
           />
           {panelError ? (
-            <p className="text-xs text-[#ff9896]">{panelError}</p>
+            <p className="text-xs text-[#f87171]">{panelError}</p>
           ) : (
             <p className="text-xs text-[var(--muted)]">
               This card becomes reviewable instantly after save.
@@ -3570,7 +3586,7 @@ function FlashcardRail({
                   Optional
                 </span>
               ) : null}
-              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                 {flipped ? "Answer" : "Question"}
               </p>
               <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
@@ -3594,7 +3610,7 @@ function FlashcardRail({
                   type="button"
                   onClick={() => void handleGrade("incorrect")}
                   disabled={grading}
-                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#ff8787] hover:text-[#ffb0b0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#f87171] hover:text-[#fca5a5] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
                 >
                   Incorrect
                 </button>
@@ -3602,7 +3618,7 @@ function FlashcardRail({
                   type="button"
                   onClick={() => void handleGrade("correct")}
                   disabled={grading}
-                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#7de9a1] hover:text-[#b8ffd0] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                  className="rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2 text-sm font-semibold transition hover:border-[#34d399] hover:text-[#6ee7b7] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
                 >
                   Correct
                 </button>
@@ -3688,13 +3704,13 @@ function TodoRail({
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Todo Rail</p>
           <h2 className="text-sm font-semibold">Chronological Tasks</h2>
         </div>
         <button
           type="button"
           onClick={() => setAdding((current) => !current)}
-          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+          className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
           aria-expanded={adding}
         >
           {adding ? "Cancel" : "+ Add"}
@@ -3702,7 +3718,7 @@ function TodoRail({
       </div>
 
       {adding ? (
-        <form onSubmit={handleSubmit} className="mb-4 space-y-2 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+        <form onSubmit={handleSubmit} className="mb-4 space-y-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
           <input
             type="text"
             value={title}
@@ -3743,7 +3759,7 @@ function TodoRail({
             Ultra priority
           </label>
           {todoError ? (
-            <p className="text-xs text-[#ff9896]">{todoError}</p>
+            <p className="text-xs text-[#f87171]">{todoError}</p>
           ) : (
             <p className="text-xs text-[var(--muted)]">
               Deadline uses month-day only. Year is inferred automatically.
@@ -3787,14 +3803,14 @@ function TodoRail({
         {(showArchive ? archivedTodos : activeTodos).map((todo) => (
           <article
             key={todo.id}
-            className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-2"
+            className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-2"
             style={{ borderLeftWidth: "4px", borderLeftColor: SUBJECT_BY_ID[todo.subjectId].color }}
           >
             <p className="text-sm font-medium leading-tight">{todo.title}</p>
             <p className="mt-1 text-xs text-[var(--muted)]">{SUBJECT_BY_ID[todo.subjectId].name}</p>
             <p className="text-xs text-[var(--muted)]">Due {formatDateTime(todo.deadline)}</p>
             {todo.ultraPriority ? (
-              <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-[#ff9896]">Ultra Priority</p>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-[#f87171]">Ultra Priority</p>
             ) : null}
             <div className="mt-2">
               {showArchive ? (
@@ -3858,13 +3874,13 @@ function HealthRail({
     <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Health Rail</p>
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Health Rail</p>
           <h2 className="text-sm font-semibold">Sleep + Workout Explorer</h2>
         </div>
         <button
           type="button"
           onClick={onExpand}
-          className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+          className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
         >
           Expand
         </button>
@@ -3883,34 +3899,34 @@ function HealthRail({
         </p>
       ) : null}
 
-      <div className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
-        <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+      <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+        <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
           Sleep Hours (14d)
         </p>
         <CompactBars
           values={sleepTrend14.map((item) => item.sleepHours)}
           labels={sleepTrend14.map((item) => item.date)}
           max={Math.max(10, ...sleepTrend14.map((item) => item.sleepHours), 8)}
-          color="#6bd4ff"
+          color="#38bdf8"
           valueFormatter={(value) => `${value.toFixed(2)}h`}
         />
       </div>
 
-      <div className="mt-2 rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
-        <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+      <div className="mt-2 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
+        <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
           Sleep Score (7d)
         </p>
         <SleepScoreScatter points={sleepScoreSeries7} average={sleepScoreAverage7} />
       </div>
 
       {usingSampleData ? (
-        <p className="mt-2 text-xs text-[#8fb9ff]">
+        <p className="mt-2 text-xs text-[#a78bfa]">
           Sample mode active until real health exports are imported.
         </p>
       ) : null}
 
       <div className="mt-3 min-h-0 flex-1 overflow-auto pr-1">
-        <p className="pb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+        <p className="pb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
           Workout Explorer (last 14)
         </p>
         {workouts14.length === 0 ? (
@@ -3921,9 +3937,9 @@ function HealthRail({
               type="button"
               key={`rail-workout-${workout.id}`}
               onClick={() => onSelectWorkout(workout.id)}
-              className="mb-2 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-left transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+              className="mb-2 w-full rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-left transition hover:border-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
             >
-              <div className="mb-2 h-1 rounded bg-[#5BC0EB]" />
+              <div className="mb-2 h-1 rounded bg-[#8b5cf6]" />
               <div className="flex items-center justify-between gap-2 text-xs text-[var(--muted)]">
                 <span className="font-semibold text-[var(--text)]">
                   {formatWorkoutLabel(workout)}
@@ -4060,8 +4076,8 @@ function HealthExplorer({
           />
         </section>
 
-        <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+        <section className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
             Sleep Raw (30d)
           </p>
           <div className="mt-2">
@@ -4069,19 +4085,19 @@ function HealthExplorer({
               values={sleepTrend30.map((item) => item.sleepHours)}
               labels={sleepTrend30.map((item) => item.date)}
               max={Math.max(10, ...sleepTrend30.map((item) => item.sleepHours), 8)}
-              color="#6bd4ff"
+              color="#38bdf8"
               valueFormatter={(value) => `${value.toFixed(2)}h`}
             />
           </div>
           <div className="mt-3">
-            <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
               Sleep Score (30d)
             </p>
             <CompactBars
               values={sleepScores30}
               labels={sleepTrend30.map((item) => item.date)}
               max={100}
-              color="#8af58b"
+              color="#34d399"
               valueFormatter={(value) => value.toFixed(1)}
             />
           </div>
@@ -4113,9 +4129,9 @@ function HealthExplorer({
           </div>
         </section>
 
-        <section className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+        <section className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
               Workout Timeline
             </p>
             <p className="text-xs text-[var(--muted)]">
@@ -4173,8 +4189,8 @@ function HealthExplorer({
         </section>
       </div>
 
-      <aside className="min-h-0 overflow-auto rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
-        <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+      <aside className="min-h-0 overflow-auto rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] p-3">
+        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
           Workout Drill-Down
         </p>
         {loadingWorkoutDetail ? (
@@ -4251,7 +4267,7 @@ function HealthExplorer({
                 </span>
               </div>
               <div className="mt-2 rounded border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
                   Your Difficulty Override (1-10)
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -4282,13 +4298,13 @@ function HealthExplorer({
                       difficultySaving ||
                       typeof selectedWorkout.difficultyUser !== "number"
                     }
-                    className="rounded border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--text)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)] disabled:opacity-60"
                   >
                     Clear Override
                   </button>
                 </div>
                 {difficultyError ? (
-                  <p className="mt-1 text-[11px] text-[#ff9896]">{difficultyError}</p>
+                  <p className="mt-1 text-[11px] text-[#f87171]">{difficultyError}</p>
                 ) : (
                   <p className="mt-1 text-[11px] text-[var(--muted)]">
                     Effective difficulty feeds future training-load recommendations.
@@ -4303,33 +4319,33 @@ function HealthExplorer({
                   title="Heart Rate Series"
                   rows={detailForSelectedWorkout.heartRateSeries || []}
                   extractValue={(row) => row.value ?? row.avg ?? row.max ?? row.min}
-                  color="#ff8f8f"
+                  color="#f87171"
                   unit="bpm"
                 />
                 <SeriesPanel
                   title="Distance Series"
                   rows={detailForSelectedWorkout.distanceSeries || []}
                   extractValue={(row) => row.value}
-                  color="#6bd4ff"
+                  color="#38bdf8"
                   unit="km"
                 />
                 <SeriesPanel
                   title="Step Series"
                   rows={detailForSelectedWorkout.stepSeries || []}
                   extractValue={(row) => row.value}
-                  color="#ffe27a"
+                  color="#fbbf24"
                   unit="steps"
                 />
                 <SeriesPanel
                   title="Active Energy Series"
                   rows={detailForSelectedWorkout.activeEnergySeries || []}
                   extractValue={(row) => row.value}
-                  color="#8af58b"
+                  color="#34d399"
                   unit="kJ"
                 />
 
                 <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
                     Stream Provenance
                   </p>
                   <p className="mt-1 text-xs text-[var(--muted)]">
@@ -4358,7 +4374,7 @@ function HealthExplorer({
         )}
 
         <div className="mt-4 rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">
             Import Transparency
           </p>
           <p className="mt-1 text-xs text-[var(--muted)]">
@@ -4381,6 +4397,16 @@ function HealthExplorer({
   );
 }
 
+function SleepScoreTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-2.5 py-1.5 text-xs shadow-xl">
+      <p className="font-medium text-[var(--text)]">{label}</p>
+      <p className="tabular-nums text-[#34d399]">Score: {payload[0].value.toFixed(1)}</p>
+    </div>
+  );
+}
+
 function SleepScoreScatter({
   points,
   average,
@@ -4388,115 +4414,55 @@ function SleepScoreScatter({
   points: Array<{ date: string; score: number }>;
   average: number;
 }) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-
   if (points.length === 0) {
     return <p className="text-xs text-[var(--muted)]">No sleep-score data yet.</p>;
   }
 
-  const width = 300;
-  const height = 110;
-  const padLeft = 14;
-  const padRight = 10;
-  const padTop = 12;
-  const padBottom = 20;
-  const plotWidth = width - padLeft - padRight;
-  const plotHeight = height - padTop - padBottom;
-
-  const xForIndex = (index: number): number => {
-    if (points.length <= 1) {
-      return padLeft + plotWidth / 2;
-    }
-
-    return padLeft + (index / (points.length - 1)) * plotWidth;
-  };
-
-  const yForScore = (score: number): number =>
-    padTop + (1 - Math.max(0, Math.min(100, score)) / 100) * plotHeight;
-
-  const polyline = points
-    .map((point, index) => `${xForIndex(index)},${yForScore(point.score)}`)
-    .join(" ");
-  const avgY = yForScore(average);
-  const activeIndex = hoveredIndex ?? points.length - 1;
-  const activePoint = points[activeIndex];
-  const activeX = xForIndex(activeIndex);
-  const activeY = yForScore(activePoint.score);
+  const data = points.map((p) => ({
+    date: p.date.slice(5),
+    score: Number(p.score.toFixed(1)),
+    avg: Number(average.toFixed(1)),
+  }));
 
   return (
     <div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-24 w-full"
-        onMouseLeave={() => setHoveredIndex(null)}
-      >
-        <line
-          x1={padLeft}
-          x2={width - padRight}
-          y1={avgY}
-          y2={avgY}
-          stroke="#8af58b"
-          strokeDasharray="4 3"
-          strokeWidth="1"
-          opacity="0.8"
-        />
-        <polyline fill="none" stroke="#8af58b" strokeWidth="2" points={polyline} />
-        <line
-          x1={activeX}
-          x2={activeX}
-          y1={padTop}
-          y2={height - padBottom}
-          stroke="#8af58b"
-          strokeOpacity="0.35"
-          strokeWidth="1"
-        />
-        {points.map((point, index) => (
-          <circle
-            key={`sleep-score-point-${point.date}`}
-            cx={xForIndex(index)}
-            cy={yForScore(point.score)}
-            r={activeIndex === index ? 4.4 : 3.2}
-            fill={activeIndex === index ? "#d9ffd9" : "#8af58b"}
-            tabIndex={0}
-            onMouseEnter={() => setHoveredIndex(index)}
-            onFocus={() => setHoveredIndex(index)}
-          >
-            <title>{`${point.date}: ${point.score.toFixed(1)}`}</title>
-          </circle>
-        ))}
-        <circle cx={activeX} cy={activeY} r={4.6} fill="#d9ffd9" stroke="#8af58b" strokeWidth="1" />
-        <text
-          x={width - padRight}
-          y={padTop}
-          textAnchor="end"
-          fontSize="10"
-          fill="var(--muted)"
-        >
-          7-day avg: {average.toFixed(1)}
-        </text>
-        <text
-          x={padLeft}
-          y={padTop}
-          textAnchor="start"
-          fontSize="10"
-          fill="var(--muted)"
-        >
-          {activePoint.date}: {activePoint.score.toFixed(1)}
-        </text>
-      </svg>
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
-        <span>{points[0].date.slice(5)}</span>
-        <span>{points[points.length - 1].date.slice(5)}</span>
-      </div>
+      <p className="mb-1 text-[10px] tabular-nums text-[var(--muted)]">7-day avg: {average.toFixed(1)}</p>
+      <ResponsiveContainer width="100%" height={90}>
+        <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+          <defs>
+            <linearGradient id="sleepScoreGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#34d399" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e2736" vertical={false} />
+          <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#7b8ba3" }} tickLine={false} axisLine={false} />
+          <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#7b8ba3" }} tickLine={false} axisLine={false} width={30} />
+          <RechartsTooltip content={<SleepScoreTooltip />} />
+          <Area type="monotone" dataKey="avg" stroke="#34d399" strokeWidth={1} strokeDasharray="4 3" fill="none" dot={false} />
+          <Area type="monotone" dataKey="score" stroke="#34d399" strokeWidth={2} fill="url(#sleepScoreGrad)" dot={{ r: 3, fill: "#34d399", strokeWidth: 0 }} activeDot={{ r: 5, fill: "#fff", stroke: "#34d399", strokeWidth: 2 }} />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-[var(--panel-border)] bg-[var(--panel-soft)] px-2 py-1.5">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-[var(--text)]">{value}</p>
+    <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-soft)] px-3 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">{label}</p>
+      <p className="mt-1 text-base font-bold text-[var(--text)]">{value}</p>
+    </div>
+  );
+}
+
+function CompactBarsTooltip({ active, payload }: { active?: boolean; payload?: Array<{ value: number; payload: { name: string } }> }) {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0];
+  return (
+    <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-2.5 py-1.5 text-xs shadow-xl">
+      <p className="font-medium text-[var(--text)]">{entry.payload.name}</p>
+      <p className="tabular-nums text-[var(--muted)]">{entry.value.toFixed(2)}</p>
     </div>
   );
 }
@@ -4514,55 +4480,34 @@ function CompactBars({
   color: string;
   valueFormatter?: (value: number, index: number) => string;
 }) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-
   if (values.length === 0) {
     return <p className="text-xs text-[var(--muted)]">No data yet.</p>;
   }
 
-  const safeMax = max > 0 ? max : 1;
-  const activeIndex = hoveredIndex ?? values.length - 1;
-  const activeValue = values[activeIndex] || 0;
-  const activeLabel = labels?.[activeIndex] || `Point ${activeIndex + 1}`;
-  const activeDisplay = valueFormatter
-    ? valueFormatter(activeValue, activeIndex)
-    : activeValue.toFixed(2);
+  const data = values.map((value, index) => ({
+    name: labels?.[index]?.slice(5) || `${index + 1}`,
+    value: Number(value.toFixed(2)),
+  }));
 
   return (
-    <div>
-      <p className="mb-1 text-[10px] text-[var(--muted)]">
-        {activeLabel}: {activeDisplay}
-      </p>
-      <div
-        className="grid gap-1"
-        style={{ gridTemplateColumns: `repeat(${Math.max(values.length, 1)}, minmax(0, 1fr))` }}
-        onMouseLeave={() => setHoveredIndex(null)}
-      >
-        {values.map((value, index) => {
-          const display = valueFormatter ? valueFormatter(value, index) : value.toFixed(2);
-          const label = labels?.[index] || `Point ${index + 1}`;
+    <ResponsiveContainer width="100%" height={80}>
+      <BarChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: -20 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1e2736" vertical={false} />
+        <XAxis dataKey="name" tick={{ fontSize: 9, fill: "#7b8ba3" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+        <YAxis domain={[0, max]} tick={{ fontSize: 9, fill: "#7b8ba3" }} tickLine={false} axisLine={false} width={36} />
+        <RechartsTooltip content={<CompactBarsTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+        <Bar dataKey="value" radius={[3, 3, 0, 0]} fill={color} fillOpacity={0.85} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
 
-          return (
-            <div
-              key={`bar-${index}`}
-              className="h-16 rounded border border-[var(--panel-border)] bg-black/20 p-[2px]"
-              title={`${label}: ${display}`}
-              onMouseEnter={() => setHoveredIndex(index)}
-              onFocus={() => setHoveredIndex(index)}
-            >
-              <div
-                className="h-full w-full rounded"
-                style={{
-                  transform: `scaleY(${Math.max(0.05, (value || 0) / safeMax)})`,
-                  transformOrigin: "bottom",
-                  backgroundColor: color,
-                  outline: activeIndex === index ? "1px solid rgba(255,255,255,0.6)" : "none",
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
+function SeriesTooltip({ active, payload, label, unit }: { active?: boolean; payload?: Array<{ value: number }>; label?: string; unit: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-2.5 py-1.5 text-xs shadow-xl">
+      <p className="font-medium text-[var(--text)]">{label}</p>
+      <p className="tabular-nums text-[var(--muted)]">{payload[0].value.toFixed(2)} {unit}</p>
     </div>
   );
 }
@@ -4592,30 +4537,41 @@ function SeriesPanel({
   const values = series.map((item) => item.value);
   const average =
     values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-  const tail = series.slice(-20);
-  const tailValues = tail.map((item) => item.value);
-  const tailLabels = tail.map((item) => formatDateTime(item.timestamp));
+  const tail = series.slice(-30);
   const hasSinglePoint = values.length === 1;
 
+  const data = tail.map((item, index) => ({
+    name: `${index + 1}`,
+    value: Number(item.value.toFixed(2)),
+  }));
+
   return (
-    <div className="rounded border border-[var(--panel-border)] bg-[var(--panel)] p-2">
-      <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{title}</p>
+    <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel)] p-2.5">
+      <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--muted)]">{title}</p>
       <p className="mt-1 text-xs text-[var(--muted)]">
         {values.length} points • avg {average.toFixed(2)} {unit}
       </p>
       {hasSinglePoint ? (
         <p className="mt-2 text-xs text-[var(--muted)]">
-          Summary-only point. Import per-minute workout streams to see full timeline bars.
+          Summary-only point. Import per-minute workout streams to see full timeline.
         </p>
       ) : (
         <div className="mt-2">
-          <CompactBars
-            values={tailValues}
-            labels={tailLabels}
-            max={Math.max(...values, 1)}
-            color={color}
-            valueFormatter={(value) => `${value.toFixed(2)} ${unit}`}
-          />
+          <ResponsiveContainer width="100%" height={80}>
+            <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: -20 }}>
+              <defs>
+                <linearGradient id={`series-${title.replace(/\s/g, "")}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2736" vertical={false} />
+              <XAxis dataKey="name" tick={false} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: "#7b8ba3" }} tickLine={false} axisLine={false} width={36} />
+              <RechartsTooltip content={<SeriesTooltip unit={unit} />} />
+              <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#series-${title.replace(/\s/g, "")})`} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       )}
     </div>
@@ -4862,7 +4818,7 @@ function ExamEditor({
       </div>
 
       {saveError ? (
-        <p className="text-xs text-[#ff9896]">{saveError}</p>
+        <p className="text-xs text-[#f87171]">{saveError}</p>
       ) : (
         <p className="text-xs text-[var(--muted)]">
           Dates are month-day only. Year is inferred automatically. Time is limited to
