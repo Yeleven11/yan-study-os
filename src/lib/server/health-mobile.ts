@@ -26,6 +26,84 @@ export type MobileHealthImportSummary = {
   duplicateBatch: boolean;
 };
 
+export const MOBILE_SYNC_LATEST_SCHEMA_VERSION = 1 as const;
+export const MOBILE_SYNC_SUPPORTED_SCHEMA_VERSIONS = [1] as const;
+export const MOBILE_SYNC_LEGACY_SCHEMA_VERSION = 0 as const;
+export const MOBILE_SYNC_LEGACY_DEPRECATION_END = "2026-09-30T00:00:00.000Z";
+
+export type MobileSyncSchemaCompatibility =
+  | {
+      accepted: true;
+      normalizedVersion: typeof MOBILE_SYNC_LATEST_SCHEMA_VERSION;
+      strategy: "native";
+      transformedFrom: null;
+    }
+  | {
+      accepted: true;
+      normalizedVersion: typeof MOBILE_SYNC_LATEST_SCHEMA_VERSION;
+      strategy: "transform_legacy";
+      transformedFrom: typeof MOBILE_SYNC_LEGACY_SCHEMA_VERSION;
+      deprecationWindowEndsAt: string;
+    }
+  | {
+      accepted: false;
+      error: string;
+      strategy: "reject";
+      deprecationWindowEndsAt: string;
+    };
+
+export function resolveMobileSyncSchemaVersion(
+  rawSchemaVersion: unknown,
+  now: Date = new Date(),
+): MobileSyncSchemaCompatibility {
+  if (!Number.isInteger(rawSchemaVersion)) {
+    return {
+      accepted: false,
+      strategy: "reject",
+      error: "schemaVersion is required and must be an integer",
+      deprecationWindowEndsAt: MOBILE_SYNC_LEGACY_DEPRECATION_END,
+    };
+  }
+
+  if (rawSchemaVersion === MOBILE_SYNC_LATEST_SCHEMA_VERSION) {
+    return {
+      accepted: true,
+      normalizedVersion: MOBILE_SYNC_LATEST_SCHEMA_VERSION,
+      strategy: "native",
+      transformedFrom: null,
+    };
+  }
+
+  if (rawSchemaVersion === MOBILE_SYNC_LEGACY_SCHEMA_VERSION) {
+    const deprecationEndMs = new Date(MOBILE_SYNC_LEGACY_DEPRECATION_END).getTime();
+    const nowMs = now.getTime();
+    if (nowMs <= deprecationEndMs) {
+      return {
+        accepted: true,
+        normalizedVersion: MOBILE_SYNC_LATEST_SCHEMA_VERSION,
+        strategy: "transform_legacy",
+        transformedFrom: MOBILE_SYNC_LEGACY_SCHEMA_VERSION,
+        deprecationWindowEndsAt: MOBILE_SYNC_LEGACY_DEPRECATION_END,
+      };
+    }
+
+    return {
+      accepted: false,
+      strategy: "reject",
+      error:
+        "schemaVersion 0 is no longer accepted after the deprecation window; upgrade to schemaVersion 1",
+      deprecationWindowEndsAt: MOBILE_SYNC_LEGACY_DEPRECATION_END,
+    };
+  }
+
+  return {
+    accepted: false,
+    strategy: "reject",
+    error: `Unsupported schemaVersion ${rawSchemaVersion}; supported versions: ${MOBILE_SYNC_SUPPORTED_SCHEMA_VERSIONS.join(", ")}`,
+    deprecationWindowEndsAt: MOBILE_SYNC_LEGACY_DEPRECATION_END,
+  };
+}
+
 const MAX_SERIES_POINTS = 480;
 
 function hashText(value: string): string {

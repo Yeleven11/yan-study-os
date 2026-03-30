@@ -1,6 +1,13 @@
 import Foundation
 import HealthKit
 
+enum MobileSyncContract {
+    static let latestSchemaVersion = 1
+    static let supportedSchemaVersions = [1]
+    static let deprecatedLegacySchemaVersion = 0
+    static let deprecationWindowEndsAt = "2026-09-30T00:00:00.000Z"
+}
+
 struct MobileSyncPayload: Codable {
     let schemaVersion: Int
     let batchId: String
@@ -103,6 +110,15 @@ struct MobileSyncResponse: Codable {
     let duplicateBatch: Bool
     let serverTime: String
     let nextSuggestedSyncSeconds: Int
+    let schema: SchemaCompatibility
+
+    struct SchemaCompatibility: Codable {
+        let acceptedVersion: Int
+        let supportedVersions: [Int]
+        let deprecatedLegacyVersion: Int
+        let deprecationWindowEndsAt: String
+        let transformedLegacyPayload: Bool
+    }
 }
 
 enum HealthSampleKey: String, CaseIterable {

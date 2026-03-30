@@ -3,6 +3,7 @@ import Foundation
 enum SyncAPIError: LocalizedError {
     case invalidURL
     case missingToken
+    case unsupportedSchemaVersion(expected: Int, got: Int)
     case unauthorized
     case server(statusCode: Int, message: String)
     case decodingFailed
@@ -13,6 +14,8 @@ enum SyncAPIError: LocalizedError {
             return "Sync server URL is invalid."
         case .missingToken:
             return "Sync token is missing. Add it in app settings."
+        case let .unsupportedSchemaVersion(expected, got):
+            return "Unsupported payload schema version \(got). Expected \(expected)."
         case .unauthorized:
             return "Unauthorized. Check your mobile bearer token."
         case let .server(statusCode, message):
@@ -38,6 +41,12 @@ struct SyncAPIClient {
 
         guard let url = buildURL(baseURL: baseURL, endpointPath: endpointPath) else {
             throw SyncAPIError.invalidURL
+        }
+        guard payload.schemaVersion == MobileSyncContract.latestSchemaVersion else {
+            throw SyncAPIError.unsupportedSchemaVersion(
+                expected: MobileSyncContract.latestSchemaVersion,
+                got: payload.schemaVersion
+            )
         }
 
         var request = URLRequest(url: url)
