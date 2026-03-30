@@ -645,6 +645,7 @@ function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
     workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
     healthRawFiles: Array.isArray(bootstrap.healthRawFiles) ? bootstrap.healthRawFiles : [],
     healthRawRows: Array.isArray(bootstrap.healthRawRows) ? bootstrap.healthRawRows : [],
+    healthImportDeadLetters: Array.isArray(bootstrap.healthImportDeadLetters) ? bootstrap.healthImportDeadLetters : [],
     goals: bootstrap.goals || createDefaultAppData(timezone).goals,
     settings: {
       timezone: bootstrap.settings?.timezone || timezone,

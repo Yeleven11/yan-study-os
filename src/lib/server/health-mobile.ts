@@ -512,9 +512,20 @@ export function importMobileSyncPayload(
   const sourceFilename = `mobile-sync-${request.batchId}.json`;
   const payloadHash = hashText(JSON.stringify(request));
 
-  const duplicate = sanitizedCurrent.healthRawFiles.some(
-    (file) => file.hash === payloadHash || file.filename === sourceFilename,
-  );
+  const duplicateByIdempotency =
+    typeof request.idempotencyKey === "string" &&
+    request.idempotencyKey.trim().length > 0 &&
+    sanitizedCurrent.healthRawRows.some(
+      (row) =>
+        row.values.channel === "mobile" &&
+        row.values.idempotencyKey === request.idempotencyKey?.trim(),
+    );
+
+  const duplicate =
+    duplicateByIdempotency ||
+    sanitizedCurrent.healthRawFiles.some(
+      (file) => file.hash === payloadHash || file.filename === sourceFilename,
+    );
 
   if (duplicate) {
     return {
@@ -594,6 +605,8 @@ export function importMobileSyncPayload(
     timestamp: importedAt,
     values: {
       schemaVersion: String(request.schemaVersion),
+      idempotencyKey: request.idempotencyKey || "",
+      channel: "mobile",
       batchId: request.batchId,
       generatedAt: request.generatedAt,
       deviceId: request.device?.deviceId || "",

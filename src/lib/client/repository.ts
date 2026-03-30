@@ -191,6 +191,7 @@ function parseStoredData(
       workoutDetails: parseWorkoutDetails(parsed.workoutDetails),
       healthRawFiles: parseRawFiles(parsed.healthRawFiles),
       healthRawRows: Array.isArray(parsed.healthRawRows) ? parsed.healthRawRows : [],
+      healthImportDeadLetters: Array.isArray(parsed.healthImportDeadLetters) ? parsed.healthImportDeadLetters : [],
       goals: parseGoals(parsed.goals),
       settings: {
         timezone: parsed.settings?.timezone ?? getTimezone(),

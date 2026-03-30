@@ -331,8 +331,9 @@ export interface MobileSyncDeletion {
 }
 
 export interface MobileSyncRequest {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   batchId: string;
+  idempotencyKey?: string;
   generatedAt: string;
   device: {
     deviceId: string;
@@ -354,6 +355,7 @@ export interface MobileSyncRequest {
 
 export interface MobileSyncResponse {
   ok: true;
+  schemaVersion: 1 | 2;
   importedHealthDays: number;
   importedWorkouts: number;
   updatedWorkouts: number;
@@ -675,6 +677,21 @@ export interface ScientificDailyMetrics {
   narrative: string;
 }
 
+
+export interface HealthImportDeadLetter {
+  id: string;
+  channel: "csv" | "mobile" | "batch";
+  idempotencyKey?: string;
+  schemaVersion?: number;
+  requestHash: string;
+  payloadPreview: string;
+  firstFailedAt: string;
+  lastFailedAt: string;
+  retryCount: number;
+  errorCode: string;
+  errorMessage: string;
+}
+
 export interface AppData {
   exams: Exam[];
   studySessions: StudySession[];
@@ -685,6 +702,7 @@ export interface AppData {
   workoutDetails: WorkoutDetail[];
   healthRawFiles: HealthRawFile[];
   healthRawRows: HealthRawRow[];
+  healthImportDeadLetters: HealthImportDeadLetter[];
   goals: PerformanceGoals;
   settings: AppSettings;
 }

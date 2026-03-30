@@ -206,6 +206,17 @@ function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
     }));
 }
 
+
+function normalizeDeadLetters(items: AppData["healthImportDeadLetters"] | undefined): AppData["healthImportDeadLetters"] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter((item) => item && typeof item.id === "string" && typeof item.channel === "string" && typeof item.requestHash === "string" && typeof item.firstFailedAt === "string" && typeof item.lastFailedAt === "string" && typeof item.retryCount === "number" && typeof item.errorCode === "string" && typeof item.errorMessage === "string")
+    .sort((left, right) => new Date(left.lastFailedAt).getTime() - new Date(right.lastFailedAt).getTime());
+}
+
 function normalizeData(data: AppData): AppData {
   return {
     exams: [...data.exams].sort(
@@ -221,6 +232,7 @@ function normalizeData(data: AppData): AppData {
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
     healthRawFiles: normalizeRawFiles(data.healthRawFiles),
     healthRawRows: normalizeRawRows(data.healthRawRows),
+    healthImportDeadLetters: normalizeDeadLetters(data.healthImportDeadLetters),
     goals: normalizeGoals(data.goals),
     settings: {
       timezone: data.settings?.timezone || "Europe/Berlin",

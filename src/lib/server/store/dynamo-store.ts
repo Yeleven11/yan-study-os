@@ -260,6 +260,17 @@ function createDocumentClient(): DynamoDBDocumentClient {
   });
 }
 
+
+function normalizeDeadLetters(items: AppData["healthImportDeadLetters"] | undefined): AppData["healthImportDeadLetters"] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter((item) => item && typeof item.id === "string" && typeof item.channel === "string" && typeof item.requestHash === "string" && typeof item.firstFailedAt === "string" && typeof item.lastFailedAt === "string" && typeof item.retryCount === "number" && typeof item.errorCode === "string" && typeof item.errorMessage === "string")
+    .sort((left, right) => new Date(left.lastFailedAt).getTime() - new Date(right.lastFailedAt).getTime());
+}
+
 function normalizeData(data: AppData): AppData {
   const dailyHealth = normalizeDailyHealth(data.dailyHealth);
   const workouts = normalizeWorkouts(data.workouts);
@@ -278,6 +289,7 @@ function normalizeData(data: AppData): AppData {
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
     healthRawFiles: normalizeRawFiles(data.healthRawFiles),
     healthRawRows: normalizeRawRows(data.healthRawRows),
+    healthImportDeadLetters: normalizeDeadLetters(data.healthImportDeadLetters),
     goals: normalizeGoals(data.goals),
     settings: {
       timezone: data.settings.timezone || "Europe/Berlin",
@@ -298,6 +310,7 @@ function buildSettingsItem(data: AppData): Record<string, unknown> {
     workoutDetails: data.workoutDetails,
     healthRawFiles: data.healthRawFiles,
     healthRawRows: data.healthRawRows,
+    healthImportDeadLetters: data.healthImportDeadLetters,
     goals: data.goals,
     updatedAt: new Date().toISOString(),
   };
@@ -381,6 +394,7 @@ function createDynamoStore(): DashboardStore {
     );
     const healthRawFiles = normalizeRawFiles(settingsResult.Item?.healthRawFiles as HealthRawFile[]);
     const healthRawRows = normalizeRawRows(settingsResult.Item?.healthRawRows as HealthRawRow[]);
+    const healthImportDeadLetters = normalizeDeadLetters(settingsResult.Item?.healthImportDeadLetters as AppData["healthImportDeadLetters"]);
 
     return normalizeData({
       exams,
@@ -392,6 +406,7 @@ function createDynamoStore(): DashboardStore {
       workoutDetails,
       healthRawFiles,
       healthRawRows,
+      healthImportDeadLetters,
       goals,
       settings,
     });

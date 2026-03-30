@@ -252,6 +252,7 @@ export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
     workoutDetails: [],
     healthRawFiles: [],
     healthRawRows: [],
+    healthImportDeadLetters: [],
     goals: createDefaultPerformanceGoals(),
     settings: {
       timezone,

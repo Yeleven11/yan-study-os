@@ -707,6 +707,7 @@ export function createDemoAppData(timezone = "Europe/Berlin"): AppData {
     workoutDetails,
     healthRawFiles,
     healthRawRows: [],
+    healthImportDeadLetters: [],
     goals,
     settings: {
       timezone,

@@ -182,3 +182,26 @@ test("drops future-dated records and ignores future incoming payload data", () =
     false,
   );
 });
+
+
+test("skips duplicate mobile batch by idempotency key marker", () => {
+  const seed = createDefaultAppData("Europe/Berlin");
+  seed.healthRawRows.push({
+    id: "idem-mobile-1",
+    fileId: "idempotency-mobile",
+    rowIndex: 0,
+    timestamp: "2026-02-16T08:00:00.000Z",
+    values: {
+      channel: "mobile",
+      idempotencyKey: "ios-idem-1",
+      schemaVersion: "2",
+      recordedAt: "2026-02-16T08:00:00.000Z",
+    },
+  });
+
+  const payload = { ...buildPayload("batch-idem"), schemaVersion: 2 as const, idempotencyKey: "ios-idem-1" };
+  const imported = importMobileSyncPayload(seed, payload);
+
+  assert.equal(imported.summary.duplicateBatch, true);
+  assert.equal(imported.summary.filesSkipped, 1);
+});
