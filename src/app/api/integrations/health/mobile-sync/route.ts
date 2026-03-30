@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireHealthIngestAuth } from "@/lib/server/health-ingest-auth";
 import { importMobileSyncPayload } from "@/lib/server/health-mobile";
 import { getDashboardStore } from "@/lib/server/store";
+import { hashIdempotencyPayload, respondWithIdempotency } from "@/lib/server/idempotency";
 import type { MobileSyncRequest, MobileSyncResponse } from "@/lib/types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -271,31 +272,41 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+  const payload = normalized.payload;
 
   try {
     const store = getDashboardStore();
-    const data = await store.getData();
-    const imported = importMobileSyncPayload(data, normalized.payload);
-    await store.saveData(imported.nextData);
+    const payloadHash = hashIdempotencyPayload(payload);
+    const idempotencyKey = request.headers.get("idempotency-key");
+    return respondWithIdempotency({
+      store,
+      scope: "integrations.health.mobile-sync",
+      key: idempotencyKey,
+      payloadHash,
+      handler: async () => {
+        const data = await store.getData();
+        const imported = importMobileSyncPayload(data, payload);
+        await store.saveData(imported.nextData);
 
-    const intervalMinutes = normalized.payload.settings?.syncIntervalMinutes;
-    const boundedIntervalMinutes =
-      typeof intervalMinutes === "number" ? Math.max(15, Math.min(180, intervalMinutes)) : 30;
+        const intervalMinutes = payload.settings?.syncIntervalMinutes;
+        const boundedIntervalMinutes =
+          typeof intervalMinutes === "number" ? Math.max(15, Math.min(180, intervalMinutes)) : 30;
 
-    const response: MobileSyncResponse = {
-      ok: true,
-      importedHealthDays: imported.summary.importedHealthDays,
-      importedWorkouts: imported.summary.importedWorkouts,
-      updatedWorkouts: imported.summary.updatedWorkouts,
-      filesProcessed: imported.summary.filesProcessed,
-      filesSkipped: imported.summary.filesSkipped,
-      linkedStreams: imported.summary.linkedStreams,
-      duplicateBatch: imported.summary.duplicateBatch,
-      serverTime: new Date().toISOString(),
-      nextSuggestedSyncSeconds: boundedIntervalMinutes * 60,
-    };
-
-    return NextResponse.json(response);
+        const response: MobileSyncResponse = {
+          ok: true,
+          importedHealthDays: imported.summary.importedHealthDays,
+          importedWorkouts: imported.summary.importedWorkouts,
+          updatedWorkouts: imported.summary.updatedWorkouts,
+          filesProcessed: imported.summary.filesProcessed,
+          filesSkipped: imported.summary.filesSkipped,
+          linkedStreams: imported.summary.linkedStreams,
+          duplicateBatch: imported.summary.duplicateBatch,
+          serverTime: new Date().toISOString(),
+          nextSuggestedSyncSeconds: boundedIntervalMinutes * 60,
+        };
+        return { body: response };
+      },
+    });
   } catch (error) {
     const err = error as {
       name?: string;

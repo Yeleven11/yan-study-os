@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   ScanCommand,
@@ -31,6 +32,8 @@ const MAX_HEALTH_RAW_FILES = 1000;
 const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 0;
 const MAX_SERIES_POINTS = 180;
 const MAX_SETTINGS_ITEM_BYTES = 330_000;
+const IDEMPOTENCY_PK_PREFIX = "idempotency#";
+const MAX_IDEMPOTENCY_RECORDS = 1000;
 
 function takeTail<T>(items: T[], max: number): T[] {
   if (max <= 0) {
@@ -554,6 +557,80 @@ function createDynamoStore(): DashboardStore {
       }
       data.workoutDetails = [...byId.values()];
       await persistSettings(data);
+    },
+    async getIdempotencyRecord(scope, key) {
+      const pk = `${IDEMPOTENCY_PK_PREFIX}${scope}#${key}`;
+      const result = await doc.send(
+        new GetCommand({
+          TableName: settingsTable,
+          Key: { pk },
+        }),
+      );
+      const item = result.Item;
+      if (!item) {
+        return null;
+      }
+      const expiresAt = String(item.expiresAt || "");
+      if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
+        await doc.send(
+          new DeleteCommand({
+            TableName: settingsTable,
+            Key: { pk },
+          }),
+        );
+        return null;
+      }
+      return {
+        scope: String(item.scope),
+        key: String(item.key),
+        payloadHash: String(item.payloadHash),
+        status: Number(item.status),
+        body: item.body,
+        createdAt: String(item.createdAt),
+        expiresAt,
+      };
+    },
+    async putIdempotencyRecord(record) {
+      await doc.send(
+        new PutCommand({
+          TableName: settingsTable,
+          Item: {
+            pk: `${IDEMPOTENCY_PK_PREFIX}${record.scope}#${record.key}`,
+            ...record,
+            updatedAt: new Date().toISOString(),
+          },
+        }),
+      );
+      const list = await doc.send(
+        new ScanCommand({
+          TableName: settingsTable,
+          FilterExpression: "begins_with(pk, :prefix)",
+          ExpressionAttributeValues: {
+            ":prefix": IDEMPOTENCY_PK_PREFIX,
+          },
+        }),
+      );
+      const now = Date.now();
+      const records = (list.Items || [])
+        .filter((item) => typeof item.pk === "string")
+        .sort(
+          (left, right) =>
+            new Date(String(left.createdAt || 0)).getTime() -
+            new Date(String(right.createdAt || 0)).getTime(),
+        );
+      const expired = records.filter((item) => new Date(String(item.expiresAt || 0)).getTime() <= now);
+      const overflow = records.slice(0, Math.max(0, records.length - MAX_IDEMPOTENCY_RECORDS));
+      const toDelete = [...expired, ...overflow];
+      await Promise.all(
+        toDelete.map((item) =>
+          doc.send(
+            new DeleteCommand({
+              TableName: settingsTable,
+              Key: { pk: item.pk },
+            }),
+          ),
+        ),
+      );
     },
   };
 }

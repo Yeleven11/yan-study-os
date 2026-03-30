@@ -5,6 +5,7 @@ import { badRequest } from "@/lib/server/route-helpers";
 import { importHealthFiles } from "@/lib/server/health-csv";
 import { requireHealthIngestAuth } from "@/lib/server/health-ingest-auth";
 import { normalizeHealthIngestRequest } from "@/lib/server/health-ingest-request";
+import { hashIdempotencyPayload, respondWithIdempotency } from "@/lib/server/idempotency";
 
 const INVALID_BODY_MESSAGE =
   "Expected JSON { csv } or { files }, raw CSV text body, or multipart/form-data with CSV files.";
@@ -28,16 +29,29 @@ export async function POST(request: NextRequest) {
     }
 
     const store = getDashboardStore();
-    const data = await store.getData();
-    const imported = importHealthFiles(data, files);
-    await store.saveData(imported.nextData);
-
-    return NextResponse.json({
-      importedHealthDays: imported.summary.importedHealthDays,
-      importedWorkouts: imported.summary.importedWorkouts,
-      filesProcessed: imported.summary.filesProcessed,
-      filesSkipped: imported.summary.filesSkipped + imported.summary.filesIgnored,
-      linkedStreams: imported.summary.linkedStreams,
+    const payloadHash = hashIdempotencyPayload(
+      files.map((file) => ({ filename: file.filename, csv: file.csv })),
+    );
+    const idempotencyKey = request.headers.get("idempotency-key");
+    return respondWithIdempotency({
+      store,
+      scope: "integrations.health.csv",
+      key: idempotencyKey,
+      payloadHash,
+      handler: async () => {
+        const data = await store.getData();
+        const imported = importHealthFiles(data, files);
+        await store.saveData(imported.nextData);
+        return {
+          body: {
+            importedHealthDays: imported.summary.importedHealthDays,
+            importedWorkouts: imported.summary.importedWorkouts,
+            filesProcessed: imported.summary.filesProcessed,
+            filesSkipped: imported.summary.filesSkipped + imported.summary.filesIgnored,
+            linkedStreams: imported.summary.linkedStreams,
+          },
+        };
+      },
     });
   } catch (error) {
     const err = error as {

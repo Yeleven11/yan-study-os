@@ -20,4 +20,25 @@ export interface DashboardStore {
   appendHealthRawFiles: (files: HealthRawFile[]) => Promise<void>;
   appendHealthRawRows: (rows: HealthRawRow[]) => Promise<void>;
   upsertWorkoutDetails: (details: WorkoutDetail[]) => Promise<void>;
+  getIdempotencyRecord: (
+    scope: string,
+    key: string,
+  ) => Promise<{
+    scope: string;
+    key: string;
+    payloadHash: string;
+    status: number;
+    body: unknown;
+    createdAt: string;
+    expiresAt: string;
+  } | null>;
+  putIdempotencyRecord: (record: {
+    scope: string;
+    key: string;
+    payloadHash: string;
+    status: number;
+    body: unknown;
+    createdAt: string;
+    expiresAt: string;
+  }) => Promise<void>;
 }

@@ -15,6 +15,8 @@ import type { DashboardStore } from "./types";
 
 const DEFAULT_TIMEZONE = "Europe/Berlin";
 const DEFAULT_TABLE = "yan_study_state";
+const DEFAULT_IDEMPOTENCY_TABLE = "yan_study_idempotency";
+const MAX_IDEMPOTENCY_RECORDS = 1000;
 
 let schemaReadyPromise: Promise<void> | null = null;
 let writeQueue = Promise.resolve();
@@ -233,6 +235,14 @@ function getStateTableName(): string {
   return raw;
 }
 
+function getIdempotencyTableName(): string {
+  const raw = (process.env.NEON_IDEMPOTENCY_TABLE || DEFAULT_IDEMPOTENCY_TABLE).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw)) {
+    throw new Error("NEON_IDEMPOTENCY_TABLE must be a valid SQL identifier");
+  }
+  return raw;
+}
+
 function getDatabaseUrl(): string {
   const candidates = [
     process.env.NEON_DATABASE_URL,
@@ -262,6 +272,7 @@ async function ensureSchema(): Promise<void> {
   }
 
   const table = getStateTableName();
+  const idempotencyTable = getIdempotencyTableName();
 
   schemaReadyPromise = (async () => {
     const sql = getSqlClient();
@@ -270,6 +281,18 @@ async function ensureSchema(): Promise<void> {
         id SMALLINT PRIMARY KEY,
         data JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS ${idempotencyTable} (
+        scope TEXT NOT NULL,
+        key TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        status SMALLINT NOT NULL,
+        body JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (scope, key)
       )
     `);
   })();
@@ -453,6 +476,78 @@ function createNeonStore(): DashboardStore {
         }
         data.workoutDetails = [...byId.values()];
       });
+    },
+    async getIdempotencyRecord(scope, key) {
+      await ensureSchema();
+      const sql = getSqlClient();
+      const table = getIdempotencyTableName();
+      await sql.query(`DELETE FROM ${table} WHERE expires_at <= NOW()`);
+      const rows = await sql.query(
+        `SELECT scope, key, payload_hash, status, body, created_at, expires_at
+         FROM ${table}
+         WHERE scope = $1 AND key = $2
+         LIMIT 1`,
+        [scope, key],
+      );
+      const row = rows[0] as
+        | {
+            scope: string;
+            key: string;
+            payload_hash: string;
+            status: number;
+            body: unknown;
+            created_at: string;
+            expires_at: string;
+          }
+        | undefined;
+      if (!row) {
+        return null;
+      }
+      return {
+        scope: row.scope,
+        key: row.key,
+        payloadHash: row.payload_hash,
+        status: row.status,
+        body: row.body,
+        createdAt: new Date(row.created_at).toISOString(),
+        expiresAt: new Date(row.expires_at).toISOString(),
+      };
+    },
+    async putIdempotencyRecord(record) {
+      await ensureSchema();
+      const sql = getSqlClient();
+      const table = getIdempotencyTableName();
+      await sql.query(
+        `INSERT INTO ${table} (scope, key, payload_hash, status, body, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $7::timestamptz)
+         ON CONFLICT (scope, key)
+         DO UPDATE SET
+           payload_hash = EXCLUDED.payload_hash,
+           status = EXCLUDED.status,
+           body = EXCLUDED.body,
+           created_at = EXCLUDED.created_at,
+           expires_at = EXCLUDED.expires_at`,
+        [
+          record.scope,
+          record.key,
+          record.payloadHash,
+          record.status,
+          JSON.stringify(record.body),
+          record.createdAt,
+          record.expiresAt,
+        ],
+      );
+      await sql.query(`DELETE FROM ${table} WHERE expires_at <= NOW()`);
+      await sql.query(
+        `DELETE FROM ${table}
+         WHERE (scope, key) IN (
+           SELECT scope, key
+           FROM ${table}
+           ORDER BY created_at DESC
+           OFFSET $1
+         )`,
+        [MAX_IDEMPOTENCY_RECORDS],
+      );
     },
   };
 }

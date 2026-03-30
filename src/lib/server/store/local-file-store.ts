@@ -16,12 +16,24 @@ import type { DashboardStore } from "./types";
 
 const DATA_DIRECTORY = path.join(process.cwd(), "runtime-data");
 const DATA_FILE_PATH = path.join(DATA_DIRECTORY, "yan-study-os.json");
+const IDEMPOTENCY_FILE_PATH = path.join(DATA_DIRECTORY, "yan-study-os-idempotency.json");
 const EXAMS_BACKUP_FILE_PATH = path.join(
   DATA_DIRECTORY,
   "yan-study-os-exams-backup.json",
 );
 
 let writeQueue = Promise.resolve();
+const MAX_IDEMPOTENCY_RECORDS = 1000;
+
+type IdempotencyRecord = {
+  scope: string;
+  key: string;
+  payloadHash: string;
+  status: number;
+  body: unknown;
+  createdAt: string;
+  expiresAt: string;
+};
 
 function normalizeGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
   const defaults = createDefaultPerformanceGoals();
@@ -240,6 +252,40 @@ async function ensureDataFile(): Promise<void> {
   }
 }
 
+async function readIdempotencyRecords(): Promise<IdempotencyRecord[]> {
+  await ensureDataFile();
+  try {
+    const raw = await readFile(IDEMPOTENCY_FILE_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(
+      (item): item is IdempotencyRecord =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as IdempotencyRecord).scope === "string" &&
+        typeof (item as IdempotencyRecord).key === "string" &&
+        typeof (item as IdempotencyRecord).payloadHash === "string" &&
+        typeof (item as IdempotencyRecord).status === "number" &&
+        typeof (item as IdempotencyRecord).createdAt === "string" &&
+        typeof (item as IdempotencyRecord).expiresAt === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function writeIdempotencyRecords(records: IdempotencyRecord[]): Promise<void> {
+  const bounded = records
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+    .slice(-MAX_IDEMPOTENCY_RECORDS);
+  writeQueue = writeQueue.then(() =>
+    writeFile(IDEMPOTENCY_FILE_PATH, JSON.stringify(bounded, null, 2), "utf-8"),
+  );
+  await writeQueue;
+}
+
 async function readData(): Promise<AppData> {
   await ensureDataFile();
   const raw = await readFile(DATA_FILE_PATH, "utf-8");
@@ -383,6 +429,25 @@ function createLocalFileStore(): DashboardStore {
       }
       data.workoutDetails = [...byId.values()];
       await writeData(data);
+    },
+    async getIdempotencyRecord(scope, key) {
+      const now = Date.now();
+      const records = await readIdempotencyRecords();
+      const active = records.filter((record) => new Date(record.expiresAt).getTime() > now);
+      if (active.length !== records.length) {
+        await writeIdempotencyRecords(active);
+      }
+      return active.find((record) => record.scope === scope && record.key === key) || null;
+    },
+    async putIdempotencyRecord(record) {
+      const now = Date.now();
+      const records = await readIdempotencyRecords();
+      const active = records.filter((item) => new Date(item.expiresAt).getTime() > now);
+      const next = [
+        ...active.filter((item) => !(item.scope === record.scope && item.key === record.key)),
+        record,
+      ];
+      await writeIdempotencyRecords(next);
     },
   };
 }
