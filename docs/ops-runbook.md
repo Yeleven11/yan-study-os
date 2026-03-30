@@ -26,37 +26,31 @@ Use the route and correlation ID fields to reconstruct request timelines:
 1. Find a failing request in client logs or API response headers.
 2. Search backend logs by `correlationId`.
 3. Confirm `result`, `errorClass`, and `latencyMs`.
-4. Pivot to route-specific metrics below.
+4. Group recent failures by `route`, `result`, and `errorClass` to understand blast radius.
 
-## Dashboards and Alerts
-- Grafana dashboard JSON: `ops/monitoring/grafana-dashboard.json`
-- Prometheus rules: `ops/monitoring/prometheus-rules.yml`
+## Working Signals
+The current implementation ships correlation-aware response headers and structured completion logs. It does not yet expose Prometheus metrics, so use logs as the source of truth for incident triage.
 
-### Service-Level Indicators
-1. **Error rate**
-   - Metric: `yan_study_api_requests_total`
-   - Alert: `YanStudyApiHighErrorRate`
-   - Threshold: >5% server errors for 10m
+1. **Elevated server errors**
+   - Filter logs where `result="server_error"`.
+   - Group by `route` and `errorClass`.
 
-2. **p95 latency**
-   - Metric: `yan_study_api_request_latency_ms_bucket`
-   - Alert: `YanStudyApiP95LatencyHigh`
-   - Threshold: p95 >1200ms for 10m
+2. **Latency regression**
+   - Sort or aggregate logs by `latencyMs`.
+   - Compare affected routes against recent healthy requests.
 
-3. **Ingestion failure rate**
-   - Metric: `yan_study_health_ingestion_requests_total`
-   - Alert: `YanStudyHealthIngestionFailureRateHigh`
-   - Threshold: >10% failures for 15m
+3. **Health ingestion instability**
+   - Filter `/api/integrations/health/*`.
+   - Split on `unauthorized`, `client_error`, and `server_error`.
 
-4. **Auth failure anomalies**
-   - Metric: `yan_study_auth_attempts_total`
-   - Alert: `YanStudyAuthFailureAnomaly`
-   - Threshold: >20% failed auth + at least 20 failures over 10m
+4. **Auth failure anomaly**
+   - Filter `/api/auth/*`.
+   - Compare failure volume and `result` mix over the last 5-15 minutes.
 
 ## Incident Procedures
 
 ### 1) Elevated API Error Rate
-1. Confirm alert scope and impacted routes.
+1. Confirm impacted routes from recent log volume.
 2. Check logs for top `errorClass` and `route` combinations.
 3. If ingestion routes dominate, jump to ingestion playbook.
 4. If auth routes dominate, jump to auth playbook.
@@ -87,7 +81,7 @@ Use the route and correlation ID fields to reconstruct request timelines:
 5. Rotate passcode/hash if compromise suspected.
 
 ## Post-Incident Checklist
-- Capture start/end timestamps and alert names.
+- Capture start/end timestamps and correlation IDs for representative failures.
 - Record top failing routes and `errorClass` values.
 - Add at least one prevention action item.
 - Update this runbook with any new failure mode discovered.

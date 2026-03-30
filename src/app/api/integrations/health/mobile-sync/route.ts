@@ -304,7 +304,6 @@ export async function POST(request: NextRequest) {
     return routeJson(route, response, {
       result: "success",
       userContext: {
-        deviceId: normalized.payload.device.deviceId,
         filesProcessed: imported.summary.filesProcessed,
         duplicateBatch: imported.summary.duplicateBatch,
       },
