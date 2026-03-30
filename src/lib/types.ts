@@ -363,6 +363,13 @@ export interface MobileSyncResponse {
   duplicateBatch: boolean;
   serverTime: string;
   nextSuggestedSyncSeconds: number;
+  schema: {
+    acceptedVersion: 1;
+    supportedVersions: number[];
+    deprecatedLegacyVersion: 0;
+    deprecationWindowEndsAt: string;
+    transformedLegacyPayload: boolean;
+  };
 }
 
 export interface PerformanceGoals {

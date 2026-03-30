@@ -217,7 +217,7 @@ actor HealthKitService {
         let deviceInfo = await currentDeviceInfo()
 
         let payload = MobileSyncPayload(
-            schemaVersion: 1,
+            schemaVersion: MobileSyncContract.latestSchemaVersion,
             batchId: UUID().uuidString.lowercased(),
             generatedAt: now.isoTimestamp,
             device: deviceInfo,
@@ -280,7 +280,7 @@ actor HealthKitService {
 
         let deviceInfo = await currentDeviceInfo()
         return MobileSyncPayload(
-            schemaVersion: 1,
+            schemaVersion: MobileSyncContract.latestSchemaVersion,
             batchId: UUID().uuidString.lowercased(),
             generatedAt: now.isoTimestamp,
             device: deviceInfo,

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultAppData } from "../constants";
-import { importMobileSyncPayload } from "./health-mobile";
+import {
+  importMobileSyncPayload,
+  resolveMobileSyncSchemaVersion,
+} from "./health-mobile";
 import type { MobileSyncRequest } from "../types";
 
 function buildPayload(batchId: string): MobileSyncRequest {
@@ -181,4 +184,21 @@ test("drops future-dated records and ignores future incoming payload data", () =
     imported.nextData.workoutDetails.some((item) => item.startedAt.startsWith("2120-")),
     false,
   );
+});
+
+test("accepts legacy schema within deprecation window and transforms to latest", () => {
+  const compatibility = resolveMobileSyncSchemaVersion(0, new Date("2026-06-01T00:00:00.000Z"));
+  assert.equal(compatibility.accepted, true);
+  if (compatibility.accepted) {
+    assert.equal(compatibility.normalizedVersion, 1);
+    assert.equal(compatibility.strategy, "transform_legacy");
+  }
+});
+
+test("rejects missing or unsupported schema versions", () => {
+  const missingSchema = resolveMobileSyncSchemaVersion(undefined);
+  assert.equal(missingSchema.accepted, false);
+
+  const unsupportedSchema = resolveMobileSyncSchemaVersion(4);
+  assert.equal(unsupportedSchema.accepted, false);
 });

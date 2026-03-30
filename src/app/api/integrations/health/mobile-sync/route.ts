@@ -1,7 +1,13 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { requireHealthIngestAuth } from "@/lib/server/health-ingest-auth";
-import { importMobileSyncPayload } from "@/lib/server/health-mobile";
+import {
+  importMobileSyncPayload,
+  MOBILE_SYNC_LEGACY_DEPRECATION_END,
+  MOBILE_SYNC_LEGACY_SCHEMA_VERSION,
+  MOBILE_SYNC_SUPPORTED_SCHEMA_VERSIONS,
+  resolveMobileSyncSchemaVersion,
+} from "@/lib/server/health-mobile";
 import { getDashboardStore } from "@/lib/server/store";
 import type { MobileSyncRequest, MobileSyncResponse } from "@/lib/types";
 
@@ -62,14 +68,16 @@ function normalizeSeries(value: unknown): Array<{ timestamp: string; value: numb
   return entries.length > 0 ? entries : undefined;
 }
 
-function normalizeSyncRequest(raw: unknown): { payload: MobileSyncRequest | null; error?: string } {
+function normalizeSyncRequest(
+  raw: unknown,
+): { payload: MobileSyncRequest | null; error?: string; transformedLegacySchema?: boolean } {
   if (!isRecord(raw)) {
     return { payload: null, error: "Invalid JSON body" };
   }
 
-  const schemaVersion = raw.schemaVersion;
-  if (schemaVersion !== 1) {
-    return { payload: null, error: "schemaVersion must be 1" };
+  const schema = resolveMobileSyncSchemaVersion(raw.schemaVersion);
+  if (!schema.accepted) {
+    return { payload: null, error: schema.error };
   }
 
   if (!isNonEmptyString(raw.batchId)) {
@@ -225,7 +233,7 @@ function normalizeSyncRequest(raw: unknown): { payload: MobileSyncRequest | null
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
   const payload: MobileSyncRequest = {
-    schemaVersion: 1,
+    schemaVersion: schema.normalizedVersion,
     batchId: raw.batchId.trim(),
     generatedAt: new Date(raw.generatedAt).toISOString(),
     device: {
@@ -252,7 +260,10 @@ function normalizeSyncRequest(raw: unknown): { payload: MobileSyncRequest | null
     deletions: normalizedDeletions,
   };
 
-  return { payload };
+  return {
+    payload,
+    transformedLegacySchema: schema.strategy === "transform_legacy",
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -293,6 +304,13 @@ export async function POST(request: NextRequest) {
       duplicateBatch: imported.summary.duplicateBatch,
       serverTime: new Date().toISOString(),
       nextSuggestedSyncSeconds: boundedIntervalMinutes * 60,
+      schema: {
+        acceptedVersion: normalized.payload.schemaVersion,
+        supportedVersions: [...MOBILE_SYNC_SUPPORTED_SCHEMA_VERSIONS],
+        deprecatedLegacyVersion: MOBILE_SYNC_LEGACY_SCHEMA_VERSION,
+        deprecationWindowEndsAt: MOBILE_SYNC_LEGACY_DEPRECATION_END,
+        transformedLegacyPayload: Boolean(normalized.transformedLegacySchema),
+      },
     };
 
     return NextResponse.json(response);
