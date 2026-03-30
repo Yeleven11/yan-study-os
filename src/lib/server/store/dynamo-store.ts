@@ -3,7 +3,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
-  ScanCommand,
+  QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
@@ -24,6 +24,11 @@ import type {
 import type { DashboardStore } from "./types";
 
 const SETTINGS_PK = "settings";
+const ENTITY_PK_PREFIX = "tenant";
+const TODO_SK_PREFIX = "todo";
+const SESSION_SK_PREFIX = "session";
+const DEFAULT_TENANT_ID = "default";
+const DEFAULT_USER_ID = "default";
 const MAX_DAILY_HEALTH_DAYS = 180;
 const MAX_WORKOUTS = 240;
 const MAX_WORKOUT_DETAILS = 60;
@@ -31,6 +36,13 @@ const MAX_HEALTH_RAW_FILES = 1000;
 const MAX_STREAM_ROWS_PER_WORKOUT_STREAM = 0;
 const MAX_SERIES_POINTS = 180;
 const MAX_SETTINGS_ITEM_BYTES = 330_000;
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 500;
+
+type EntityRecord = Record<string, unknown> & {
+  pk?: string;
+  sk?: string;
+};
 
 function takeTail<T>(items: T[], max: number): T[] {
   if (max <= 0) {
@@ -260,6 +272,66 @@ function createDocumentClient(): DynamoDBDocumentClient {
   });
 }
 
+function getTenantId(): string {
+  return process.env.YAN_STUDY_TENANT_ID || DEFAULT_TENANT_ID;
+}
+
+function getUserId(): string {
+  return process.env.YAN_STUDY_USER_ID || DEFAULT_USER_ID;
+}
+
+function getEntityPartitionKey(): string {
+  return `${ENTITY_PK_PREFIX}#${getTenantId()}#user#${getUserId()}`;
+}
+
+function buildTodoSortKey(todo: Pick<TodoItem, "id" | "createdAt">): string {
+  return `${TODO_SK_PREFIX}#${todo.createdAt}#${todo.id}`;
+}
+
+function buildSessionSortKey(session: Pick<StudySession, "id" | "startedAt">): string {
+  return `${SESSION_SK_PREFIX}#${session.startedAt}#${session.id}`;
+}
+
+function withEntityKeys<T extends object>(
+  item: T,
+  sk: string,
+): T & { pk: string; sk: string } {
+  return {
+    ...item,
+    pk: getEntityPartitionKey(),
+    sk,
+  };
+}
+
+function clampPageSize(input?: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    return DEFAULT_PAGE_SIZE;
+  }
+
+  return Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor(input)));
+}
+
+function decodeCursor(cursor: string | undefined): Record<string, unknown> | undefined {
+  if (!cursor) {
+    return undefined;
+  }
+
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function encodeCursor(key: Record<string, unknown> | undefined): string | null {
+  if (!key) {
+    return null;
+  }
+  return Buffer.from(JSON.stringify(key), "utf8").toString("base64url");
+}
+
 function normalizeData(data: AppData): AppData {
   const dailyHealth = normalizeDailyHealth(data.dailyHealth);
   const workouts = normalizeWorkouts(data.workouts);
@@ -344,10 +416,60 @@ function createDynamoStore(): DashboardStore {
   const todosTable = getRequiredEnv("YAN_STUDY_TODOS_TABLE");
   const settingsTable = getRequiredEnv("YAN_STUDY_SETTINGS_TABLE");
 
+  async function queryEntityPage<T>(params: {
+    tableName: string;
+    sortKeyPrefix: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<{ items: T[]; nextCursor: string | null }> {
+    const partitionKey = getEntityPartitionKey();
+    const result = await doc.send(
+      new QueryCommand({
+        TableName: params.tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :skPrefix)",
+        ExpressionAttributeValues: {
+          ":pk": partitionKey,
+          ":skPrefix": `${params.sortKeyPrefix}#`,
+        },
+        ExclusiveStartKey: decodeCursor(params.cursor),
+        Limit: clampPageSize(params.limit),
+      }),
+    );
+
+    return {
+      items: (result.Items || []) as T[],
+      nextCursor: encodeCursor(result.LastEvaluatedKey as Record<string, unknown> | undefined),
+    };
+  }
+
+  async function queryAllEntities<T>(tableName: string, sortKeyPrefix: string): Promise<T[]> {
+    const items: T[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await queryEntityPage<T>({
+        tableName,
+        sortKeyPrefix,
+        cursor,
+        limit: MAX_PAGE_SIZE,
+      });
+      items.push(...page.items);
+      cursor = page.nextCursor || undefined;
+    } while (cursor);
+
+    return items;
+  }
+
+  async function findTodoKeysById(id: string): Promise<{ pk: string; sk: string } | null> {
+    const rows = await queryAllEntities<EntityRecord>(todosTable, TODO_SK_PREFIX);
+    const match = rows.find((row) => row.id === id && typeof row.pk === "string" && typeof row.sk === "string");
+    return match ? { pk: match.pk as string, sk: match.sk as string } : null;
+  }
+
   async function loadData(): Promise<AppData> {
-    const [sessionsResult, todosResult, settingsResult] = await Promise.all([
-      doc.send(new ScanCommand({ TableName: sessionsTable })),
-      doc.send(new ScanCommand({ TableName: todosTable })),
+    const [sessionItems, todoItems, settingsResult] = await Promise.all([
+      queryAllEntities<StudySession>(sessionsTable, SESSION_SK_PREFIX),
+      queryAllEntities<TodoItem>(todosTable, TODO_SK_PREFIX),
       doc.send(
         new GetCommand({
           TableName: settingsTable,
@@ -384,8 +506,8 @@ function createDynamoStore(): DashboardStore {
 
     return normalizeData({
       exams,
-      studySessions: (sessionsResult.Items || []) as StudySession[],
-      todos: (todosResult.Items || []) as TodoItem[],
+      studySessions: sessionItems,
+      todos: todoItems,
       flashcards,
       dailyHealth,
       workouts,
@@ -416,6 +538,24 @@ function createDynamoStore(): DashboardStore {
     async getData() {
       return loadData();
     },
+    async listStudySessions(input) {
+      const page = await queryEntityPage<StudySession>({
+        tableName: sessionsTable,
+        sortKeyPrefix: SESSION_SK_PREFIX,
+        cursor: input?.cursor,
+        limit: input?.limit,
+      });
+      return { items: page.items, nextCursor: page.nextCursor };
+    },
+    async listTodos(input) {
+      const page = await queryEntityPage<TodoItem>({
+        tableName: todosTable,
+        sortKeyPrefix: TODO_SK_PREFIX,
+        cursor: input?.cursor,
+        limit: input?.limit,
+      });
+      return { items: page.items, nextCursor: page.nextCursor };
+    },
     async saveData(data) {
       const normalized = normalizeData(data);
 
@@ -425,7 +565,7 @@ function createDynamoStore(): DashboardStore {
           doc.send(
             new PutCommand({
               TableName: sessionsTable,
-              Item: session,
+              Item: withEntityKeys(session, buildSessionSortKey(session)),
             }),
           ),
         ),
@@ -433,7 +573,7 @@ function createDynamoStore(): DashboardStore {
           doc.send(
             new PutCommand({
               TableName: todosTable,
-              Item: todo,
+              Item: withEntityKeys(todo, buildTodoSortKey(todo)),
             }),
           ),
         ),
@@ -443,7 +583,7 @@ function createDynamoStore(): DashboardStore {
       await doc.send(
         new PutCommand({
           TableName: sessionsTable,
-          Item: session,
+          Item: withEntityKeys(session, buildSessionSortKey(session)),
         }),
       );
     },
@@ -451,11 +591,15 @@ function createDynamoStore(): DashboardStore {
       await doc.send(
         new PutCommand({
           TableName: todosTable,
-          Item: todo,
+          Item: withEntityKeys(todo, buildTodoSortKey(todo)),
         }),
       );
     },
     async updateTodo(id, patch) {
+      const key = await findTodoKeysById(id);
+      if (!key) {
+        return;
+      }
       const expressionParts: string[] = [];
       const expressionNames: Record<string, string> = {};
       const expressionValues: Record<string, unknown> = {};
@@ -475,7 +619,7 @@ function createDynamoStore(): DashboardStore {
       await doc.send(
         new UpdateCommand({
           TableName: todosTable,
-          Key: { id },
+          Key: key,
           UpdateExpression: `SET ${expressionParts.join(", ")}`,
           ExpressionAttributeNames: expressionNames,
           ExpressionAttributeValues: expressionValues,
@@ -483,10 +627,14 @@ function createDynamoStore(): DashboardStore {
       );
     },
     async archiveTodo(id) {
+      const key = await findTodoKeysById(id);
+      if (!key) {
+        return;
+      }
       await doc.send(
         new UpdateCommand({
           TableName: todosTable,
-          Key: { id },
+          Key: key,
           UpdateExpression:
             "SET archived = :archived, completed = :completed, completedAt = :completedAt",
           ExpressionAttributeValues: {
@@ -498,10 +646,14 @@ function createDynamoStore(): DashboardStore {
       );
     },
     async restoreTodo(id) {
+      const key = await findTodoKeysById(id);
+      if (!key) {
+        return;
+      }
       await doc.send(
         new UpdateCommand({
           TableName: todosTable,
-          Key: { id },
+          Key: key,
           UpdateExpression:
             "SET archived = :archived, completed = :completed REMOVE completedAt",
           ExpressionAttributeValues: {

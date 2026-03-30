@@ -10,6 +10,14 @@ import type {
 
 export interface DashboardStore {
   getData: () => Promise<AppData>;
+  listStudySessions: (input?: {
+    cursor?: string;
+    limit?: number;
+  }) => Promise<{ items: StudySession[]; nextCursor: string | null }>;
+  listTodos: (input?: {
+    cursor?: string;
+    limit?: number;
+  }) => Promise<{ items: TodoItem[]; nextCursor: string | null }>;
   saveData: (data: AppData) => Promise<void>;
   appendStudySession: (session: StudySession) => Promise<void>;
   addTodo: (todo: TodoItem) => Promise<void>;

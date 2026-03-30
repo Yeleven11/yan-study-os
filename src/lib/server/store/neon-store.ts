@@ -354,6 +354,26 @@ function createNeonStore(): DashboardStore {
       await writeQueue.catch(() => undefined);
       return readData();
     },
+    async listStudySessions(input) {
+      const data = await readData();
+      const limit = Math.max(1, Math.min(500, input?.limit ?? 100));
+      const offset = Number.parseInt(input?.cursor || "0", 10);
+      const start = Number.isFinite(offset) && offset > 0 ? offset : 0;
+      const items = data.studySessions.slice(start, start + limit);
+      const nextCursor =
+        start + items.length < data.studySessions.length ? String(start + items.length) : null;
+      return { items, nextCursor };
+    },
+    async listTodos(input) {
+      const data = await readData();
+      const limit = Math.max(1, Math.min(500, input?.limit ?? 100));
+      const offset = Number.parseInt(input?.cursor || "0", 10);
+      const start = Number.isFinite(offset) && offset > 0 ? offset : 0;
+      const items = data.todos.slice(start, start + limit);
+      const nextCursor =
+        start + items.length < data.todos.length ? String(start + items.length) : null;
+      return { items, nextCursor };
+    },
     async saveData(data) {
       await runQueuedWrite(async () => {
         await writeDataDirect(data);
