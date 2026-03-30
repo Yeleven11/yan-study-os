@@ -1,8 +1,10 @@
-# Release Launch Packet
+# Release Launch Packet Template
 
-**Release window:** _TBD (set in CAB/Change ticket)_  
-**Prepared by:** Release Engineering  
-**Effective date:** March 30, 2026
+This document is a reusable release template for Yan Study OS. Replace every placeholder, owner assignment, and timing field before using it for a live production release.
+
+**Release window:** _Fill in per release (CAB/change ticket)_  
+**Prepared by:** _Fill in release owner_  
+**Template last updated:** March 30, 2026
 
 ## 1) Deployment Sequence
 
@@ -26,7 +28,7 @@
    - no sustained queue backlog growth
 5. Increase traffic to 25% for 15 minutes; re-check metrics and logs.
 6. Promote to 100% if checks pass.
-7. Run post-deploy smoke tests (auth, core API paths, billing/write path, notifications).
+7. Run post-deploy smoke tests (auth, dashboard bootstrap, todo/session writes, health CSV import, mobile sync).
 8. Communicate “release complete, monitoring active” status.
 
 ### 1.3 Deployment stop conditions
@@ -53,11 +55,11 @@ Rollback decision is made by Incident Commander + Engineering Lead when any thre
 6. Send stakeholder update every 15 minutes until stabilized.
 
 ### 2.3 Rollback communication template
-- **Status:** Rolling back release `<version>` initiated at `<time UTC>`.
-- **Reason:** `<customer-impact summary>`.
-- **Current impact:** `<scope/regions/features>`.
-- **ETA to stable:** `<estimate>`.
-- **Next update:** `<time UTC +15m>`.
+- **Status:** Rolling back release `[version]` initiated at `[time UTC]`.
+- **Reason:** `[customer-impact summary]`.
+- **Current impact:** `[scope/regions/features]`.
+- **ETA to stable:** `[estimate]`.
+- **Next update:** `[time UTC +15m]`.
 
 ## 3) Data Backup and Restore by Backend
 
@@ -102,7 +104,7 @@ Rollback decision is made by Incident Commander + Engineering Lead when any thre
 
 ### Restore
 1. Restore impacted tables from on-demand backup (preferred) or PITR timestamp.
-2. Restore to new tables (`<table>_restore_<timestamp>`) to avoid destructive overwrite.
+2. Restore to new tables (`[table]_restore_[timestamp]`) to avoid destructive overwrite.
 3. Update service configuration/aliases to point to restored tables.
 4. Run reconciliation job for any out-of-band writes.
 5. Validate GSI health, TTL settings, stream consumers, and IAM policies.
@@ -117,11 +119,11 @@ Rollback decision is made by Incident Commander + Engineering Lead when any thre
 | **Sev4** | Minor defect/no customer impact | Next business day | Team lead | Backlog owner | None required | Standard triage |
 
 ### Escalation contacts (fill before release)
-- Incident Commander (primary/secondary): `<name> / <name>`
-- Backend on-call (primary/secondary): `<name> / <name>`
-- SRE on-call: `<name>`
-- Product communications: `<name>`
-- Customer support manager: `<name>`
+- Incident Commander (primary/secondary): `[name] / [name]`
+- Backend on-call (primary/secondary): `[name] / [name]`
+- SRE on-call: `[name]`
+- Product communications: `[name]`
+- Customer support manager: `[name]`
 
 ## 5) Post-Release Monitoring Checklist
 
@@ -159,13 +161,13 @@ Rollback decision is made by Incident Commander + Engineering Lead when any thre
 
 | Day (UTC) | Incident Commander | Backend Primary | SRE Primary | Product/Comms | Support Liaison |
 |---|---|---|---|---|---|
-| Day 0 (Release day) | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 1 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 2 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 3 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 4 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 5 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
-| Day 6 | `<owner>` | `<owner>` | `<owner>` | `<owner>` | `<owner>` |
+| Day 0 (Release day) | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 1 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 2 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 3 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 4 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 5 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
+| Day 6 | `[owner]` | `[owner]` | `[owner]` | `[owner]` | `[owner]` |
 
 ### Handoff rules
 - Daily 15-minute handoff between outgoing/incoming on-call owners.
