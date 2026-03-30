@@ -5,6 +5,11 @@ import {
   DEFAULT_WEEKLY_WORKOUT_TARGET,
 } from "@/lib/constants";
 import { toDateKey, toOperationalDateKey } from "@/lib/dashboard-utils";
+import { mentalStrainFromImpulse as computeMentalStrainFromImpulse } from "@/lib/health-engine/mental-strain";
+import { clamp as normalizeClamp } from "@/lib/health-engine/normalization";
+import { sentenceForDriver as toSleepDriverSentence } from "@/lib/health-engine/sleep";
+import { physicalStrainFromImpulse as computePhysicalStrainFromImpulse } from "@/lib/health-engine/physical-strain";
+import { recoveryReasonText as toRecoveryReasonText } from "@/lib/health-engine/recovery";
 import type {
   AppData,
   DailyHealthFact,
@@ -943,7 +948,7 @@ function computeExamUrgency(dateKey: string, exams: Exam[], todos: TodoItem[]): 
     urgency = Math.max(urgency, u);
   }
 
-  return clamp(urgency, 0, 1);
+  return normalizeClamp(urgency, 0, 1);
 }
 
 function physicalStrainFromImpulse(impulse: number, impulseRef: number): number {
@@ -2004,8 +2009,8 @@ function runModel({
         (1 - mentalRefShrinkWeight) * mentalRef;
     }
 
-    const physicalStrain = physicalStrainFromImpulse(physicalImpulse, physicalRef);
-    const mentalStrain = mentalStrainFromImpulse(mentalImpulse, mentalRef);
+    const physicalStrain = computePhysicalStrainFromImpulse(physicalImpulse, physicalRef);
+    const mentalStrain = computeMentalStrainFromImpulse(mentalImpulse, mentalRef);
 
     const prevPhysicalStrain = physicalStrainHistory.length > 0 ? physicalStrainHistory[physicalStrainHistory.length - 1] : 0;
     const prevMentalStrain = mentalStrainHistory.length > 0 ? mentalStrainHistory[mentalStrainHistory.length - 1] : 0;
@@ -2136,7 +2141,7 @@ function runModel({
     }
 
     const mentalRecoveryReasons = mentalRecoveryReasonCodes.map((code) =>
-      code.startsWith("SLEEP") ? sleepReasonText(code) : recoveryReasonText(code),
+      code.startsWith("SLEEP") ? sleepReasonText(code) : toRecoveryReasonText(code),
     );
 
     const mentalRecoveryContribution: Record<string, number> = {
@@ -2478,9 +2483,9 @@ function runModel({
     }
     physicalTargetMinRaw = clamp(physicalTargetMinRaw, 0, Math.max(physicalTargetMaxRaw, 0));
 
-    const physicalTargetLow = physicalStrainFromImpulse(physicalTargetMinRaw, physicalRef);
-    const physicalTargetCenter = physicalStrainFromImpulse(physicalTargetCenterRaw, physicalRef);
-    const physicalTargetHigh = physicalStrainFromImpulse(physicalTargetMaxRaw, physicalRef);
+    const physicalTargetLow = computePhysicalStrainFromImpulse(physicalTargetMinRaw, physicalRef);
+    const physicalTargetCenter = computePhysicalStrainFromImpulse(physicalTargetCenterRaw, physicalRef);
+    const physicalTargetHigh = computePhysicalStrainFromImpulse(physicalTargetMaxRaw, physicalRef);
 
     const mentalMultRecovery = 0.5 + mentalRecovery / 200;
     const mentalMultExam = examUrgency >= 0.7 ? 1.25 : examUrgency >= 0.4 ? 1.1 : 1;
@@ -2521,9 +2526,9 @@ function runModel({
     }
     mentalTargetMinRaw = clamp(mentalTargetMinRaw, 0, Math.max(mentalTargetMaxRaw, 0));
 
-    const mentalTargetLow = mentalStrainFromImpulse(mentalTargetMinRaw, mentalRef);
-    const mentalTargetCenter = mentalStrainFromImpulse(mentalTargetCenterRaw, mentalRef);
-    const mentalTargetHigh = mentalStrainFromImpulse(mentalTargetMaxRaw, mentalRef);
+    const mentalTargetLow = computeMentalStrainFromImpulse(mentalTargetMinRaw, mentalRef);
+    const mentalTargetCenter = computeMentalStrainFromImpulse(mentalTargetCenterRaw, mentalRef);
+    const mentalTargetHigh = computeMentalStrainFromImpulse(mentalTargetMaxRaw, mentalRef);
 
     const studyCenterHours = clamp(
       goals.baselineStudyHours * (0.65 + 0.9 * (mentalTargetCenter / 100)),
@@ -3368,7 +3373,7 @@ export function buildPerformanceInsights(data: AppData, now = new Date()): Perfo
         row.sleepContribution.duration + row.sleepContribution.continuity + row.sleepContribution.regularity,
         1,
       ),
-      sleepDriverSentence: sentenceForDriver(sleepDriverMode, sleepDriverKey),
+      sleepDriverSentence: toSleepDriverSentence(sleepDriverMode, sleepDriverKey),
       sleepComponent: round(row.sleepScore, 1),
       autonomicComponent: round(autonomicComponent, 1),
       loadComponent: round(loadComponent, 1),

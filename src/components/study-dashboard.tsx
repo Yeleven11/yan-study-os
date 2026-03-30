@@ -55,6 +55,13 @@ import {
   pickNextFlashcard,
 } from "@/lib/flashcards/scheduler";
 import { buildPerformanceInsights } from "@/lib/health-engine";
+import * as DashboardActions from "@/components/study-dashboard/actions";
+import * as DashboardSelectors from "@/components/study-dashboard/selectors";
+import * as DashboardState from "@/components/study-dashboard/state";
+import {
+  FocusModal as DashboardFocusModal,
+  MobileUnsupportedScreen as DashboardMobileUnsupportedScreen,
+} from "@/components/study-dashboard/view-components";
 import {
   buildDayHoverModel,
   computeTooltipPlacement,
@@ -803,10 +810,10 @@ export default function StudyDashboard() {
   const [focusTooltipMaxWidth, setFocusTooltipMaxWidth] = useState(360);
 
   const [activeTimer, setActiveTimer] = useState<ActiveTimerState | null>(() =>
-    readStoredTimer(),
+    DashboardState.readStoredTimer(),
   );
   const [timerSubjectId, setTimerSubjectId] = useState<SubjectId>(() => {
-    const storedTimer = readStoredTimer();
+    const storedTimer = DashboardState.readStoredTimer();
     return storedTimer?.subjectId ?? SUBJECT_IDS[0];
   });
   const [quickAddMinutes, setQuickAddMinutes] = useState("45");
@@ -814,10 +821,10 @@ export default function StudyDashboard() {
   const [timePulse, setTimePulse] = useState(INITIAL_NOW_MS);
 
   const [offlineQueue, setOfflineQueue] = useState<OfflineAction[]>(() =>
-    readStoredQueue(),
+    DashboardState.readStoredQueue(),
   );
   const [countdownBaselines, setCountdownBaselines] = useState<Record<string, number>>(
-    () => readCountdownBaselines(),
+    () => DashboardState.readCountdownBaselines(),
   );
   const [goalsDraft, setGoalsDraft] = useState<GoalsDraftState | null>(null);
   const [goalsDirty, setGoalsDirty] = useState(false);
@@ -1000,13 +1007,13 @@ export default function StudyDashboard() {
         let nextData = toAppData(bootstrap, timezone);
 
         if (repository.mode === "api" && offlineQueue.length > 0) {
-          nextData = offlineQueue.reduce(applyOfflineAction, nextData);
+          nextData = offlineQueue.reduce(DashboardActions.applyOfflineAction, nextData);
         }
 
         if (isMounted) {
           setData(nextData);
           setCountdownBaselines((currentBaselines) =>
-            mergeCountdownBaselines(nextData.exams, currentBaselines, Date.now()),
+            DashboardSelectors.mergeCountdownBaselines(nextData.exams, currentBaselines, Date.now()),
           );
           setStatusMessage(null);
         }
@@ -1018,7 +1025,7 @@ export default function StudyDashboard() {
         const fallbackData = createDefaultAppData(timezone);
         setData(fallbackData);
         setCountdownBaselines((currentBaselines) =>
-          mergeCountdownBaselines(fallbackData.exams, currentBaselines, Date.now()),
+          DashboardSelectors.mergeCountdownBaselines(fallbackData.exams, currentBaselines, Date.now()),
         );
         setStatusMessage(
           "Dashboard fallback mode: seeded local data loaded because bootstrap failed.",
@@ -1062,7 +1069,7 @@ export default function StudyDashboard() {
       return;
     }
 
-    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsDraft(DashboardActions.toGoalsDraft(data.goals));
     setGoalsErrors({});
   }, [data, goalsDirty]);
 
@@ -1096,7 +1103,7 @@ export default function StudyDashboard() {
   }, [timePulse]);
 
   const elapsedSeconds = useMemo(
-    () => getActiveElapsedSeconds(activeTimer, clockNowMs),
+    () => DashboardSelectors.getActiveElapsedSeconds(activeTimer, clockNowMs),
     [activeTimer, clockNowMs],
   );
 
@@ -1260,7 +1267,7 @@ export default function StudyDashboard() {
       return 0;
     }
 
-    return computeStudyStreakDays(
+    return DashboardSelectors.computeStudyStreakDays(
       data.studySessions,
       data.settings.timezone || "Europe/Berlin",
       new Date(timePulse),
@@ -1426,7 +1433,7 @@ export default function StudyDashboard() {
   const dashboardTimezone = data?.settings.timezone || "Europe/Berlin";
   const todayKey = useMemo(
     () =>
-      toDateKeyInTimezone(
+      DashboardSelectors.toDateKeyInTimezone(
         new Date(timePulse),
         dashboardTimezone,
         OPERATIONAL_DAY_START_HOUR,
@@ -1440,7 +1447,7 @@ export default function StudyDashboard() {
 
     return data.studySessions.reduce((sum, session) => {
       if (
-        toDateKeyInTimezone(
+        DashboardSelectors.toDateKeyInTimezone(
           session.startedAt,
           dashboardTimezone,
           OPERATIONAL_DAY_START_HOUR,
@@ -1456,7 +1463,7 @@ export default function StudyDashboard() {
       return 0;
     }
     if (
-      toDateKeyInTimezone(
+      DashboardSelectors.toDateKeyInTimezone(
         activeTimer.startedAt,
         dashboardTimezone,
         OPERATIONAL_DAY_START_HOUR,
@@ -1464,7 +1471,7 @@ export default function StudyDashboard() {
     ) {
       return 0;
     }
-    return getActiveElapsedSeconds(activeTimer, clockNowMs);
+    return DashboardSelectors.getActiveElapsedSeconds(activeTimer, clockNowMs);
   }, [activeTimer, clockNowMs, dashboardTimezone, todayKey]);
   const todayStudyHoursLive = useMemo(
     () => (todayLoggedStudySeconds + liveTimerTodaySeconds) / 3600,
@@ -1714,7 +1721,7 @@ export default function StudyDashboard() {
     }
 
     const endedAt = new Date().toISOString();
-    const totalSeconds = getActiveElapsedSeconds(activeTimer, Date.now());
+    const totalSeconds = DashboardSelectors.getActiveElapsedSeconds(activeTimer, Date.now());
     const subjectId = activeTimer.subjectId;
 
     setActiveTimer(null);
@@ -1739,7 +1746,7 @@ export default function StudyDashboard() {
         studySessions: [...previous.studySessions, session],
       }),
       () => repository.createStudySession(session),
-      createOfflineAction({ type: "createStudySession", payload: session }),
+      DashboardActions.createOfflineAction({ type: "createStudySession", payload: session }),
     );
 
     setStatusMessage(`Saved ${formatDuration(totalSeconds)} of ${SUBJECT_BY_ID[subjectId].name}.`);
@@ -1776,7 +1783,7 @@ export default function StudyDashboard() {
         studySessions: [...previous.studySessions, session],
       }),
       () => repository.createStudySession(session),
-      createOfflineAction({ type: "createStudySession", payload: session }),
+      DashboardActions.createOfflineAction({ type: "createStudySession", payload: session }),
     );
 
     setQuickAddMinutes("");
@@ -1792,7 +1799,7 @@ export default function StudyDashboard() {
         todos: sortTodos([...previous.todos, todo]),
       }),
       () => repository.createTodo(todo),
-      createOfflineAction({ type: "createTodo", payload: todo }),
+      DashboardActions.createOfflineAction({ type: "createTodo", payload: todo }),
     );
   };
 
@@ -1816,7 +1823,7 @@ export default function StudyDashboard() {
         flashcards: [...previous.flashcards, flashcard],
       }),
       () => repository.createFlashcard(flashcard),
-      createOfflineAction({ type: "createFlashcard", payload: flashcard }),
+      DashboardActions.createOfflineAction({ type: "createFlashcard", payload: flashcard }),
     );
 
     if (saved || repository.mode !== "api") {
@@ -1852,7 +1859,7 @@ export default function StudyDashboard() {
         ).cards,
       }),
       () => repository.gradeFlashcard(reviewInput),
-      createOfflineAction({ type: "gradeFlashcard", payload: reviewInput }),
+      DashboardActions.createOfflineAction({ type: "gradeFlashcard", payload: reviewInput }),
     );
 
     if (saved || repository.mode !== "api") {
@@ -1882,7 +1889,7 @@ export default function StudyDashboard() {
         ),
       }),
       () => repository.archiveTodo(todoId),
-      createOfflineAction({ type: "archiveTodo", payload: { id: todoId } }),
+      DashboardActions.createOfflineAction({ type: "archiveTodo", payload: { id: todoId } }),
     );
   };
 
@@ -1904,7 +1911,7 @@ export default function StudyDashboard() {
         ),
       }),
       () => repository.restoreTodo(todoId),
-      createOfflineAction({ type: "restoreTodo", payload: { id: todoId } }),
+      DashboardActions.createOfflineAction({ type: "restoreTodo", payload: { id: todoId } }),
     );
   };
 
@@ -1919,7 +1926,7 @@ export default function StudyDashboard() {
         exams: sortedExams,
       }),
       () => repository.updateExams(sortedExams),
-      createOfflineAction({
+      DashboardActions.createOfflineAction({
         type: "updateExams",
         payload: { exams: sortedExams },
       }),
@@ -1936,7 +1943,7 @@ export default function StudyDashboard() {
     }
 
     setCountdownBaselines((currentBaselines) =>
-      mergeCountdownBaselines(sortedExams, currentBaselines, Date.now()),
+      DashboardSelectors.mergeCountdownBaselines(sortedExams, currentBaselines, Date.now()),
     );
 
     setStatusMessage("Exam schedule updated.");
@@ -1947,7 +1954,7 @@ export default function StudyDashboard() {
       return;
     }
 
-    const { parsed, errors } = parseGoalsDraft(goalsDraft);
+    const { parsed, errors } = DashboardActions.parseGoalsDraft(goalsDraft);
     setGoalsErrors(errors);
     if (!parsed) {
       setStatusMessage("Fix goal field errors before saving.");
@@ -1966,7 +1973,7 @@ export default function StudyDashboard() {
       );
       if (saved || repository.mode !== "api") {
         setGoalsDirty(false);
-        setGoalsDraft(toGoalsDraft(parsed));
+        setGoalsDraft(DashboardActions.toGoalsDraft(parsed));
         setStatusMessage("Performance goals updated.");
       }
     } finally {
@@ -1992,7 +1999,7 @@ export default function StudyDashboard() {
     if (!data) {
       return;
     }
-    setGoalsDraft(toGoalsDraft(data.goals));
+    setGoalsDraft(DashboardActions.toGoalsDraft(data.goals));
     setGoalsErrors({});
     setGoalsDirty(false);
   };
@@ -2128,7 +2135,7 @@ export default function StudyDashboard() {
   if (authStatus === "checking") {
     return (
       <>
-        <MobileUnsupportedScreen />
+        <DashboardMobileUnsupportedScreen />
         <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
           <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
             Initializing Yan Study OS...
@@ -2141,7 +2148,7 @@ export default function StudyDashboard() {
   if (authStatus === "signedOut") {
     return (
       <>
-        <MobileUnsupportedScreen />
+        <DashboardMobileUnsupportedScreen />
         <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
           <form
             onSubmit={handleLogin}
@@ -2194,7 +2201,7 @@ export default function StudyDashboard() {
   if (!data) {
     return (
       <>
-        <MobileUnsupportedScreen />
+        <DashboardMobileUnsupportedScreen />
         <div className="hidden min-h-screen items-center justify-center bg-[var(--bg)] px-4 text-[var(--text)] md:flex">
           <div className="rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] px-8 py-6 text-sm text-[var(--muted)]">
             Loading dashboard data...
@@ -2208,7 +2215,7 @@ export default function StudyDashboard() {
 
   return (
     <>
-      <MobileUnsupportedScreen />
+      <DashboardMobileUnsupportedScreen />
       <div className="hidden h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)] md:block">
         <div className="flex h-full min-h-0 flex-col">
         <StatusStrip
@@ -3131,7 +3138,7 @@ export default function StudyDashboard() {
         </div>
       ) : null}
 
-      <FocusModal
+      <DashboardFocusModal
         open={expandedCard !== null}
         onClose={() => setExpandedCard(null)}
         title={
@@ -3309,7 +3316,7 @@ export default function StudyDashboard() {
             rawFiles={data.healthRawFiles}
           />
         ) : null}
-      </FocusModal>
+      </DashboardFocusModal>
         </div>
       </div>
     </>
@@ -4624,7 +4631,7 @@ function ExamSubjectRings({
   exams: Exam[];
   roundedClassName: string;
 }) {
-  const subjectIds = getExamSubjectIds(exams);
+  const subjectIds = DashboardActions.getExamSubjectIds(exams);
   if (subjectIds.length === 0) {
     return null;
   }
