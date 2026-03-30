@@ -1,0 +1,47 @@
+{
+  "title": "Yan Study OS - Service Health",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "API Error Rate (%)",
+      "targets": [
+        {
+          "expr": "100 * sum(rate(yan_study_api_requests_total{result=\"server_error\"}[5m])) / clamp_min(sum(rate(yan_study_api_requests_total[5m])), 0.001)",
+          "legendFormat": "server_error_rate"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "API p95 Latency (ms)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(yan_study_api_request_latency_ms_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Health Ingestion Failure Rate (%)",
+      "targets": [
+        {
+          "expr": "100 * sum(rate(yan_study_health_ingestion_requests_total{result=~\"server_error|client_error|unauthorized\"}[10m])) / clamp_min(sum(rate(yan_study_health_ingestion_requests_total[10m])), 0.001)",
+          "legendFormat": "ingestion_failure_rate"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth Failure Rate (%)",
+      "targets": [
+        {
+          "expr": "100 * sum(rate(yan_study_auth_attempts_total{result=~\"unauthorized|client_error\"}[5m])) / clamp_min(sum(rate(yan_study_auth_attempts_total[5m])), 0.001)",
+          "legendFormat": "auth_failure_rate"
+        }
+      ]
+    }
+  ]
+}
