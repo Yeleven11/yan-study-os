@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 import { requireHealthIngestAuth } from "@/lib/server/health-ingest-auth";
 import {
   importMobileSyncPayload,
@@ -10,6 +9,7 @@ import {
 } from "@/lib/server/health-mobile";
 import { getDashboardStore } from "@/lib/server/store";
 import type { MobileSyncRequest, MobileSyncResponse } from "@/lib/types";
+import { beginRouteRequest, classifyError, routeJson } from "@/lib/server/route-helpers";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -267,20 +267,26 @@ function normalizeSyncRequest(
 }
 
 export async function POST(request: NextRequest) {
+  const route = beginRouteRequest(request, "/api/integrations/health/mobile-sync");
   const unauthorized = requireHealthIngestAuth(request);
   if (unauthorized) {
-    return unauthorized;
+    return routeJson(route, await unauthorized.json(), {
+      status: unauthorized.status,
+      result: "unauthorized",
+      errorClass: "AuthorizationError",
+    });
   }
 
   const rawBody = await request.json().catch(() => null);
   const normalized = normalizeSyncRequest(rawBody);
   if (!normalized.payload) {
-    return NextResponse.json(
-      {
-        error: normalized.error || "Invalid mobile sync payload",
-      },
-      { status: 400 },
-    );
+    return routeJson(route, {
+      error: normalized.error || "Invalid mobile sync payload",
+    }, {
+      status: 400,
+      result: "client_error",
+      errorClass: "ValidationError",
+    });
   }
 
   try {
@@ -313,7 +319,13 @@ export async function POST(request: NextRequest) {
       },
     };
 
-    return NextResponse.json(response);
+    return routeJson(route, response, {
+      result: "success",
+      userContext: {
+        filesProcessed: imported.summary.filesProcessed,
+        duplicateBatch: imported.summary.duplicateBatch,
+      },
+    });
   } catch (error) {
     const err = error as {
       name?: string;
@@ -322,22 +334,23 @@ export async function POST(request: NextRequest) {
       Code?: string;
     };
 
-    return NextResponse.json(
-      {
-        error: "Mobile health sync failed",
-        failure: {
-          name: err?.name || null,
-          message: err?.message || "Unknown server error",
-          code: err?.Code || null,
-          httpStatusCode: err?.$metadata?.httpStatusCode || null,
-          dataBackend: process.env.DATA_BACKEND || null,
-          sessionsTable: process.env.YAN_STUDY_SESSIONS_TABLE || null,
-          todosTable: process.env.YAN_STUDY_TODOS_TABLE || null,
-          settingsTable: process.env.YAN_STUDY_SETTINGS_TABLE || null,
-          awsRegion: process.env.AWS_REGION || null,
-        },
+    return routeJson(route, {
+      error: "Mobile health sync failed",
+      failure: {
+        name: err?.name || null,
+        message: err?.message || "Unknown server error",
+        code: err?.Code || null,
+        httpStatusCode: err?.$metadata?.httpStatusCode || null,
+        dataBackend: process.env.DATA_BACKEND || null,
+        sessionsTable: process.env.YAN_STUDY_SESSIONS_TABLE || null,
+        todosTable: process.env.YAN_STUDY_TODOS_TABLE || null,
+        settingsTable: process.env.YAN_STUDY_SETTINGS_TABLE || null,
+        awsRegion: process.env.AWS_REGION || null,
       },
-      { status: 500 },
-    );
+    }, {
+      status: 500,
+      result: "server_error",
+      errorClass: classifyError(error),
+    });
   }
 }

@@ -1,18 +1,22 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 import { importHealthFiles } from "@/lib/server/health-csv";
 import { requireHealthIngestAuth } from "@/lib/server/health-ingest-auth";
 import { normalizeHealthIngestRequest } from "@/lib/server/health-ingest-request";
 import { getDashboardStore } from "@/lib/server/store";
-import { badRequest } from "@/lib/server/route-helpers";
+import { beginRouteRequest, classifyError, routeJson } from "@/lib/server/route-helpers";
 
 const INVALID_BODY_MESSAGE =
   "Expected JSON { files: [{ filename, csv }] } or multipart/form-data with CSV files.";
 
 export async function POST(request: NextRequest) {
+  const route = beginRouteRequest(request, "/api/integrations/health/import-batch");
   const unauthorized = requireHealthIngestAuth(request);
   if (unauthorized) {
-    return unauthorized;
+    return routeJson(route, await unauthorized.json(), {
+      status: unauthorized.status,
+      result: "unauthorized",
+      errorClass: "AuthorizationError",
+    });
   }
 
   try {
@@ -23,7 +27,11 @@ export async function POST(request: NextRequest) {
     });
 
     if (files.length === 0) {
-      return badRequest(INVALID_BODY_MESSAGE);
+      return routeJson(route, { error: INVALID_BODY_MESSAGE }, {
+        status: 400,
+        result: "client_error",
+        errorClass: "ValidationError",
+      });
     }
 
     const store = getDashboardStore();
@@ -31,12 +39,18 @@ export async function POST(request: NextRequest) {
     const imported = importHealthFiles(data, files);
     await store.saveData(imported.nextData);
 
-    return NextResponse.json({
+    return routeJson(route, {
       importedHealthDays: imported.summary.importedHealthDays,
       importedWorkouts: imported.summary.importedWorkouts,
       filesProcessed: imported.summary.filesProcessed,
       filesSkipped: imported.summary.filesSkipped + imported.summary.filesIgnored,
       linkedStreams: imported.summary.linkedStreams,
+    }, {
+      result: "success",
+      userContext: {
+        filesProcessed: imported.summary.filesProcessed,
+        importedWorkouts: imported.summary.importedWorkouts,
+      },
     });
   } catch (error) {
     const err = error as {
@@ -46,22 +60,23 @@ export async function POST(request: NextRequest) {
       Code?: string;
     };
 
-    return NextResponse.json(
-      {
-        error: "Health batch import failed",
-        failure: {
-          name: err?.name || null,
-          message: err?.message || "Unknown server error",
-          code: err?.Code || null,
-          httpStatusCode: err?.$metadata?.httpStatusCode || null,
-          dataBackend: process.env.DATA_BACKEND || null,
-          sessionsTable: process.env.YAN_STUDY_SESSIONS_TABLE || null,
-          todosTable: process.env.YAN_STUDY_TODOS_TABLE || null,
-          settingsTable: process.env.YAN_STUDY_SETTINGS_TABLE || null,
-          awsRegion: process.env.AWS_REGION || null,
-        },
+    return routeJson(route, {
+      error: "Health batch import failed",
+      failure: {
+        name: err?.name || null,
+        message: err?.message || "Unknown server error",
+        code: err?.Code || null,
+        httpStatusCode: err?.$metadata?.httpStatusCode || null,
+        dataBackend: process.env.DATA_BACKEND || null,
+        sessionsTable: process.env.YAN_STUDY_SESSIONS_TABLE || null,
+        todosTable: process.env.YAN_STUDY_TODOS_TABLE || null,
+        settingsTable: process.env.YAN_STUDY_SETTINGS_TABLE || null,
+        awsRegion: process.env.AWS_REGION || null,
       },
-      { status: 500 },
-    );
+    }, {
+      status: 500,
+      result: "server_error",
+      errorClass: classifyError(error),
+    });
   }
 }
