@@ -50,6 +50,7 @@ export interface Flashcard {
   id: string;
   question: string;
   answer: string;
+  subjectId?: SubjectId;
   status: FlashcardStatus;
   dueAt: string;
   createdAt: string;
@@ -81,6 +82,89 @@ export interface FlashcardSessionSnapshot {
   currentCardId?: string;
   currentCardDueNow: boolean;
   currentCardCritical: boolean;
+}
+
+export interface StudyNote {
+  id: string;
+  type: "note" | "reflection" | "question";
+  content: string;
+  createdAt: string;
+  subjectId?: SubjectId;
+}
+
+export interface PastPaperAttempt {
+  id: string;
+  subjectId: SubjectId;
+  paper: string;
+  year: number;
+  session: "May" | "November";
+  scorePercent: number;
+  attemptedAt: string;
+  actualMarks?: number;
+  maxMarks?: number;
+  durationMinutes?: number;
+  notes?: string;
+}
+
+export type TopicConfidence = "not_started" | "learning" | "confident" | "mastered";
+
+export interface SyllabusTopic {
+  id: string;
+  subjectId: SubjectId;
+  topicNumber: string;
+  title: string;
+  confidence: TopicConfidence;
+  parentTopicId?: string;
+  notes?: string;
+  lastStudiedAt?: string;
+}
+
+export type TimelineEntryKind =
+  | "sleep"
+  | "meal"
+  | "outside"
+  | "study"
+  | "exam"
+  | "setup"
+  | "winddown"
+  | "admin";
+
+export interface TimelineEntry {
+  id: string;
+  date: string;
+  kind: TimelineEntryKind;
+  title: string;
+  detail?: string;
+  subjectId?: SubjectId;
+  startMinute: number;
+  endMinute: number;
+  plannedMinutes: number;
+  loggable: boolean;
+  sourceText?: string;
+}
+
+export interface TimelineDayChecknotes {
+  understanding?: string;
+  doneLooksLike?: string;
+}
+
+export interface TimelineDayPlan {
+  date: string;
+  dayLabel: string;
+  focusedMinutes: number;
+  entries: TimelineEntry[];
+  checknotes: TimelineDayChecknotes;
+}
+
+export type TimelineBlockState = "pending" | "completed" | "incomplete";
+
+export interface TimelineBlockProgress {
+  blockId: string;
+  state: TimelineBlockState;
+  actualMinutes?: number;
+  actualSubjectId?: SubjectId;
+  note?: string;
+  updatedAt: string;
 }
 
 export type SubjectTotals = Record<SubjectId, number>;
@@ -687,6 +771,10 @@ export interface AppData {
   studySessions: StudySession[];
   todos: TodoItem[];
   flashcards: Flashcard[];
+  studyNotes?: StudyNote[];
+  pastPapers?: PastPaperAttempt[];
+  syllabusTopics?: SyllabusTopic[];
+  timelineProgress?: TimelineBlockProgress[];
   dailyHealth: DailyHealthFact[];
   workouts: WorkoutEntry[];
   workoutDetails: WorkoutDetail[];

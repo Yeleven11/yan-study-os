@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   BarChart,
   Bar,
@@ -55,6 +56,7 @@ import {
   pickNextFlashcard,
 } from "@/lib/flashcards/scheduler";
 import { buildPerformanceInsights } from "@/lib/health-engine";
+import { mergeStudySessionsWithTimeline } from "@/lib/timeline";
 import * as DashboardActions from "@/components/study-dashboard/actions";
 import * as DashboardSelectors from "@/components/study-dashboard/selectors";
 import * as DashboardState from "@/components/study-dashboard/state";
@@ -647,6 +649,10 @@ function toAppData(bootstrap: DashboardBootstrap, timezone: string): AppData {
     studySessions: bootstrap.studySessions,
     todos: bootstrap.todos,
     flashcards: Array.isArray(bootstrap.flashcards) ? bootstrap.flashcards : [],
+    studyNotes: Array.isArray(bootstrap.studyNotes) ? bootstrap.studyNotes : [],
+    pastPapers: Array.isArray(bootstrap.pastPapers) ? bootstrap.pastPapers : [],
+    syllabusTopics: Array.isArray(bootstrap.syllabusTopics) ? bootstrap.syllabusTopics : [],
+    timelineProgress: Array.isArray(bootstrap.timelineProgress) ? bootstrap.timelineProgress : [],
     dailyHealth: Array.isArray(bootstrap.dailyHealth) ? bootstrap.dailyHealth : [],
     workouts: Array.isArray(bootstrap.workouts) ? bootstrap.workouts : [],
     workoutDetails: Array.isArray(bootstrap.workoutDetails) ? bootstrap.workoutDetails : [],
@@ -774,6 +780,7 @@ function MobileUnsupportedScreen() {
 }
 
 export default function StudyDashboard() {
+  const router = useRouter();
   const [sessionMode, setSessionMode] = useState<DashboardSessionMode>("full");
   const repository = useMemo(
     () => createDashboardRepository({ sessionMode }),
@@ -1107,13 +1114,21 @@ export default function StudyDashboard() {
     [activeTimer, clockNowMs],
   );
 
-  const dayAggregates = useMemo(() => {
-    return data ? buildDayAggregates(data.studySessions) : {};
+  const mergedStudySessions = useMemo(() => {
+    if (!data) {
+      return [];
+    }
+
+    return mergeStudySessionsWithTimeline(data.studySessions, data.timelineProgress);
   }, [data]);
 
+  const dayAggregates = useMemo(() => {
+    return buildDayAggregates(mergedStudySessions);
+  }, [mergedStudySessions]);
+
   const subjectTotals = useMemo(() => {
-    return data ? buildSubjectTotals(data.studySessions) : createEmptySubjectTotals();
-  }, [data]);
+    return buildSubjectTotals(mergedStudySessions);
+  }, [mergedStudySessions]);
 
   const nearestExams = useMemo(() => {
     return data ? getNearestExams(data.exams, 3, new Date(timePulse)) : [];
@@ -1268,11 +1283,11 @@ export default function StudyDashboard() {
     }
 
     return DashboardSelectors.computeStudyStreakDays(
-      data.studySessions,
+      mergedStudySessions,
       data.settings.timezone || "Europe/Berlin",
       new Date(timePulse),
     );
-  }, [data, timePulse]);
+  }, [data, mergedStudySessions, timePulse]);
 
   const todosByDate = useMemo(() => {
     return activeTodos.reduce<Record<string, TodoItem[]>>((accumulator, todo) => {
@@ -1445,7 +1460,7 @@ export default function StudyDashboard() {
       return 0;
     }
 
-    return data.studySessions.reduce((sum, session) => {
+    return mergedStudySessions.reduce((sum, session) => {
       if (
         DashboardSelectors.toDateKeyInTimezone(
           session.startedAt,
@@ -1457,7 +1472,7 @@ export default function StudyDashboard() {
       }
       return sum + Math.max(0, session.durationSec);
     }, 0);
-  }, [dashboardTimezone, data, todayKey]);
+  }, [dashboardTimezone, data, mergedStudySessions, todayKey]);
   const liveTimerTodaySeconds = useMemo(() => {
     if (!activeTimer || !todayKey) {
       return 0;
@@ -2447,13 +2462,22 @@ export default function StudyDashboard() {
                   <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">Focus Feed</p>
                   <h2 className="text-2xl font-semibold">{greeting}</h2>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setExpandedCard("calendar")}
-                  className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
-                >
-                  Expand
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/timeline?date=${todayKey}`)}
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                  >
+                    Open Today&apos;s Timeline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedCard("calendar")}
+                    className="rounded-lg border border-[var(--panel-border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:border-[var(--focus)] hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
+                  >
+                    Expand
+                  </button>
+                </div>
               </div>
 
               <div ref={focusFeedScrollRef} className="min-h-0 flex-1 overflow-auto pr-1">
@@ -2581,6 +2605,7 @@ export default function StudyDashboard() {
                         }`}
                         style={{ backgroundColor: dominantColor }}
                         aria-label={dateKey}
+                        onClick={() => router.push(`/timeline?date=${dateKey}`)}
                         onMouseEnter={(event) =>
                           setHoveredFocusDay({
                             dateKey,

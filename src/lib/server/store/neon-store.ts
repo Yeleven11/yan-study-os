@@ -1,5 +1,9 @@
 import { neon } from "@neondatabase/serverless";
-import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
+import {
+  createDefaultAppData,
+  createDefaultPerformanceGoals,
+  reconcileExamSchedule,
+} from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
 import { normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
@@ -7,7 +11,11 @@ import type {
   DailyHealthFact,
   HealthRawFile,
   HealthRawRow,
+  PastPaperAttempt,
   PerformanceGoals,
+  StudyNote,
+  SyllabusTopic,
+  TimelineBlockProgress,
   WorkoutDetail,
   WorkoutEntry,
 } from "@/lib/types";
@@ -202,16 +210,92 @@ function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
     }));
 }
 
+function normalizeStudyNotes(items: StudyNote[] | undefined): StudyNote[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.type === "string" &&
+        typeof item.content === "string" &&
+        typeof item.createdAt === "string",
+    )
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function normalizePastPapers(items: PastPaperAttempt[] | undefined): PastPaperAttempt[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.subjectId === "string" &&
+        typeof item.paper === "string" &&
+        typeof item.year === "number" &&
+        typeof item.session === "string" &&
+        typeof item.scorePercent === "number" &&
+        typeof item.attemptedAt === "string",
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.attemptedAt).getTime() - new Date(left.attemptedAt).getTime(),
+    );
+}
+
+function normalizeSyllabusTopics(items: SyllabusTopic[] | undefined): SyllabusTopic[] {
+  if (!Array.isArray(items)) {
+    return createDefaultAppData(DEFAULT_TIMEZONE).syllabusTopics ?? [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.subjectId === "string" &&
+      typeof item.topicNumber === "string" &&
+      typeof item.title === "string" &&
+      typeof item.confidence === "string",
+  );
+}
+
+function normalizeTimelineProgress(items: TimelineBlockProgress[] | undefined): TimelineBlockProgress[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.blockId === "string" &&
+        typeof item.state === "string" &&
+        typeof item.updatedAt === "string",
+    )
+    .sort(
+      (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+    );
+}
+
 function normalizeData(data: AppData): AppData {
   return {
-    exams: [...data.exams].sort(
-      (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
-    ),
+    exams: reconcileExamSchedule(data.exams),
     studySessions: [...data.studySessions].sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
     flashcards: normalizeFlashcards(data.flashcards),
+    studyNotes: normalizeStudyNotes(data.studyNotes),
+    pastPapers: normalizePastPapers(data.pastPapers),
+    syllabusTopics: normalizeSyllabusTopics(data.syllabusTopics),
+    timelineProgress: normalizeTimelineProgress(data.timelineProgress),
     dailyHealth: normalizeDailyHealth(data.dailyHealth),
     workouts: normalizeWorkouts(data.workouts),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),

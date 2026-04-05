@@ -6,7 +6,11 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
+import {
+  createDefaultAppData,
+  createDefaultPerformanceGoals,
+  reconcileExamSchedule,
+} from "@/lib/constants";
 import { sortTodos } from "@/lib/dashboard-utils";
 import { normalizeFlashcards } from "@/lib/flashcards/scheduler";
 import type {
@@ -15,9 +19,13 @@ import type {
   HealthRawFile,
   HealthRawRow,
   Exam,
+  PastPaperAttempt,
   PerformanceGoals,
+  StudyNote,
   StudySession,
+  SyllabusTopic,
   TodoItem,
+  TimelineBlockProgress,
   WorkoutDetail,
   WorkoutEntry,
 } from "@/lib/types";
@@ -234,6 +242,80 @@ function normalizeRawRows(items: HealthRawRow[] | undefined): HealthRawRow[] {
   return [];
 }
 
+function normalizeStudyNotes(items: StudyNote[] | undefined): StudyNote[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.type === "string" &&
+        typeof item.content === "string" &&
+        typeof item.createdAt === "string",
+    )
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function normalizePastPapers(items: PastPaperAttempt[] | undefined): PastPaperAttempt[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.subjectId === "string" &&
+        typeof item.paper === "string" &&
+        typeof item.year === "number" &&
+        typeof item.session === "string" &&
+        typeof item.scorePercent === "number" &&
+        typeof item.attemptedAt === "string",
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.attemptedAt).getTime() - new Date(left.attemptedAt).getTime(),
+    );
+}
+
+function normalizeSyllabusTopics(items: SyllabusTopic[] | undefined): SyllabusTopic[] {
+  if (!Array.isArray(items)) {
+    return createDefaultAppData("Europe/Berlin").syllabusTopics ?? [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.subjectId === "string" &&
+      typeof item.topicNumber === "string" &&
+      typeof item.title === "string" &&
+      typeof item.confidence === "string",
+  );
+}
+
+function normalizeTimelineProgress(items: TimelineBlockProgress[] | undefined): TimelineBlockProgress[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        typeof item.blockId === "string" &&
+        typeof item.state === "string" &&
+        typeof item.updatedAt === "string",
+    )
+    .sort(
+      (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+    );
+}
+
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -265,14 +347,16 @@ function normalizeData(data: AppData): AppData {
   const workouts = normalizeWorkouts(data.workouts);
 
   return {
-    exams: [...data.exams].sort(
-      (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
-    ),
+    exams: reconcileExamSchedule(data.exams),
     studySessions: [...data.studySessions].sort(
       (left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
     ),
     todos: sortTodos(data.todos),
     flashcards: normalizeFlashcards(data.flashcards),
+    studyNotes: normalizeStudyNotes(data.studyNotes),
+    pastPapers: normalizePastPapers(data.pastPapers),
+    syllabusTopics: normalizeSyllabusTopics(data.syllabusTopics),
+    timelineProgress: normalizeTimelineProgress(data.timelineProgress),
     dailyHealth: takeTail(dailyHealth, MAX_DAILY_HEALTH_DAYS),
     workouts: takeTail(workouts, MAX_WORKOUTS),
     workoutDetails: normalizeWorkoutDetails(data.workoutDetails),
@@ -293,6 +377,10 @@ function buildSettingsItem(data: AppData): Record<string, unknown> {
     examHighlightColor: data.settings.examHighlightColor,
     exams: data.exams,
     flashcards: data.flashcards,
+    studyNotes: data.studyNotes,
+    pastPapers: data.pastPapers,
+    syllabusTopics: data.syllabusTopics,
+    timelineProgress: data.timelineProgress,
     dailyHealth: data.dailyHealth,
     workouts: data.workouts,
     workoutDetails: data.workoutDetails,
@@ -374,6 +462,16 @@ function createDynamoStore(): DashboardStore {
     const flashcards = normalizeFlashcards(
       settingsResult.Item?.flashcards as AppData["flashcards"],
     );
+    const studyNotes = normalizeStudyNotes(settingsResult.Item?.studyNotes as StudyNote[]);
+    const pastPapers = normalizePastPapers(
+      settingsResult.Item?.pastPapers as PastPaperAttempt[],
+    );
+    const syllabusTopics = normalizeSyllabusTopics(
+      settingsResult.Item?.syllabusTopics as SyllabusTopic[],
+    );
+    const timelineProgress = normalizeTimelineProgress(
+      settingsResult.Item?.timelineProgress as TimelineBlockProgress[],
+    );
     const dailyHealth = normalizeDailyHealth(settingsResult.Item?.dailyHealth as DailyHealthFact[]);
     const workouts = normalizeWorkouts(settingsResult.Item?.workouts as WorkoutEntry[]);
     const workoutDetails = normalizeWorkoutDetails(
@@ -387,6 +485,10 @@ function createDynamoStore(): DashboardStore {
       studySessions: (sessionsResult.Items || []) as StudySession[],
       todos: (todosResult.Items || []) as TodoItem[],
       flashcards,
+      studyNotes,
+      pastPapers,
+      syllabusTopics,
+      timelineProgress,
       dailyHealth,
       workouts,
       workoutDetails,

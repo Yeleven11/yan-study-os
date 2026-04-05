@@ -1,6 +1,10 @@
 "use client";
 
-import { createDefaultAppData, createDefaultPerformanceGoals } from "@/lib/constants";
+import {
+  createDefaultAppData,
+  createDefaultPerformanceGoals,
+  reconcileExamSchedule,
+} from "@/lib/constants";
 import { createDemoAppData } from "@/lib/demo-data";
 import { sortTodos } from "@/lib/dashboard-utils";
 import { applyFlashcardGrade, normalizeFlashcards } from "@/lib/flashcards/scheduler";
@@ -12,9 +16,13 @@ import type {
   Flashcard,
   FlashcardGradeInput,
   HealthRawFile,
+  PastPaperAttempt,
   PerformanceGoals,
+  StudyNote,
   StudySession,
+  SyllabusTopic,
   TodoItem,
+  TimelineBlockProgress,
   WorkoutDetail,
   WorkoutEntry,
 } from "@/lib/types";
@@ -35,6 +43,13 @@ export interface DashboardRepository {
   ) => Promise<void>;
   createTodo: (todo: TodoItem) => Promise<void>;
   createFlashcard: (flashcard: Flashcard) => Promise<void>;
+  createStudyNote: (note: StudyNote) => Promise<void>;
+  deleteStudyNote: (id: string) => Promise<void>;
+  createPastPaper: (attempt: PastPaperAttempt) => Promise<void>;
+  deletePastPaper: (id: string) => Promise<void>;
+  setSyllabusTopics: (topics: SyllabusTopic[]) => Promise<void>;
+  updateSyllabusTopic: (id: string, patch: Partial<SyllabusTopic>) => Promise<void>;
+  upsertTimelineProgress: (progress: TimelineBlockProgress) => Promise<void>;
   gradeFlashcard: (input: FlashcardGradeInput) => Promise<void>;
   updateTodo: (id: string, patch: Partial<TodoItem>) => Promise<void>;
   archiveTodo: (id: string) => Promise<void>;
@@ -129,6 +144,69 @@ function parseRawFiles(items: HealthRawFile[] | undefined): HealthRawFile[] {
   );
 }
 
+function parseStudyNotes(items: StudyNote[] | undefined): StudyNote[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.type === "string" &&
+      typeof item.content === "string" &&
+      typeof item.createdAt === "string",
+  );
+}
+
+function parsePastPapers(items: PastPaperAttempt[] | undefined): PastPaperAttempt[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.subjectId === "string" &&
+      typeof item.paper === "string" &&
+      typeof item.year === "number" &&
+      typeof item.session === "string" &&
+      typeof item.scorePercent === "number" &&
+      typeof item.attemptedAt === "string",
+  );
+}
+
+function parseSyllabusTopics(items: SyllabusTopic[] | undefined): SyllabusTopic[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.subjectId === "string" &&
+      typeof item.topicNumber === "string" &&
+      typeof item.title === "string" &&
+      typeof item.confidence === "string",
+  );
+}
+
+function parseTimelineProgress(items: TimelineBlockProgress[] | undefined): TimelineBlockProgress[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.filter(
+    (item) =>
+      item &&
+      typeof item.blockId === "string" &&
+      typeof item.state === "string" &&
+      typeof item.updatedAt === "string",
+  );
+}
+
 function parseGoals(goals: Partial<PerformanceGoals> | undefined): PerformanceGoals {
   const defaults = createDefaultPerformanceGoals();
   return {
@@ -182,10 +260,14 @@ function parseStoredData(
     const defaults = createSeedData(getTimezone());
 
     return {
-      exams: Array.isArray(parsed.exams) ? parsed.exams : defaults.exams,
+      exams: reconcileExamSchedule(Array.isArray(parsed.exams) ? parsed.exams : defaults.exams),
       studySessions: Array.isArray(parsed.studySessions) ? parsed.studySessions : [],
       todos: Array.isArray(parsed.todos) ? parsed.todos : [],
       flashcards: normalizeFlashcards(parsed.flashcards),
+      studyNotes: parseStudyNotes(parsed.studyNotes),
+      pastPapers: parsePastPapers(parsed.pastPapers),
+      syllabusTopics: parseSyllabusTopics(parsed.syllabusTopics),
+      timelineProgress: parseTimelineProgress(parsed.timelineProgress),
       dailyHealth: parseDailyHealth(parsed.dailyHealth),
       workouts: parseWorkouts(parsed.workouts),
       workoutDetails: parseWorkoutDetails(parsed.workoutDetails),
@@ -229,6 +311,18 @@ function writeLocalData(data: AppData, storageKey = DEFAULT_STORAGE_KEY): void {
       todos: sortTodos(data.todos),
     }),
   );
+}
+
+function upsertTimelineProgressEntry(
+  current: TimelineBlockProgress[],
+  entry: TimelineBlockProgress,
+): TimelineBlockProgress[] {
+  const next = current.filter((item) => item.blockId !== entry.blockId);
+  next.push(entry);
+  next.sort(
+    (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+  );
+  return next;
 }
 
 function createLocalRepository(
@@ -292,6 +386,43 @@ function createLocalRepository(
       data.flashcards = exists
         ? normalizeFlashcards(data.flashcards)
         : normalizeFlashcards([...data.flashcards, flashcard]);
+      writeLocalData(data, storageKey);
+    },
+    async createStudyNote(note) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.studyNotes = [...(data.studyNotes ?? []), note];
+      writeLocalData(data, storageKey);
+    },
+    async deleteStudyNote(id) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.studyNotes = (data.studyNotes ?? []).filter((note) => note.id !== id);
+      writeLocalData(data, storageKey);
+    },
+    async createPastPaper(attempt) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.pastPapers = [...(data.pastPapers ?? []), attempt];
+      writeLocalData(data, storageKey);
+    },
+    async deletePastPaper(id) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.pastPapers = (data.pastPapers ?? []).filter((attempt) => attempt.id !== id);
+      writeLocalData(data, storageKey);
+    },
+    async setSyllabusTopics(topics) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.syllabusTopics = [...topics];
+      writeLocalData(data, storageKey);
+    },
+    async updateSyllabusTopic(id, patch) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.syllabusTopics = (data.syllabusTopics ?? []).map((topic) =>
+        topic.id === id ? { ...topic, ...patch } : topic,
+      );
+      writeLocalData(data, storageKey);
+    },
+    async upsertTimelineProgress(progress) {
+      const data = readLocalData(storageKey, createSeedData);
+      data.timelineProgress = upsertTimelineProgressEntry(data.timelineProgress ?? [], progress);
       writeLocalData(data, storageKey);
     },
     async gradeFlashcard(input) {
@@ -496,6 +627,46 @@ function createApiRepository(): DashboardRepository {
       await apiRequest<{ ok: true }>("/api/flashcards", {
         method: "POST",
         body: JSON.stringify(flashcard),
+      });
+    },
+    async createStudyNote(note) {
+      await apiRequest<{ ok: true }>("/api/notes", {
+        method: "POST",
+        body: JSON.stringify(note),
+      });
+    },
+    async deleteStudyNote(id) {
+      await apiRequest<{ ok: true }>(`/api/notes/${id}`, {
+        method: "DELETE",
+      });
+    },
+    async createPastPaper(attempt) {
+      await apiRequest<{ ok: true }>("/api/papers", {
+        method: "POST",
+        body: JSON.stringify(attempt),
+      });
+    },
+    async deletePastPaper(id) {
+      await apiRequest<{ ok: true }>(`/api/papers/${id}`, {
+        method: "DELETE",
+      });
+    },
+    async setSyllabusTopics(topics) {
+      await apiRequest<{ ok: true }>("/api/syllabus", {
+        method: "PUT",
+        body: JSON.stringify({ topics }),
+      });
+    },
+    async updateSyllabusTopic(id, patch) {
+      await apiRequest<{ ok: true }>(`/api/syllabus/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+    },
+    async upsertTimelineProgress(progress) {
+      await apiRequest<{ ok: true }>("/api/timeline-progress", {
+        method: "PUT",
+        body: JSON.stringify(progress),
       });
     },
     async gradeFlashcard(input) {

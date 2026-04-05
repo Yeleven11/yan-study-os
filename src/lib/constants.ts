@@ -6,6 +6,7 @@ import type {
   SubjectId,
   SubjectTotals,
 } from "./types";
+import { getDefaultSyllabusTopics } from "./ib-syllabus";
 
 export const USER_NAME = "Yan";
 export const EXAM_HIGHLIGHT_COLOR = "#00F0FF";
@@ -92,7 +93,7 @@ export const LATE_NIGHT_MESSAGES = [
   "It is late, Yan. One precise block and done.",
 ];
 
-export const STARTER_EXAMS: Exam[] = [
+const LEGACY_STARTER_EXAMS: Exam[] = [
   {
     id: "exam-math-aa-hl-p1",
     subjectId: "math_aa_hl",
@@ -221,6 +222,158 @@ export const STARTER_EXAMS: Exam[] = [
   },
 ];
 
+export const STARTER_EXAMS: Exam[] = [
+  {
+    id: "exam-german-sl-p1",
+    subjectId: "german_lang_lit_sl",
+    title: "German Lang Lit SL",
+    paper: "Paper 1",
+    startsAt: "2026-04-27T13:00:00+02:00",
+  },
+  {
+    id: "exam-german-sl-p2",
+    subjectId: "german_lang_lit_sl",
+    title: "German Lang Lit SL",
+    paper: "Paper 2",
+    startsAt: "2026-04-28T09:00:00+02:00",
+  },
+  {
+    id: "exam-physics-hl-p1",
+    subjectId: "physics_hl",
+    title: "Physics HL",
+    paper: "Paper 1A + 1B",
+    startsAt: "2026-04-28T13:00:00+02:00",
+  },
+  {
+    id: "exam-physics-hl-p2",
+    subjectId: "physics_hl",
+    title: "Physics HL",
+    paper: "Paper 2",
+    startsAt: "2026-04-29T09:00:00+02:00",
+  },
+  {
+    id: "exam-business-sl-p1",
+    subjectId: "business_sl",
+    title: "Business SL",
+    paper: "Paper 1",
+    startsAt: "2026-04-29T13:00:00+02:00",
+  },
+  {
+    id: "exam-business-sl-p2",
+    subjectId: "business_sl",
+    title: "Business SL",
+    paper: "Paper 2",
+    startsAt: "2026-04-30T09:00:00+02:00",
+  },
+  {
+    id: "exam-cs-hl-p1",
+    subjectId: "computer_science_hl",
+    title: "Computer Science HL",
+    paper: "Paper 1",
+    startsAt: "2026-04-30T13:00:00+02:00",
+  },
+  {
+    id: "exam-cs-hl-p23",
+    subjectId: "computer_science_hl",
+    title: "Computer Science HL",
+    paper: "Paper 2 + Paper 3",
+    startsAt: "2026-05-04T09:00:00+02:00",
+  },
+  {
+    id: "exam-english-sl-p1",
+    subjectId: "english_lang_lit_sl",
+    title: "English Lang Lit SL",
+    paper: "Paper 1",
+    startsAt: "2026-05-07T13:00:00+02:00",
+  },
+  {
+    id: "exam-english-sl-p2",
+    subjectId: "english_lang_lit_sl",
+    title: "English Lang Lit SL",
+    paper: "Paper 2",
+    startsAt: "2026-05-08T09:00:00+02:00",
+  },
+  {
+    id: "exam-math-aa-hl-p1",
+    subjectId: "math_aa_hl",
+    title: "Math AA HL",
+    paper: "Paper 1",
+    startsAt: "2026-05-14T13:00:00+02:00",
+  },
+  {
+    id: "exam-math-aa-hl-p2",
+    subjectId: "math_aa_hl",
+    title: "Math AA HL",
+    paper: "Paper 2",
+    startsAt: "2026-05-15T09:00:00+02:00",
+  },
+  {
+    id: "exam-math-aa-hl-p3",
+    subjectId: "math_aa_hl",
+    title: "Math AA HL",
+    paper: "Paper 3",
+    startsAt: "2026-05-20T13:00:00+02:00",
+  },
+];
+
+function sortExams(exams: Exam[]): Exam[] {
+  return [...exams].sort(
+    (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
+  );
+}
+
+function matchesExamSchedule(left: Exam[], right: Exam[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const rightById = new Map(right.map((exam) => [exam.id, exam]));
+
+  return left.every((exam) => {
+    const candidate = rightById.get(exam.id);
+    return (
+      candidate &&
+      exam.paper === candidate.paper &&
+      new Date(exam.startsAt).getTime() === new Date(candidate.startsAt).getTime()
+    );
+  });
+}
+
+export function reconcileExamSchedule(exams: Exam[] | undefined): Exam[] {
+  if (!Array.isArray(exams) || exams.length === 0) {
+    return sortExams(STARTER_EXAMS);
+  }
+
+  const sorted = sortExams(exams);
+  if (matchesExamSchedule(sorted, LEGACY_STARTER_EXAMS)) {
+    return sortExams(STARTER_EXAMS);
+  }
+
+  const canonicalById = new Map(STARTER_EXAMS.map((exam) => [exam.id, exam]));
+  const physicsPaper2 = sorted.find((exam) => exam.id === "exam-physics-hl-p2");
+
+  return sorted.map((exam) => {
+    const canonical = canonicalById.get(exam.id);
+    if (!canonical) {
+      return exam;
+    }
+
+    if (
+      exam.id === "exam-business-sl-p1" &&
+      physicsPaper2 &&
+      new Date(exam.startsAt).getTime() === new Date(physicsPaper2.startsAt).getTime()
+    ) {
+      return {
+        ...exam,
+        paper: canonical.paper,
+        startsAt: canonical.startsAt,
+      };
+    }
+
+    return exam;
+  });
+}
+
 export function createEmptySubjectTotals(): SubjectTotals {
   return SUBJECT_IDS.reduce((accumulator, subjectId) => {
     accumulator[subjectId] = 0;
@@ -243,10 +396,14 @@ export function createDefaultPerformanceGoals(): PerformanceGoals {
 
 export function createDefaultAppData(timezone = "Europe/Berlin"): AppData {
   return {
-    exams: STARTER_EXAMS,
+    exams: sortExams(STARTER_EXAMS),
     studySessions: [],
     todos: [],
     flashcards: [],
+    studyNotes: [],
+    pastPapers: [],
+    syllabusTopics: getDefaultSyllabusTopics(),
+    timelineProgress: [],
     dailyHealth: [],
     workouts: [],
     workoutDetails: [],

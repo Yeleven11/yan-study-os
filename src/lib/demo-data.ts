@@ -5,6 +5,7 @@ import {
   SUBJECT_BY_ID,
   createDefaultPerformanceGoals,
 } from "@/lib/constants";
+import { getDefaultSyllabusTopics } from "@/lib/ib-syllabus";
 import type {
   AppData,
   DailyHealthFact,
@@ -702,6 +703,10 @@ export function createDemoAppData(timezone = "Europe/Berlin"): AppData {
     studySessions,
     todos,
     flashcards,
+    studyNotes: [],
+    pastPapers: [],
+    syllabusTopics: getDefaultSyllabusTopics(),
+    timelineProgress: [],
     dailyHealth,
     workouts,
     workoutDetails,
