@@ -2,6 +2,7 @@
 
 import {
   startTransition,
+  type FormEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -81,6 +82,9 @@ const MAX_HOUR_HEIGHT = 96;
 const ZOOM_STORAGE_KEY = "yan-study-os:timeline-hour-height:v2";
 const PLANNED_SUBJECT_VALUE = "__planned_subject__";
 
+type AuthStatus = "checking" | "signedOut" | "signedIn";
+type DashboardSessionMode = "full" | "demo";
+
 type TimelineEditorState = {
   blockId: string;
   state: TimelineBlockState;
@@ -106,6 +110,33 @@ type EntryPalette = {
   meta: string;
   surface: string;
 };
+
+type SessionResponse = {
+  authenticated: boolean;
+  expiresAt?: string;
+  issuedAt?: string;
+  mode?: DashboardSessionMode;
+};
+
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!response.ok) {
+    const payload = await response
+      .json()
+      .catch(() => ({ error: `Request failed (${response.status})` }));
+    throw new Error(payload.error || `Request failed (${response.status})`);
+  }
+
+  return (await response.json()) as T;
+}
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(false);
@@ -805,6 +836,14 @@ export default function TimelinePage() {
   const searchParams = useSearchParams();
   const requestedDateParam = searchParams.get("date");
   const requestedDate = isDateKey(requestedDateParam) ? requestedDateParam : null;
+  const [sessionMode, setSessionMode] = useState<DashboardSessionMode>("full");
+  const repository = useMemo(
+    () => createDashboardRepository({ sessionMode }),
+    [sessionMode],
+  );
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [passcode, setPasscode] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardBootstrap | null>(null);
   const [hourHeight, setHourHeight] = useState(DEFAULT_HOUR_HEIGHT);
   const [loading, setLoading] = useState(true);
@@ -822,7 +861,6 @@ export default function TimelinePage() {
     date: getTodayDateKey(),
     key: 0,
   });
-  const repositoryRef = useRef(createDashboardRepository());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const prependAdjustmentRef = useRef(0);
   const handledScrollRequestRef = useRef(0);
@@ -844,21 +882,72 @@ export default function TimelinePage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    let isMounted = true;
 
-    repositoryRef.current.getBootstrap().then((bootstrap) => {
-      if (cancelled) {
-        return;
-      }
+    request<SessionResponse>("/api/auth/session")
+      .then((payload) => {
+        if (!isMounted) {
+          return;
+        }
 
-      setData(bootstrap);
+        setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
+        setSessionMode(payload.authenticated && payload.mode === "demo" ? "demo" : "full");
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        setAuthStatus("signedOut");
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== "signedIn") {
       setLoading(false);
-    });
+      if (authStatus === "signedOut") {
+        setData(null);
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    repository.getBootstrap()
+      .then((bootstrap) => {
+        if (cancelled) {
+          return;
+        }
+
+        setData(bootstrap);
+        setLoading(false);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setLoading(false);
+        setData(null);
+
+        if (error instanceof Error && /unauthorized/i.test(error.message)) {
+          setAuthStatus("signedOut");
+          setAuthError(null);
+          return;
+        }
+
+        setAuthError(error instanceof Error ? error.message : "Unable to load timeline.");
+      });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authStatus, repository]);
 
   useEffect(() => {
     try {
@@ -1043,12 +1132,12 @@ export default function TimelinePage() {
       });
 
       try {
-        await repositoryRef.current.upsertTimelineProgress(nextProgress);
+        await repository.upsertTimelineProgress(nextProgress);
       } finally {
         setSavingBlockId((current) => (current === nextProgress.blockId ? null : current));
       }
     },
-    [],
+    [repository],
   );
 
   const handleStateChange = useCallback(
@@ -1157,6 +1246,48 @@ export default function TimelinePage() {
     setHourHeight(clampHourHeight(next));
   }, []);
 
+  const applySessionResponse = useCallback((payload: SessionResponse) => {
+    setAuthStatus(payload.authenticated ? "signedIn" : "signedOut");
+    setSessionMode(payload.authenticated && payload.mode === "demo" ? "demo" : "full");
+    if (payload.authenticated) {
+      setAuthError(null);
+    }
+  }, []);
+
+  const handleLogin = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setAuthError(null);
+
+      try {
+        await request<{ ok: true }>("/api/auth/login", {
+          body: JSON.stringify({ passcode }),
+          method: "POST",
+        });
+        const sessionPayload = await request<SessionResponse>("/api/auth/session");
+        applySessionResponse(sessionPayload);
+        setPasscode("");
+      } catch (error) {
+        setAuthError(error instanceof Error ? error.message : "Unable to verify passcode.");
+      }
+    },
+    [applySessionResponse, passcode],
+  );
+
+  const handleDemoLogin = useCallback(async () => {
+    setAuthError(null);
+
+    try {
+      await request<{ ok: true; mode: "demo" }>("/api/auth/demo", {
+        method: "POST",
+      });
+      const sessionPayload = await request<SessionResponse>("/api/auth/session");
+      applySessionResponse(sessionPayload);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to open demo mode.");
+    }
+  }, [applySessionResponse]);
+
   const handleSelectBlock = useCallback(
     (blockId: string) => {
       setSelectedBlockId(blockId);
@@ -1167,10 +1298,69 @@ export default function TimelinePage() {
     [usesSheetInspector],
   );
 
+  if (authStatus === "checking") {
+    return (
+      <div className="flex h-[100dvh] items-center justify-center bg-[var(--bg)]">
+        <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
+          Initializing timeline...
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "signedOut") {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-[var(--bg)] px-4 py-6 text-[var(--text)]">
+        <form
+          onSubmit={handleLogin}
+          className="w-full max-w-md rounded-2xl border border-[var(--panel-border)] bg-[var(--panel)] p-5 sm:p-6"
+        >
+          <div className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--focus)]">
+            Yan Study OS
+          </div>
+          <h1 className="mt-3 text-xl font-semibold text-[var(--text)]">Secure entry</h1>
+          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+            Unlock the timeline with your passcode. On mobile this is now the default view.
+          </p>
+          <label className="mt-5 block text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+            Passcode
+          </label>
+          <Input
+            autoComplete="current-password"
+            className="mt-2 h-11 bg-[var(--bg)]"
+            onChange={(event) => setPasscode(event.target.value)}
+            type="password"
+            value={passcode}
+          />
+          {authError ? (
+            <p className="mt-3 text-sm text-[var(--danger)]" role="alert">
+              {authError}
+            </p>
+          ) : null}
+          <div className="mt-5 flex flex-col gap-2">
+            <Button className="h-11 justify-center" type="submit">
+              Unlock timeline
+            </Button>
+            <Button
+              className="h-11 justify-center"
+              onClick={handleDemoLogin}
+              type="button"
+              variant="outline"
+            >
+              Enter demo
+            </Button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
   if (loading || !data) {
     return (
       <div className="flex h-[100dvh] items-center justify-center bg-[var(--bg)]">
-        <div className="text-sm text-[var(--muted)]">Loading timeline...</div>
+        <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
+          {authError || "Loading timeline..."}
+        </div>
       </div>
     );
   }
