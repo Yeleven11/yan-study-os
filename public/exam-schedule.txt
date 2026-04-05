@@ -1,0 +1,18 @@
+Yan test schedule
+Timezone: Europe/Berlin
+
+Subject | Test | Date and time
+German Lang Lit SL | Paper 1 | Mon, 27 Apr 2026, 13:00
+German Lang Lit SL | Paper 2 | Tue, 28 Apr 2026, 09:00
+Physics HL | Paper 1 a+b | Tue, 28 Apr 2026, 13:00
+Physics HL | Paper 2 | Wed, 29 Apr 2026, 09:00
+Business SL | Paper 1 | Wed, 29 Apr 2026, 09:00
+Business SL | Paper 2 | Thu, 30 Apr 2026, 09:00
+Computer Science HL | Paper 1 | Thu, 30 Apr 2026, 13:00
+Computer Science HL | Paper 3 | Mon, 04 May 2026, 09:00
+Computer Science HL | Paper 2 | Mon, 04 May 2026, 09:00
+English Lang Lit SL | Paper 1 | Thu, 07 May 2026, 13:00
+English Lang Lit SL | Paper 2 | Fri, 08 May 2026, 09:00
+Math AA HL | Paper 1 | Thu, 14 May 2026, 13:00
+Math AA HL | Paper 2 | Fri, 15 May 2026, 09:00
+Math AA HL | Paper 3 | Wed, 20 May 2026, 13:00
