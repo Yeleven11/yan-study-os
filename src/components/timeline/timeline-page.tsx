@@ -9,11 +9,46 @@ import {
   useRef,
   useState,
 } from "react";
-import { CalendarDays, CheckSquare, Circle, Clock3, RefreshCcw, XCircle } from "lucide-react";
+import {
+  CheckSquare,
+  Circle,
+  Clock3,
+  Minus,
+  PanelLeftOpen,
+  Plus,
+  RefreshCcw,
+  XCircle,
+} from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toDateKeyInTimezone } from "@/components/study-dashboard/selectors";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  ScrollArea,
+} from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { createDashboardRepository } from "@/lib/client/repository";
 import { SUBJECT_BY_ID, SUBJECTS } from "@/lib/constants";
 import { buildDayAggregates, buildSubjectTotals, formatDuration } from "@/lib/dashboard-utils";
-import { toDateKeyInTimezone } from "@/components/study-dashboard/selectors";
 import {
   buildTimelineDateWindow,
   getLoggableTimelineEntry,
@@ -32,17 +67,19 @@ import type {
   TimelineDayPlan,
   TimelineEntry,
 } from "@/lib/types";
-import { useRouter, useSearchParams } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 const TIMELINE_TIMEZONE = "Europe/Berlin";
 const DAY_WINDOW_BEFORE = 3;
 const DAY_WINDOW_AFTER = 5;
 const DAY_WINDOW_STEP = 3;
-const HOUR_HEIGHT = 56;
-const DAY_HEADER_HEIGHT = 52;
-const DAY_GRID_HEIGHT = HOUR_HEIGHT * 24;
-const DAY_SECTION_HEIGHT = DAY_HEADER_HEIGHT + DAY_GRID_HEIGHT;
-const MINUTE_HEIGHT = DAY_GRID_HEIGHT / (24 * 60);
+const DAY_HEADER_HEIGHT = 44;
+const HOUR_LABEL_WIDTH = 72;
+const DEFAULT_HOUR_HEIGHT = 60;
+const MIN_HOUR_HEIGHT = 40;
+const MAX_HOUR_HEIGHT = 96;
+const ZOOM_STORAGE_KEY = "yan-study-os:timeline-hour-height:v2";
+const PLANNED_SUBJECT_VALUE = "__planned_subject__";
 
 type TimelineEditorState = {
   blockId: string;
@@ -56,6 +93,23 @@ type DateWindowState = {
   before: number;
   after: number;
 };
+
+type ScrollRequest = {
+  behavior: ScrollBehavior;
+  date: string;
+  key: number;
+};
+
+type EntryPalette = {
+  accent: string;
+  border: string;
+  meta: string;
+  surface: string;
+};
+
+function clampHourHeight(value: number): number {
+  return Math.max(MIN_HOUR_HEIGHT, Math.min(MAX_HOUR_HEIGHT, Math.round(value)));
+}
 
 function formatHourLabel(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00`;
@@ -79,6 +133,115 @@ function getTodayDateKey(now = new Date()): string {
   return toDateKeyInTimezone(now, TIMELINE_TIMEZONE, 0);
 }
 
+function getCurrentMinuteInTimezone(now = new Date()): number {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    timeZone: TIMELINE_TIMEZONE,
+  });
+
+  const parts = formatter.formatToParts(now);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+
+  return hour * 60 + minute;
+}
+
+function getEntryPalette(entry: TimelineEntry): EntryPalette {
+  if (entry.kind === "study" && entry.subjectId) {
+    const accent = SUBJECT_BY_ID[entry.subjectId].color;
+    return {
+      accent,
+      border: `${accent}44`,
+      meta: `${accent}cc`,
+      surface: `${accent}16`,
+    };
+  }
+
+  if (entry.kind === "exam") {
+    return {
+      accent: "#fca5a5",
+      border: "rgba(252, 165, 165, 0.38)",
+      meta: "#fca5a5",
+      surface: "rgba(127, 29, 29, 0.42)",
+    };
+  }
+
+  if (entry.kind === "sleep") {
+    return {
+      accent: "#64748b",
+      border: "rgba(71, 85, 105, 0.4)",
+      meta: "#94a3b8",
+      surface: "rgba(15, 23, 42, 0.7)",
+    };
+  }
+
+  if (entry.kind === "outside") {
+    return {
+      accent: "#34d399",
+      border: "rgba(52, 211, 153, 0.3)",
+      meta: "#86efac",
+      surface: "rgba(6, 78, 59, 0.28)",
+    };
+  }
+
+  if (entry.kind === "meal") {
+    return {
+      accent: "#cbd5e1",
+      border: "rgba(148, 163, 184, 0.26)",
+      meta: "#cbd5e1",
+      surface: "rgba(15, 23, 42, 0.36)",
+    };
+  }
+
+  return {
+    accent: "#cbd5e1",
+    border: "rgba(148, 163, 184, 0.24)",
+    meta: "#cbd5e1",
+    surface: "rgba(15, 23, 42, 0.32)",
+  };
+}
+
+function getEntryLabel(entry: TimelineEntry): string {
+  if (entry.subjectId) {
+    return SUBJECT_BY_ID[entry.subjectId].shortName;
+  }
+
+  if (entry.kind === "sleep") return "Sleep";
+  if (entry.kind === "meal") return "Meal";
+  if (entry.kind === "outside") return "Outside";
+  if (entry.kind === "exam") return "Exam";
+  if (entry.kind === "setup") return "Setup";
+  if (entry.kind === "winddown") return "Wind down";
+  if (entry.kind === "admin") return "Admin";
+  return "Block";
+}
+
+function getStatusColor(state: TimelineBlockState | undefined): string {
+  if (state === "completed") {
+    return "var(--success)";
+  }
+
+  if (state === "incomplete") {
+    return "var(--danger)";
+  }
+
+  return "var(--muted)";
+}
+
+function getStatusIcon(state: TimelineBlockState | undefined) {
+  if (state === "completed") {
+    return CheckSquare;
+  }
+
+  if (state === "incomplete") {
+    return XCircle;
+  }
+
+  return Circle;
+}
+
 function buildDefaultEditorState(
   entry: TimelineEntry,
   progress?: TimelineBlockProgress,
@@ -89,11 +252,11 @@ function buildDefaultEditorState(
       : "";
 
   return {
-    blockId: entry.id,
-    state: progress?.state || "pending",
     actualMinutes,
     actualSubjectId: progress?.actualSubjectId || "",
+    blockId: entry.id,
     note: progress?.note || "",
+    state: progress?.state || "pending",
   };
 }
 
@@ -111,11 +274,11 @@ function serializeEditorState(
   const note = editorState.note.trim();
 
   return {
-    blockId: editorState.blockId,
-    state: editorState.state,
     actualMinutes,
     actualSubjectId,
+    blockId: editorState.blockId,
     note: note.length > 0 ? note : undefined,
+    state: editorState.state,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -124,113 +287,349 @@ function buildProgressMap(progressList: TimelineBlockProgress[] | undefined): Ma
   return new Map((progressList ?? []).map((item) => [item.blockId, item]));
 }
 
-function getEntryPalette(entry: TimelineEntry): { background: string; border: string; color: string } {
-  if (entry.kind === "study" && entry.subjectId) {
-    const color = SUBJECT_BY_ID[entry.subjectId].color;
-    return {
-      background: `${color}22`,
-      border: `${color}66`,
-      color,
-    };
-  }
+function TimelineOverviewSheet({
+  focusActualMinutes,
+  focusDayPlan,
+  focusPlannedMinutes,
+  plannedSubjectMinutes,
+  subjectTotals,
+}: {
+  focusActualMinutes: number;
+  focusDayPlan: TimelineDayPlan;
+  focusPlannedMinutes: number;
+  plannedSubjectMinutes: Record<SubjectId, number>;
+  subjectTotals: Record<SubjectId, number>;
+}) {
+  const completionRatio =
+    focusPlannedMinutes > 0 ? Math.min(1, focusActualMinutes / focusPlannedMinutes) : 0;
 
-  if (entry.kind === "exam") {
-    return {
-      background: "rgba(248, 113, 113, 0.16)",
-      border: "rgba(248, 113, 113, 0.45)",
-      color: "#fecaca",
-    };
-  }
+  return (
+    <Sheet>
+      <SheetTrigger render={<Button variant="outline" size="sm" />}>
+        <PanelLeftOpen data-icon="inline-start" />
+        Overview
+      </SheetTrigger>
+      <SheetContent
+        side="left"
+        className="gap-0 border-[var(--panel-border)] bg-[var(--panel)] p-0 text-[var(--text)] data-[side=left]:w-[360px] data-[side=left]:sm:max-w-[360px]"
+      >
+        <SheetHeader className="border-b border-[var(--panel-border)]">
+          <SheetTitle>Study overview</SheetTitle>
+          <SheetDescription>
+            Planned and logged hours for {focusDayPlan.dayLabel.toLowerCase()}.
+          </SheetDescription>
+        </SheetHeader>
 
-  if (entry.kind === "meal") {
-    return {
-      background: "rgba(148, 163, 184, 0.12)",
-      border: "rgba(148, 163, 184, 0.28)",
-      color: "#dbe3ef",
-    };
-  }
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-5 p-4">
+            <section className="flex flex-col gap-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-medium text-[var(--text)]">{focusDayPlan.dayLabel}</div>
+                  <div className="mt-1 text-xs text-[var(--muted)]">
+                    Plan window {TIMELINE_PLAN_RANGE.start} to {TIMELINE_PLAN_RANGE.end}
+                  </div>
+                </div>
+                <div className="text-right text-xs text-[var(--muted)]">
+                  {Math.round(completionRatio * 100)}% of planned
+                </div>
+              </div>
 
-  if (entry.kind === "sleep") {
-    return {
-      background: "rgba(17, 24, 39, 0.9)",
-      border: "rgba(71, 85, 105, 0.42)",
-      color: "#94a3b8",
-    };
-  }
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-2">
+                  <div className="text-[11px] text-[var(--muted)]">Planned</div>
+                  <div className="mt-1 text-base font-medium text-[var(--text)]">
+                    {formatHoursFromMinutes(focusPlannedMinutes)}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-2">
+                  <div className="text-[11px] text-[var(--muted)]">Logged</div>
+                  <div className="mt-1 text-base font-medium text-[var(--text)]">
+                    {formatHoursFromMinutes(focusActualMinutes)}
+                  </div>
+                </div>
+              </div>
 
-  if (entry.kind === "outside") {
-    return {
-      background: "rgba(52, 211, 153, 0.12)",
-      border: "rgba(52, 211, 153, 0.32)",
-      color: "#a7f3d0",
-    };
-  }
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--panel-border)]">
+                <div
+                  className="h-full rounded-full bg-[var(--focus)]"
+                  style={{ width: `${Math.round(completionRatio * 100)}%` }}
+                />
+              </div>
+            </section>
 
-  return {
-    background: "rgba(123, 139, 163, 0.12)",
-    border: "rgba(123, 139, 163, 0.28)",
-    color: "#dbe3ef",
-  };
+            <Separator />
+
+            <section className="flex flex-col gap-3">
+              <div className="text-sm font-medium text-[var(--text)]">Daily notes</div>
+              <div className="flex flex-col gap-3">
+                <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-3">
+                  <div className="text-[11px] text-[var(--muted)]">Understanding</div>
+                  <p className="mt-2 text-sm leading-6 text-[var(--text)]">
+                    {focusDayPlan.checknotes.understanding ||
+                      "No hardcoded understanding target for this day."}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-3">
+                  <div className="text-[11px] text-[var(--muted)]">Done looks like</div>
+                  <p className="mt-2 text-sm leading-6 text-[var(--text)]">
+                    {focusDayPlan.checknotes.doneLooksLike ||
+                      "No hardcoded completion note for this day."}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <Separator />
+
+            <section className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-[var(--text)]">Subject totals</div>
+                <div className="text-[11px] text-[var(--muted)]">Planned vs logged</div>
+              </div>
+              <div className="overflow-hidden rounded-lg border border-[var(--panel-border)] bg-[var(--bg)]">
+                {SUBJECTS.map((subject) => (
+                  <div
+                    key={subject.id}
+                    className="grid grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 border-b border-[var(--panel-border)] px-3 py-2 last:border-b-0"
+                  >
+                    <div className="truncate text-sm text-[var(--text)]">{subject.name}</div>
+                    <div className="text-right text-xs text-[var(--muted)]">
+                      {formatHoursFromMinutes(plannedSubjectMinutes[subject.id])}
+                    </div>
+                    <div className="text-right text-xs text-[var(--muted)]">
+                      {formatHoursFromMinutes(Math.round(subjectTotals[subject.id] / 60))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
-function getStatusIcon(state: TimelineBlockState | undefined) {
-  if (state === "completed") {
-    return CheckSquare;
+function TimelineInspector({
+  editorState,
+  onChangeMinutes,
+  onChangeNote,
+  onChangeState,
+  onChangeSubject,
+  onCommitMinutes,
+  onCommitNote,
+  progress,
+  saving,
+  selectedEntry,
+}: {
+  editorState: TimelineEditorState | null;
+  onChangeMinutes: (value: string) => void;
+  onChangeNote: (value: string) => void;
+  onChangeState: (state: TimelineBlockState) => void;
+  onChangeSubject: (value: string) => void;
+  onCommitMinutes: () => void;
+  onCommitNote: () => void;
+  progress: TimelineBlockProgress | undefined;
+  saving: boolean;
+  selectedEntry: TimelineEntry | null;
+}) {
+  if (!selectedEntry || !editorState) {
+    return (
+      <aside className="flex h-full flex-col">
+        <div className="border-b border-[var(--panel-border)] px-4 py-4">
+          <div className="text-sm font-medium text-[var(--text)]">Block details</div>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Select a study block in the schedule to log time or mark it complete.
+          </p>
+        </div>
+      </aside>
+    );
   }
-  if (state === "incomplete") {
-    return XCircle;
-  }
-  return Circle;
+
+  const actualMinutes = resolveTimelineProgressMinutes(selectedEntry, progress);
+  const subjectOptions = [
+    { label: "Use planned subject", value: PLANNED_SUBJECT_VALUE },
+    ...SUBJECTS.map((subject) => ({ label: subject.name, value: subject.id })),
+  ];
+
+  return (
+    <aside className="flex h-full min-h-0 flex-col">
+      <div className="border-b border-[var(--panel-border)] px-4 py-4">
+        <div className="text-sm font-medium text-[var(--text)]">Block details</div>
+        <div className="mt-2 text-base font-medium text-[var(--text)]">{selectedEntry.title}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+          <span>{selectedEntry.date}</span>
+          <span>{formatMinuteLabel(selectedEntry.startMinute)} - {formatMinuteLabel(selectedEntry.endMinute)}</span>
+          <span>Planned {formatDuration(selectedEntry.plannedMinutes * 60)}</span>
+        </div>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-4 p-4">
+          {selectedEntry.detail ? (
+            <p className="text-sm leading-6 text-[var(--muted)]">{selectedEntry.detail}</p>
+          ) : null}
+
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] font-medium text-[var(--muted)]">Status</div>
+            <ToggleGroup
+              className="w-full"
+              onValueChange={(value) => {
+                const nextState = value[0] as TimelineBlockState | undefined;
+                if (nextState) {
+                  onChangeState(nextState);
+                }
+              }}
+              value={[editorState.state]}
+              variant="outline"
+            >
+              <ToggleGroupItem
+                aria-label="Pending"
+                className="flex-1 justify-center"
+                value="pending"
+              >
+                <Circle data-icon="inline-start" />
+                Pending
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                aria-label="Completed"
+                className="flex-1 justify-center"
+                value="completed"
+              >
+                <CheckSquare data-icon="inline-start" />
+                Done
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                aria-label="Incomplete"
+                className="flex-1 justify-center"
+                value="incomplete"
+              >
+                <XCircle data-icon="inline-start" />
+                Missed
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] font-medium text-[var(--muted)]">Actual minutes studied</div>
+            <Input
+              inputMode="numeric"
+              onBlur={onCommitMinutes}
+              onChange={(event) => onChangeMinutes(event.target.value)}
+              placeholder={String(selectedEntry.plannedMinutes)}
+              type="number"
+              value={editorState.actualMinutes}
+            />
+            <div className="text-xs text-[var(--muted)]">
+              Saved total: {formatDuration(actualMinutes * 60)}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] font-medium text-[var(--muted)]">Subject</div>
+            <Select
+              items={subjectOptions}
+              onValueChange={(value) =>
+                onChangeSubject(
+                  value && value !== PLANNED_SUBJECT_VALUE ? String(value) : "",
+                )
+              }
+              value={editorState.actualSubjectId || PLANNED_SUBJECT_VALUE}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Use planned subject" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {subjectOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="text-[11px] font-medium text-[var(--muted)]">Note</div>
+            <Textarea
+              className="min-h-28"
+              onBlur={onCommitNote}
+              onChange={(event) => onChangeNote(event.target.value)}
+              placeholder="What happened in this block?"
+              value={editorState.note}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+            <Clock3 className="h-3.5 w-3.5" />
+            {saving ? "Saving progress..." : "Changes save to your account-backed timeline progress."}
+          </div>
+        </div>
+      </ScrollArea>
+    </aside>
+  );
 }
 
 function DayTimelineSection({
-  dayPlan,
-  isToday,
   currentMinute,
+  dayActualMinutes,
+  dayPlan,
+  hourHeight,
+  isToday,
+  onSelectBlock,
   progressByBlockId,
   selectedBlockId,
-  onSelectBlock,
 }: {
-  dayPlan: TimelineDayPlan;
-  isToday: boolean;
   currentMinute: number;
+  dayActualMinutes: number;
+  dayPlan: TimelineDayPlan;
+  hourHeight: number;
+  isToday: boolean;
+  onSelectBlock: (blockId: string) => void;
   progressByBlockId: Map<string, TimelineBlockProgress>;
   selectedBlockId: string | null;
-  onSelectBlock: (blockId: string) => void;
 }) {
+  const minuteHeight = hourHeight / 60;
+  const dayGridHeight = hourHeight * 24;
   const showEmptyState = dayPlan.entries.length === 0;
 
   return (
     <section
       className="relative border-b border-[var(--panel-border)] bg-[var(--panel)]"
-      style={{ height: DAY_SECTION_HEIGHT }}
       data-day={dayPlan.date}
+      style={{ height: DAY_HEADER_HEIGHT + dayGridHeight }}
     >
-      <header className="sticky top-0 z-20 flex h-[52px] items-center justify-between border-b border-[var(--panel-border)] bg-[var(--panel)] px-4">
-        <div className="flex items-center gap-3">
-          <span className="font-medium text-[var(--text)]">{dayPlan.dayLabel}</span>
-          {dayPlan.focusedMinutes > 0 ? (
-            <span className="text-sm text-[var(--muted)]">
-              Planned {formatHoursFromMinutes(dayPlan.focusedMinutes)}
+      <header className="sticky top-0 z-20 flex h-[44px] items-center justify-between border-b border-[var(--panel-border)] bg-[var(--panel)] px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="truncate text-sm font-medium text-[var(--text)]">{dayPlan.dayLabel}</div>
+          {isToday ? (
+            <span className="rounded-md border border-[var(--warning)]/35 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]">
+              Today
             </span>
-          ) : (
-            <span className="text-sm text-[var(--muted)]">No hardcoded plan</span>
-          )}
+          ) : null}
         </div>
-        {dayPlan.checknotes.understanding ? (
-          <span className="max-w-[46ch] truncate text-sm text-[var(--muted)]">
-            {dayPlan.checknotes.understanding}
-          </span>
-        ) : null}
+
+        <div className="flex shrink-0 items-center gap-3 text-xs text-[var(--muted)]">
+          <span>Planned {formatHoursFromMinutes(dayPlan.focusedMinutes)}</span>
+          <span>Logged {formatHoursFromMinutes(dayActualMinutes)}</span>
+        </div>
       </header>
 
-      <div className="flex" style={{ height: DAY_GRID_HEIGHT }}>
-        <div className="w-16 shrink-0 border-r border-[var(--panel-border)] bg-[var(--panel)]">
+      <div className="flex" style={{ height: dayGridHeight }}>
+        <div
+          className="shrink-0 border-r border-[var(--panel-border)] bg-[var(--panel)]"
+          style={{ width: HOUR_LABEL_WIDTH }}
+        >
           {Array.from({ length: 24 }, (_, hour) => (
             <div
               key={`${dayPlan.date}-hour-${hour}`}
-              className="border-b border-[var(--panel-border)] px-2 pt-1 text-[11px] text-[var(--muted)]"
-              style={{ height: HOUR_HEIGHT }}
+              className="border-b border-[var(--panel-border)] px-3 pt-1 text-[11px] text-[var(--muted)]"
+              style={{ height: hourHeight }}
             >
               {formatHourLabel(hour)}
             </div>
@@ -240,73 +639,130 @@ function DayTimelineSection({
         <div className="relative flex-1 bg-[var(--bg)]">
           {Array.from({ length: 24 }, (_, hour) => (
             <div
-              key={`${dayPlan.date}-line-${hour}`}
+              key={`${dayPlan.date}-major-${hour}`}
               className="absolute inset-x-0 border-b border-[var(--panel-border)]"
-              style={{ top: hour * HOUR_HEIGHT }}
+              style={{ top: hour * hourHeight }}
+            />
+          ))}
+
+          {Array.from({ length: 24 }, (_, hour) => (
+            <div
+              key={`${dayPlan.date}-minor-${hour}`}
+              className="absolute inset-x-0 border-b border-dashed border-white/[0.04]"
+              style={{ top: hour * hourHeight + hourHeight / 2 }}
             />
           ))}
 
           {showEmptyState ? (
-            <div className="absolute inset-x-6 top-20 rounded-lg border border-dashed border-[var(--panel-border)] bg-[var(--panel)]/80 p-4 text-sm text-[var(--muted)]">
-              No hardcoded plan for this day. The timeline still stays scrollable so you can jump around the calendar without hitting a hard stop.
+            <div className="absolute inset-x-6 top-14 rounded-lg border border-dashed border-[var(--panel-border)] bg-[var(--panel)] px-4 py-3 text-sm text-[var(--muted)]">
+              No hardcoded plan for this day. The timeline stays scrollable so you can jump across dates without hitting a hard stop.
             </div>
           ) : null}
 
           {dayPlan.entries.map((entry) => {
+            const top = entry.startMinute * minuteHeight;
+            const height = Math.max(28, entry.plannedMinutes * minuteHeight);
+            const mode = height < 44 ? "compact" : height < 84 ? "balanced" : "detailed";
             const palette = getEntryPalette(entry);
-            const top = entry.startMinute * MINUTE_HEIGHT;
-            const height = Math.max(18, entry.plannedMinutes * MINUTE_HEIGHT);
             const progress = progressByBlockId.get(entry.id);
+            const loggedMinutes = resolveTimelineProgressMinutes(entry, progress);
+            const durationLabel =
+              entry.loggable && progress && (progress.state !== "pending" || loggedMinutes > 0)
+                ? `${formatDuration(loggedMinutes * 60)} logged`
+                : formatDuration(entry.plannedMinutes * 60);
             const StatusIcon = getStatusIcon(progress?.state);
             const active = selectedBlockId === entry.id;
+            const content = (
+              <div className="flex h-full flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] leading-4">
+                      <span
+                        className="font-medium uppercase tracking-[0.08em]"
+                        style={{ color: palette.meta }}
+                      >
+                        {getEntryLabel(entry)}
+                      </span>
+                      <span className="text-[var(--muted)]">
+                        {formatMinuteLabel(entry.startMinute)} - {formatMinuteLabel(entry.endMinute)}
+                      </span>
+                    </div>
+                    <div
+                      className={cn(
+                        "truncate font-medium text-[var(--text)]",
+                        mode === "compact" ? "text-[12px]" : "text-sm",
+                      )}
+                    >
+                      {entry.title}
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    {entry.loggable ? (
+                      <StatusIcon
+                        className="h-4 w-4 shrink-0"
+                        style={{ color: getStatusColor(progress?.state) }}
+                      />
+                    ) : null}
+                    <span className="text-[10px] text-[var(--muted)]">{durationLabel}</span>
+                  </div>
+                </div>
+
+                {mode !== "compact" && entry.detail ? (
+                  <p
+                    className={cn(
+                      "text-[11px] leading-4 text-[var(--muted)]",
+                      mode === "balanced" ? "line-clamp-1" : "line-clamp-2",
+                    )}
+                  >
+                    {entry.detail}
+                  </p>
+                ) : null}
+              </div>
+            );
+
+            const commonProps = {
+              className: cn(
+                "absolute left-3 right-4 overflow-hidden rounded-lg border px-3 py-2 text-left transition-colors",
+                entry.loggable && "hover:border-white/20",
+                active && "ring-2 ring-[var(--focus)]/70",
+              ),
+              style: {
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+                boxShadow: `inset 3px 0 0 ${palette.accent}`,
+                height,
+                top,
+              },
+            };
+
+            if (!entry.loggable) {
+              return (
+                <div key={entry.id} {...commonProps}>
+                  {content}
+                </div>
+              );
+            }
 
             return (
               <button
                 key={entry.id}
                 type="button"
-                className={`absolute left-3 right-3 overflow-hidden rounded-md border px-3 py-2 text-left transition ${
-                  active ? "ring-2 ring-[var(--focus)]" : ""
-                } ${entry.loggable ? "hover:border-white/40" : "cursor-default"}`}
-                style={{
-                  top,
-                  height,
-                  backgroundColor: palette.background,
-                  borderColor: palette.border,
-                  color: palette.color,
-                }}
-                onClick={() => {
-                  if (entry.loggable) {
-                    onSelectBlock(entry.id);
-                  }
-                }}
+                {...commonProps}
+                onClick={() => onSelectBlock(entry.id)}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{entry.title}</div>
-                    <div className="text-[11px] text-[var(--muted)]">
-                      {formatMinuteLabel(entry.startMinute)} - {formatMinuteLabel(entry.endMinute)}
-                    </div>
-                  </div>
-                  {entry.loggable ? (
-                    <StatusIcon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--text)]" />
-                  ) : null}
-                </div>
-                {height >= 44 && entry.detail ? (
-                  <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--muted)]">
-                    {entry.detail}
-                  </p>
-                ) : null}
+                {content}
               </button>
             );
           })}
 
           {isToday ? (
             <div
-              className="pointer-events-none absolute inset-x-0 z-10 border-t border-[#fbbf24]"
-              style={{ top: currentMinute * MINUTE_HEIGHT }}
+              className="pointer-events-none absolute inset-x-0 z-10 border-t border-[var(--warning)]"
+              style={{ top: currentMinute * minuteHeight }}
             >
-              <span className="absolute left-2 top-[-10px] rounded bg-[#fbbf24] px-1.5 py-0.5 text-[10px] font-medium text-[#111827]">
-                Now
+              <span className="absolute left-2 top-[-10px] rounded bg-[var(--warning)] px-1.5 py-0.5 text-[10px] font-medium text-[#111827]">
+                Now {formatMinuteLabel(currentMinute)}
               </span>
             </div>
           ) : null}
@@ -316,157 +772,39 @@ function DayTimelineSection({
   );
 }
 
-function TimelineInspector({
-  selectedEntry,
-  progress,
-  editorState,
-  saving,
-  onChangeState,
-  onChangeMinutes,
-  onCommitMinutes,
-  onChangeSubject,
-  onChangeNote,
-  onCommitNote,
-}: {
-  selectedEntry: TimelineEntry | null;
-  progress: TimelineBlockProgress | undefined;
-  editorState: TimelineEditorState | null;
-  saving: boolean;
-  onChangeState: (state: TimelineBlockState) => void;
-  onChangeMinutes: (value: string) => void;
-  onCommitMinutes: () => void;
-  onChangeSubject: (value: string) => void;
-  onChangeNote: (value: string) => void;
-  onCommitNote: () => void;
-}) {
-  if (!selectedEntry || !editorState) {
-    return (
-      <aside className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-4 text-sm text-[var(--muted)]">
-        Select a study block in the timeline to mark it complete, log actual minutes, or leave yourself a note.
-      </aside>
-    );
-  }
-
-  const actualMinutes = resolveTimelineProgressMinutes(selectedEntry, progress);
-
-  return (
-    <aside className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--text)]">{selectedEntry.title}</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {selectedEntry.date} · {formatMinuteLabel(selectedEntry.startMinute)} -{" "}
-            {formatMinuteLabel(selectedEntry.endMinute)}
-          </p>
-        </div>
-        <span className="rounded-md border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--muted)]">
-          Planned {formatDuration(selectedEntry.plannedMinutes * 60)}
-        </span>
-      </div>
-
-      {selectedEntry.detail ? (
-        <p className="mt-4 text-sm leading-6 text-[var(--muted)]">{selectedEntry.detail}</p>
-      ) : null}
-
-      <div className="mt-5 space-y-4">
-        <div>
-          <p className="mb-2 text-xs font-medium text-[var(--muted)]">Status</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(["pending", "completed", "incomplete"] as const).map((state) => (
-              <button
-                key={state}
-                type="button"
-                onClick={() => onChangeState(state)}
-                className={`rounded-md border px-3 py-2 text-sm ${
-                  editorState.state === state
-                    ? "border-[var(--focus)] bg-[var(--panel-soft)] text-[var(--text)]"
-                    : "border-[var(--panel-border)] text-[var(--muted)]"
-                }`}
-              >
-                {state === "pending"
-                  ? "Pending"
-                  : state === "completed"
-                  ? "Completed"
-                  : "Incomplete"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <label className="block">
-          <span className="mb-2 block text-xs font-medium text-[var(--muted)]">
-            Actual minutes studied
-          </span>
-          <input
-            value={editorState.actualMinutes}
-            onChange={(event) => onChangeMinutes(event.target.value)}
-            onBlur={onCommitMinutes}
-            inputMode="numeric"
-            className="w-full rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--focus)]"
-            placeholder={String(selectedEntry.plannedMinutes)}
-          />
-          <p className="mt-1 text-xs text-[var(--muted)]">
-            Saved total: {formatDuration(actualMinutes * 60)}
-          </p>
-        </label>
-
-        <label className="block">
-          <span className="mb-2 block text-xs font-medium text-[var(--muted)]">Subject</span>
-          <select
-            value={editorState.actualSubjectId}
-            onChange={(event) => onChangeSubject(event.target.value)}
-            className="w-full rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--focus)]"
-          >
-            <option value="">Use planned subject</option>
-            {SUBJECTS.map((subject) => (
-              <option key={subject.id} value={subject.id}>
-                {subject.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="mb-2 block text-xs font-medium text-[var(--muted)]">Note</span>
-          <textarea
-            value={editorState.note}
-            onChange={(event) => onChangeNote(event.target.value)}
-            onBlur={onCommitNote}
-            className="min-h-28 w-full rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--focus)]"
-            placeholder="What happened in this block?"
-          />
-        </label>
-
-        <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-          <Clock3 className="h-3.5 w-3.5" />
-          {saving ? "Saving progress..." : "Changes save to your account-backed timeline progress."}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 export default function TimelinePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedDateParam = searchParams.get("date");
   const requestedDate = isDateKey(requestedDateParam) ? requestedDateParam : null;
   const [data, setData] = useState<DashboardBootstrap | null>(null);
+  const [hourHeight, setHourHeight] = useState(DEFAULT_HOUR_HEIGHT);
   const [loading, setLoading] = useState(true);
-  const [windowState, setWindowState] = useState<DateWindowState>({
-    before: DAY_WINDOW_BEFORE,
-    after: DAY_WINDOW_AFTER,
-  });
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<TimelineEditorState | null>(null);
   const [savingBlockId, setSavingBlockId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [windowState, setWindowState] = useState<DateWindowState>({
+    after: DAY_WINDOW_AFTER,
+    before: DAY_WINDOW_BEFORE,
+  });
+  const [scrollRequest, setScrollRequest] = useState<ScrollRequest>({
+    behavior: "auto",
+    date: getTodayDateKey(),
+    key: 0,
+  });
+  const repositoryRef = useRef(createDashboardRepository());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const prependAdjustmentRef = useRef(0);
-  const shouldScrollToAnchorRef = useRef(true);
-  const repositoryRef = useRef(createDashboardRepository());
+  const handledScrollRequestRef = useRef(0);
+  const jumpToTodayPendingRef = useRef(false);
+
   const todayDate = useMemo(() => getTodayDateKey(new Date(nowMs)), [nowMs]);
+  const currentMinute = useMemo(() => getCurrentMinuteInTimezone(new Date(nowMs)), [nowMs]);
   const anchorDate = requestedDate || todayDate;
+
+  const minuteHeight = hourHeight / 60;
+  const daySectionHeight = DAY_HEADER_HEIGHT + hourHeight * 24;
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -475,25 +813,61 @@ export default function TimelinePage() {
 
   useEffect(() => {
     let cancelled = false;
+
     repositoryRef.current.getBootstrap().then((bootstrap) => {
       if (cancelled) {
         return;
       }
+
       setData(bootstrap);
       setLoading(false);
     });
+
     return () => {
       cancelled = true;
     };
   }, []);
 
   useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(ZOOM_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+
+      const parsed = Number.parseInt(stored, 10);
+      if (Number.isFinite(parsed)) {
+        setHourHeight(clampHourHeight(parsed));
+      }
+    } catch {
+      // Ignore local storage availability issues.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ZOOM_STORAGE_KEY, String(hourHeight));
+    } catch {
+      // Ignore local storage availability issues.
+    }
+  }, [hourHeight]);
+
+  useEffect(() => {
     setWindowState({
-      before: DAY_WINDOW_BEFORE,
       after: DAY_WINDOW_AFTER,
+      before: DAY_WINDOW_BEFORE,
     });
-    shouldScrollToAnchorRef.current = true;
-  }, [anchorDate]);
+    setSelectedBlockId(null);
+    setScrollRequest((previous) => ({
+      behavior:
+        jumpToTodayPendingRef.current && anchorDate === todayDate ? "smooth" : "auto",
+      date: anchorDate,
+      key: previous.key + 1,
+    }));
+    if (anchorDate === todayDate) {
+      jumpToTodayPendingRef.current = false;
+    }
+  }, [anchorDate, todayDate]);
 
   const visibleDates = useMemo(
     () => buildTimelineDateWindow(anchorDate, windowState.before, windowState.after),
@@ -533,55 +907,77 @@ export default function TimelinePage() {
     ? Math.round(dayAggregates[anchorDate].totalSec / 60)
     : 0;
   const focusPlannedMinutes = plannedDayMinutes[anchorDate] || 0;
-  const focusCompletionRatio =
-    focusPlannedMinutes > 0 ? Math.min(1, focusActualMinutes / focusPlannedMinutes) : 0;
 
   const selectedEntry = selectedBlockId ? getLoggableTimelineEntry(selectedBlockId) || null : null;
   const selectedProgress = selectedBlockId ? progressByBlockId.get(selectedBlockId) : undefined;
 
   useEffect(() => {
+    if (selectedEntry) {
+      return;
+    }
+
+    const firstLoggable =
+      focusDayPlan.entries.find((entry) => entry.loggable) ||
+      visibleDayPlans.flatMap((dayPlan) => dayPlan.entries).find((entry) => entry.loggable) ||
+      null;
+
+    setSelectedBlockId(firstLoggable?.id || null);
+  }, [focusDayPlan.entries, selectedEntry, visibleDayPlans]);
+
+  useEffect(() => {
     if (!selectedEntry) {
-      const firstLoggable =
-        focusDayPlan.entries.find((entry) => entry.loggable) ||
-        visibleDayPlans.flatMap((dayPlan) => dayPlan.entries).find((entry) => entry.loggable) ||
-        null;
-      setSelectedBlockId(firstLoggable?.id || null);
+      setEditorState(null);
       return;
     }
 
     setEditorState(buildDefaultEditorState(selectedEntry, selectedProgress));
-  }, [focusDayPlan.entries, selectedEntry, selectedProgress, visibleDayPlans]);
+  }, [selectedEntry, selectedProgress]);
+
+  useLayoutEffect(() => {
+    if (!scrollRef.current || prependAdjustmentRef.current === 0) {
+      return;
+    }
+
+    scrollRef.current.scrollTop += prependAdjustmentRef.current;
+    prependAdjustmentRef.current = 0;
+  }, [daySectionHeight, visibleDates.length]);
 
   useLayoutEffect(() => {
     if (!scrollRef.current) {
       return;
     }
 
-    if (prependAdjustmentRef.current > 0) {
-      scrollRef.current.scrollTop += prependAdjustmentRef.current;
-      prependAdjustmentRef.current = 0;
-    }
-
-    if (!shouldScrollToAnchorRef.current) {
+    if (handledScrollRequestRef.current === scrollRequest.key) {
       return;
     }
 
-    const dayIndex = visibleDates.indexOf(anchorDate);
+    const dayIndex = visibleDates.indexOf(scrollRequest.date);
     if (dayIndex === -1) {
       return;
     }
 
-    const now = new Date(nowMs);
-    const scrollMinute =
-      anchorDate === todayDate
-        ? now.getHours() * 60 + now.getMinutes()
-        : focusDayPlan.entries[0]?.startMinute ?? 8 * 60;
-
+    const targetDayPlan = visibleDayPlans[dayIndex];
+    const targetMinute =
+      scrollRequest.date === todayDate
+        ? currentMinute
+        : targetDayPlan.entries[0]?.startMinute ?? 8 * 60;
     const topOffset =
-      dayIndex * DAY_SECTION_HEIGHT + DAY_HEADER_HEIGHT + scrollMinute * MINUTE_HEIGHT - 180;
-    scrollRef.current.scrollTop = Math.max(0, topOffset);
-    shouldScrollToAnchorRef.current = false;
-  }, [anchorDate, focusDayPlan.entries, nowMs, todayDate, visibleDates]);
+      dayIndex * daySectionHeight + DAY_HEADER_HEIGHT + targetMinute * minuteHeight - 160;
+
+    scrollRef.current.scrollTo({
+      behavior: scrollRequest.behavior,
+      top: Math.max(0, topOffset),
+    });
+    handledScrollRequestRef.current = scrollRequest.key;
+  }, [
+    currentMinute,
+    daySectionHeight,
+    minuteHeight,
+    scrollRequest,
+    todayDate,
+    visibleDates,
+    visibleDayPlans,
+  ]);
 
   const commitProgress = useCallback(
     async (nextProgress: TimelineBlockProgress) => {
@@ -597,7 +993,8 @@ export default function TimelinePage() {
           );
           nextTimelineProgress.push(nextProgress);
           nextTimelineProgress.sort(
-            (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+            (left, right) =>
+              new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
           );
 
           return {
@@ -624,12 +1021,13 @@ export default function TimelinePage() {
 
       const nextEditorState: TimelineEditorState = {
         ...editorState,
-        state: nextState,
         actualMinutes:
           nextState === "completed" && editorState.actualMinutes.trim().length === 0
             ? String(selectedEntry.plannedMinutes)
             : editorState.actualMinutes,
+        state: nextState,
       };
+
       setEditorState(nextEditorState);
       void commitProgress(serializeEditorState(selectedEntry, nextEditorState));
     },
@@ -640,6 +1038,7 @@ export default function TimelinePage() {
     if (!selectedEntry || !editorState) {
       return;
     }
+
     void commitProgress(serializeEditorState(selectedEntry, editorState));
   }, [commitProgress, editorState, selectedEntry]);
 
@@ -653,6 +1052,7 @@ export default function TimelinePage() {
         ...editorState,
         actualSubjectId: value,
       };
+
       setEditorState(nextEditorState);
       void commitProgress(serializeEditorState(selectedEntry, nextEditorState));
     },
@@ -663,6 +1063,7 @@ export default function TimelinePage() {
     if (!selectedEntry || !editorState) {
       return;
     }
+
     void commitProgress(serializeEditorState(selectedEntry, editorState));
   }, [commitProgress, editorState, selectedEntry]);
 
@@ -672,152 +1073,166 @@ export default function TimelinePage() {
       const remainingBottom =
         currentTarget.scrollHeight - currentTarget.scrollTop - currentTarget.clientHeight;
 
-      if (currentTarget.scrollTop < DAY_SECTION_HEIGHT * 1.5) {
-        prependAdjustmentRef.current += DAY_WINDOW_STEP * DAY_SECTION_HEIGHT;
+      if (currentTarget.scrollTop < daySectionHeight * 1.5) {
+        prependAdjustmentRef.current += DAY_WINDOW_STEP * daySectionHeight;
         setWindowState((previous) => ({
-          before: previous.before + DAY_WINDOW_STEP,
           after: previous.after,
+          before: previous.before + DAY_WINDOW_STEP,
         }));
       }
 
-      if (remainingBottom < DAY_SECTION_HEIGHT * 1.5) {
+      if (remainingBottom < daySectionHeight * 1.5) {
         setWindowState((previous) => ({
-          before: previous.before,
           after: previous.after + DAY_WINDOW_STEP,
+          before: previous.before,
         }));
       }
     },
-    [],
+    [daySectionHeight],
   );
+
+  const handleJumpToToday = useCallback(() => {
+    setWindowState({
+      after: DAY_WINDOW_AFTER,
+      before: DAY_WINDOW_BEFORE,
+    });
+
+    if (requestedDate) {
+      jumpToTodayPendingRef.current = true;
+      router.replace("/timeline", { scroll: false });
+      return;
+    }
+
+    setScrollRequest((previous) => ({
+      behavior: "smooth",
+      date: todayDate,
+      key: previous.key + 1,
+    }));
+  }, [requestedDate, router, todayDate]);
+
+  const handleZoomChange = useCallback((nextValue: number | readonly number[]) => {
+    const next = Array.isArray(nextValue) ? nextValue[0] : nextValue;
+    if (!Number.isFinite(next)) {
+      return;
+    }
+
+    setHourHeight(clampHourHeight(next));
+  }, []);
 
   if (loading || !data) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="flex h-[100dvh] items-center justify-center bg-[var(--bg)]">
         <div className="text-sm text-[var(--muted)]">Loading timeline...</div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--bg)]">
-      <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex min-h-0 flex-col border-r border-[var(--panel-border)]">
-          <header className="border-b border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <h1 className="text-2xl font-semibold text-[var(--text)]">Timeline</h1>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  Full-day study view from midnight to midnight, anchored to today by default and ready for manual logging.
-                </p>
+    <div className="h-[100dvh] overflow-hidden bg-[var(--bg)] text-[var(--text)]">
+      <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_330px]">
+        <div className="flex min-h-0 flex-col">
+          <header className="border-b border-[var(--panel-border)] bg-[var(--panel)] px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-[var(--text)]">Timeline</div>
+                <div className="text-sm text-[var(--muted)]">{focusDayPlan.dayLabel}</div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    shouldScrollToAnchorRef.current = true;
-                    router.push("/timeline");
-                  }}
-                  className="inline-flex items-center gap-2 rounded-md border border-[var(--panel-border)] px-3 py-2 text-sm text-[var(--text)]"
-                >
-                  <RefreshCcw className="h-4 w-4" />
+
+              <Separator className="hidden h-8 md:block" orientation="vertical" />
+
+              <div className="text-sm text-[var(--muted)]">
+                {focusPlannedMinutes > 0
+                  ? `Planned ${formatHoursFromMinutes(focusPlannedMinutes)} · Logged ${formatHoursFromMinutes(focusActualMinutes)}`
+                  : "Outside the hardcoded plan range"}
+              </div>
+
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <TimelineOverviewSheet
+                  focusActualMinutes={focusActualMinutes}
+                  focusDayPlan={focusDayPlan}
+                  focusPlannedMinutes={focusPlannedMinutes}
+                  plannedSubjectMinutes={plannedSubjectMinutes}
+                  subjectTotals={subjectTotals}
+                />
+
+                <Separator className="hidden h-8 lg:block" orientation="vertical" />
+
+                <div className="hidden items-center gap-2 lg:flex">
+                  <span className="text-xs text-[var(--muted)]">Zoom</span>
+                  <Button
+                    onClick={() => setHourHeight((current) => clampHourHeight(current - 8))}
+                    size="icon-sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Minus />
+                    <span className="sr-only">Zoom out</span>
+                  </Button>
+                  <div className="w-32">
+                    <Slider
+                      max={MAX_HOUR_HEIGHT}
+                      min={MIN_HOUR_HEIGHT}
+                      onValueChange={handleZoomChange}
+                      step={4}
+                      value={[hourHeight]}
+                    />
+                  </div>
+                  <Button
+                    onClick={() => setHourHeight((current) => clampHourHeight(current + 8))}
+                    size="icon-sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Plus />
+                    <span className="sr-only">Zoom in</span>
+                  </Button>
+                </div>
+
+                <Button onClick={handleJumpToToday} size="sm" type="button" variant="outline">
+                  <RefreshCcw data-icon="inline-start" />
                   Jump to Today
-                </button>
-                <span className="inline-flex items-center gap-2 rounded-md border border-[var(--panel-border)] px-3 py-2 text-sm text-[var(--muted)]">
-                  <CalendarDays className="h-4 w-4" />
-                  {TIMELINE_PLAN_RANGE.start} to {TIMELINE_PLAN_RANGE.end}
-                </span>
+                </Button>
               </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
-              <div className="rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-3">
-                <div className="text-xs text-[var(--muted)]">Focus Day</div>
-                <div className="mt-1 text-lg font-semibold text-[var(--text)]">{focusDayPlan.dayLabel}</div>
-                <div className="mt-2 text-sm text-[var(--muted)]">
-                  Planned {formatHoursFromMinutes(focusPlannedMinutes)} · Actual {formatHoursFromMinutes(focusActualMinutes)}
-                </div>
-                <div className="mt-3 h-2 rounded-full bg-[var(--panel-border)]">
-                  <div
-                    className="h-full rounded-full bg-[var(--focus)]"
-                    style={{ width: `${Math.round(focusCompletionRatio * 100)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-3">
-                <div className="text-xs text-[var(--muted)]">Understanding</div>
-                <div className="mt-2 text-sm leading-6 text-[var(--text)]">
-                  {focusDayPlan.checknotes.understanding || "No hardcoded understanding target for this day."}
-                </div>
-              </div>
-
-              <div className="rounded-md border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-3">
-                <div className="text-xs text-[var(--muted)]">Done Looks Like</div>
-                <div className="mt-2 text-sm leading-6 text-[var(--text)]">
-                  {focusDayPlan.checknotes.doneLooksLike || "No hardcoded completion note for this day."}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr className="text-left text-[var(--muted)]">
-                    <th className="border-b border-[var(--panel-border)] px-3 py-2 font-medium">Subject</th>
-                    <th className="border-b border-[var(--panel-border)] px-3 py-2 font-medium">Planned</th>
-                    <th className="border-b border-[var(--panel-border)] px-3 py-2 font-medium">Actual</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {SUBJECTS.map((subject) => (
-                    <tr key={subject.id}>
-                      <td className="border-b border-[var(--panel-border)] px-3 py-2 text-[var(--text)]">
-                        {subject.name}
-                      </td>
-                      <td className="border-b border-[var(--panel-border)] px-3 py-2 text-[var(--muted)]">
-                        {formatHoursFromMinutes(plannedSubjectMinutes[subject.id])}
-                      </td>
-                      <td className="border-b border-[var(--panel-border)] px-3 py-2 text-[var(--muted)]">
-                        {formatHoursFromMinutes(Math.round(subjectTotals[subject.id] / 60))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           </header>
 
-          <div ref={scrollRef} onScroll={handleTimelineScroll} className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 overflow-y-auto"
+            onScroll={handleTimelineScroll}
+          >
             {visibleDayPlans.map((dayPlan) => (
               <DayTimelineSection
                 key={dayPlan.date}
+                currentMinute={currentMinute}
+                dayActualMinutes={Math.round((dayAggregates[dayPlan.date]?.totalSec ?? 0) / 60)}
                 dayPlan={dayPlan}
+                hourHeight={hourHeight}
                 isToday={dayPlan.date === todayDate}
-                currentMinute={new Date(nowMs).getHours() * 60 + new Date(nowMs).getMinutes()}
+                onSelectBlock={setSelectedBlockId}
                 progressByBlockId={progressByBlockId}
                 selectedBlockId={selectedBlockId}
-                onSelectBlock={setSelectedBlockId}
               />
             ))}
           </div>
         </div>
 
-        <div className="min-h-0 overflow-y-auto bg-[var(--panel)] p-4">
+        <div className="hidden min-h-0 flex-col border-l border-[var(--panel-border)] bg-[var(--panel)] lg:flex">
           <TimelineInspector
-            selectedEntry={selectedEntry}
-            progress={selectedProgress}
             editorState={editorState}
-            saving={savingBlockId === selectedEntry?.id}
-            onChangeState={handleStateChange}
             onChangeMinutes={(value) =>
               setEditorState((current) => (current ? { ...current, actualMinutes: value } : current))
             }
-            onCommitMinutes={handleMinutesCommit}
-            onChangeSubject={handleSubjectCommit}
             onChangeNote={(value) =>
               setEditorState((current) => (current ? { ...current, note: value } : current))
             }
+            onChangeState={handleStateChange}
+            onChangeSubject={handleSubjectCommit}
+            onCommitMinutes={handleMinutesCommit}
             onCommitNote={handleNoteCommit}
+            progress={selectedProgress}
+            saving={savingBlockId === selectedEntry?.id}
+            selectedEntry={selectedEntry}
           />
         </div>
       </div>
