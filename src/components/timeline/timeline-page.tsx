@@ -20,8 +20,8 @@ import {
   RefreshCcw,
   XCircle,
 } from "lucide-react";
+import { haptic, supportsHaptics } from "ios-haptics";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useWebHaptics } from "web-haptics/react";
 import { toDateKeyInTimezone } from "@/components/study-dashboard/selectors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -540,7 +540,7 @@ function TimelineInspector({
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="flex flex-col gap-4 p-4">
           {inspectorContent ? (
             <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
@@ -763,7 +763,7 @@ function TimelineInspector({
             </>
           ) : null}
         </div>
-      </ScrollArea>
+      </div>
     </aside>
   );
 }
@@ -965,7 +965,6 @@ function DayTimelineSection({
 export default function TimelinePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isSupported: hapticsSupported, trigger: triggerHaptics } = useWebHaptics();
   const requestedDateParam = searchParams.get("date");
   const requestedDate = isDateKey(requestedDateParam) ? requestedDateParam : null;
   const [sessionMode, setSessionMode] = useState<DashboardSessionMode>("full");
@@ -996,7 +995,8 @@ export default function TimelinePage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const hourHeightRef = useRef(hourHeight);
   const prependAdjustmentRef = useRef(0);
-  const handledScrollRequestRef = useRef(0);
+  const handledScrollRequestRef = useRef(-1);
+  const initialAnchorScrollRef = useRef<string | null>(null);
   const jumpToTodayPendingRef = useRef(false);
   const pinchStateRef = useRef<{ initialDistance: number; initialHourHeight: number } | null>(null);
   const isPhoneViewport = useMediaQuery("(max-width: 767px)");
@@ -1011,20 +1011,28 @@ export default function TimelinePage() {
   const daySectionHeight = DAY_HEADER_HEIGHT + hourHeight * 24;
 
   const playTapHaptic = useCallback(() => {
-    if (!hapticsSupported) {
+    if (!supportsHaptics) {
       return;
     }
 
-    void triggerHaptics([{ duration: 18, intensity: 0.35 }]);
-  }, [hapticsSupported, triggerHaptics]);
+    haptic();
+  }, []);
 
   const playConfirmHaptic = useCallback(() => {
-    if (!hapticsSupported) {
+    if (!supportsHaptics) {
       return;
     }
 
-    void triggerHaptics("success");
-  }, [hapticsSupported, triggerHaptics]);
+    haptic.confirm();
+  }, []);
+
+  const queueScrollToDate = useCallback((date: string, behavior: ScrollBehavior) => {
+    setScrollRequest((previous) => ({
+      behavior,
+      date,
+      key: previous.key + 1,
+    }));
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -1133,16 +1141,24 @@ export default function TimelinePage() {
       before: DAY_WINDOW_BEFORE,
     });
     setSelectedBlockId(null);
-    setScrollRequest((previous) => ({
-      behavior:
-        jumpToTodayPendingRef.current && anchorDate === todayDate ? "smooth" : "auto",
-      date: anchorDate,
-      key: previous.key + 1,
-    }));
+    queueScrollToDate(
+      anchorDate,
+      jumpToTodayPendingRef.current && anchorDate === todayDate ? "smooth" : "auto",
+    );
     if (anchorDate === todayDate) {
       jumpToTodayPendingRef.current = false;
     }
-  }, [anchorDate, todayDate]);
+    initialAnchorScrollRef.current = null;
+  }, [anchorDate, queueScrollToDate, todayDate]);
+
+  useEffect(() => {
+    if (loading || !data || initialAnchorScrollRef.current === anchorDate) {
+      return;
+    }
+
+    initialAnchorScrollRef.current = anchorDate;
+    queueScrollToDate(anchorDate, "auto");
+  }, [anchorDate, data, loading, queueScrollToDate]);
 
   useEffect(() => {
     if (!usesSheetInspector) {
@@ -1445,23 +1461,19 @@ export default function TimelinePage() {
 
   const handleJumpToToday = useCallback(() => {
     playTapHaptic();
+    setSelectedBlockId(null);
     setWindowState({
       after: DAY_WINDOW_AFTER,
       before: DAY_WINDOW_BEFORE,
     });
+    queueScrollToDate(todayDate, "smooth");
 
     if (requestedDate) {
       jumpToTodayPendingRef.current = true;
       router.replace("/timeline", { scroll: false });
       return;
     }
-
-    setScrollRequest((previous) => ({
-      behavior: "smooth",
-      date: todayDate,
-      key: previous.key + 1,
-    }));
-  }, [playTapHaptic, requestedDate, router, todayDate]);
+  }, [playTapHaptic, queueScrollToDate, requestedDate, router, todayDate]);
 
   const handleZoomChange = useCallback((nextValue: number | readonly number[]) => {
     const next = Array.isArray(nextValue) ? nextValue[0] : nextValue;
@@ -1776,7 +1788,7 @@ export default function TimelinePage() {
         <Sheet open={narrowInspectorOpen} onOpenChange={setNarrowInspectorOpen}>
           <SheetContent
             side="bottom"
-            className="gap-0 border-[var(--panel-border)] bg-[var(--panel)] p-0 text-[var(--text)] data-[side=bottom]:max-h-[82dvh]"
+            className="flex h-[82dvh] max-h-[82dvh] flex-col gap-0 overflow-hidden border-[var(--panel-border)] bg-[var(--panel)] p-0 text-[var(--text)] data-[side=bottom]:h-[82dvh] data-[side=bottom]:max-h-[82dvh]"
           >
             <SheetHeader className="sr-only">
               <SheetTitle>Block details</SheetTitle>
