@@ -81,45 +81,55 @@ export default function FeaturesLayout({
 }) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const isTimelineRoute = pathname === "/timeline";
+  const showMobileFrame = !isTimelineRoute;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
-      <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--panel)] px-4 md:hidden">
-        <span className="text-sm font-semibold text-[var(--text)]">Yan Study OS</span>
-        <button
-          type="button"
-          onClick={() => setMobileNavOpen(true)}
-          className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-[var(--text)]"
-          aria-label="Open navigation"
-        >
-          <Menu className="h-4 w-4" />
-        </button>
-      </div>
+      {showMobileFrame ? (
+        <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--panel)] px-4 md:hidden">
+          <span className="text-sm font-semibold text-[var(--text)]">Yan Study OS</span>
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-[var(--text)]"
+            aria-label="Open navigation"
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
 
-      {mobileNavOpen ? (
+      {showMobileFrame && mobileNavOpen ? (
         <div
           className="fixed inset-0 z-40 bg-black/60 md:hidden"
           onClick={() => setMobileNavOpen(false)}
         />
       ) : null}
 
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-[var(--panel-border)] bg-[var(--panel)] transition-transform duration-200 md:hidden ${
-          mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+      {showMobileFrame ? (
+        <aside
+          className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-[var(--panel-border)] bg-[var(--panel)] transition-transform duration-200 md:hidden ${
+            mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(false)}
+            className="absolute right-4 top-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-[var(--text)]"
+            aria-label="Close navigation"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <Sidebar pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
+        </aside>
+      ) : null}
+
+      <div
+        className={`flex ${
+          showMobileFrame ? "min-h-[calc(100vh-3.5rem)] md:min-h-screen" : "min-h-screen"
         }`}
       >
-        <button
-          type="button"
-          onClick={() => setMobileNavOpen(false)}
-          className="absolute right-4 top-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-soft)] p-2 text-[var(--text)]"
-          aria-label="Close navigation"
-        >
-          <X className="h-4 w-4" />
-        </button>
-        <Sidebar pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
-      </aside>
-
-      <div className="flex min-h-[calc(100vh-3.5rem)] md:min-h-screen">
         <aside className="hidden w-[220px] shrink-0 border-r border-[var(--panel-border)] bg-[var(--panel)] md:block">
           <div className="sticky top-0 h-screen">
             <Sidebar pathname={pathname} />

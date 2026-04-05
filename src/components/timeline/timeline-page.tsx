@@ -107,6 +107,27 @@ type EntryPalette = {
   surface: string;
 };
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    const updateMatch = () => setMatches(mediaQuery.matches);
+
+    updateMatch();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateMatch);
+      return () => mediaQuery.removeEventListener("change", updateMatch);
+    }
+
+    mediaQuery.addListener(updateMatch);
+    return () => mediaQuery.removeListener(updateMatch);
+  }, [query]);
+
+  return matches;
+}
+
 function clampHourHeight(value: number): number {
   return Math.max(MIN_HOUR_HEIGHT, Math.min(MAX_HOUR_HEIGHT, Math.round(value)));
 }
@@ -412,6 +433,7 @@ function TimelineOverviewSheet({
 }
 
 function TimelineInspector({
+  className,
   editorState,
   onChangeMinutes,
   onChangeNote,
@@ -423,6 +445,7 @@ function TimelineInspector({
   saving,
   selectedEntry,
 }: {
+  className?: string;
   editorState: TimelineEditorState | null;
   onChangeMinutes: (value: string) => void;
   onChangeNote: (value: string) => void;
@@ -436,7 +459,7 @@ function TimelineInspector({
 }) {
   if (!selectedEntry || !editorState) {
     return (
-      <aside className="flex h-full flex-col">
+      <aside className={cn("flex h-full flex-col", className)}>
         <div className="border-b border-[var(--panel-border)] px-4 py-4">
           <div className="text-sm font-medium text-[var(--text)]">Block details</div>
           <p className="mt-1 text-sm text-[var(--muted)]">
@@ -454,7 +477,7 @@ function TimelineInspector({
   ];
 
   return (
-    <aside className="flex h-full min-h-0 flex-col">
+    <aside className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="border-b border-[var(--panel-border)] px-4 py-4">
         <div className="text-sm font-medium text-[var(--text)]">Block details</div>
         <div className="mt-2 text-base font-medium text-[var(--text)]">{selectedEntry.title}</div>
@@ -576,19 +599,23 @@ function TimelineInspector({
 }
 
 function DayTimelineSection({
+  compact,
   currentMinute,
   dayActualMinutes,
   dayPlan,
   hourHeight,
+  hourLabelWidth,
   isToday,
   onSelectBlock,
   progressByBlockId,
   selectedBlockId,
 }: {
+  compact: boolean;
   currentMinute: number;
   dayActualMinutes: number;
   dayPlan: TimelineDayPlan;
   hourHeight: number;
+  hourLabelWidth: number;
   isToday: boolean;
   onSelectBlock: (blockId: string) => void;
   progressByBlockId: Map<string, TimelineBlockProgress>;
@@ -623,7 +650,7 @@ function DayTimelineSection({
       <div className="flex" style={{ height: dayGridHeight }}>
         <div
           className="shrink-0 border-r border-[var(--panel-border)] bg-[var(--panel)]"
-          style={{ width: HOUR_LABEL_WIDTH }}
+          style={{ width: hourLabelWidth }}
         >
           {Array.from({ length: 24 }, (_, hour) => (
             <div
@@ -723,7 +750,8 @@ function DayTimelineSection({
 
             const commonProps = {
               className: cn(
-                "absolute left-3 right-4 overflow-hidden rounded-lg border px-3 py-2 text-left transition-colors",
+                "absolute overflow-hidden rounded-lg border px-3 py-2 text-left transition-colors",
+                compact ? "left-2 right-2" : "left-3 right-4",
                 entry.loggable && "hover:border-white/20",
                 active && "ring-2 ring-[var(--focus)]/70",
               ),
@@ -788,6 +816,7 @@ export default function TimelinePage() {
     after: DAY_WINDOW_AFTER,
     before: DAY_WINDOW_BEFORE,
   });
+  const [narrowInspectorOpen, setNarrowInspectorOpen] = useState(false);
   const [scrollRequest, setScrollRequest] = useState<ScrollRequest>({
     behavior: "auto",
     date: getTodayDateKey(),
@@ -798,10 +827,13 @@ export default function TimelinePage() {
   const prependAdjustmentRef = useRef(0);
   const handledScrollRequestRef = useRef(0);
   const jumpToTodayPendingRef = useRef(false);
+  const isPhoneViewport = useMediaQuery("(max-width: 767px)");
+  const usesSheetInspector = useMediaQuery("(max-width: 1023px)");
 
   const todayDate = useMemo(() => getTodayDateKey(new Date(nowMs)), [nowMs]);
   const currentMinute = useMemo(() => getCurrentMinuteInTimezone(new Date(nowMs)), [nowMs]);
   const anchorDate = requestedDate || todayDate;
+  const hourLabelWidth = isPhoneViewport ? 56 : HOUR_LABEL_WIDTH;
 
   const minuteHeight = hourHeight / 60;
   const daySectionHeight = DAY_HEADER_HEIGHT + hourHeight * 24;
@@ -868,6 +900,12 @@ export default function TimelinePage() {
       jumpToTodayPendingRef.current = false;
     }
   }, [anchorDate, todayDate]);
+
+  useEffect(() => {
+    if (!usesSheetInspector) {
+      setNarrowInspectorOpen(false);
+    }
+  }, [usesSheetInspector]);
 
   const visibleDates = useMemo(
     () => buildTimelineDateWindow(anchorDate, windowState.before, windowState.after),
@@ -1119,6 +1157,16 @@ export default function TimelinePage() {
     setHourHeight(clampHourHeight(next));
   }, []);
 
+  const handleSelectBlock = useCallback(
+    (blockId: string) => {
+      setSelectedBlockId(blockId);
+      if (usesSheetInspector) {
+        setNarrowInspectorOpen(true);
+      }
+    },
+    [usesSheetInspector],
+  );
+
   if (loading || !data) {
     return (
       <div className="flex h-[100dvh] items-center justify-center bg-[var(--bg)]">
@@ -1132,21 +1180,71 @@ export default function TimelinePage() {
       <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_330px]">
         <div className="flex min-h-0 flex-col">
           <header className="border-b border-[var(--panel-border)] bg-[var(--panel)] px-4 py-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="min-w-0">
-                <div className="text-base font-semibold text-[var(--text)]">Timeline</div>
-                <div className="text-sm text-[var(--muted)]">{focusDayPlan.dayLabel}</div>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0">
+                  <div className="text-base font-semibold text-[var(--text)]">Timeline</div>
+                  <div className="text-sm text-[var(--muted)]">{focusDayPlan.dayLabel}</div>
+                </div>
+
+                <Separator className="hidden h-8 md:block" orientation="vertical" />
+
+                <div className="text-sm text-[var(--muted)]">
+                  {focusPlannedMinutes > 0
+                    ? `Planned ${formatHoursFromMinutes(focusPlannedMinutes)} · Logged ${formatHoursFromMinutes(focusActualMinutes)}`
+                    : "Outside the hardcoded plan range"}
+                </div>
+
+                <div className="ml-auto hidden items-center gap-2 lg:flex">
+                  <TimelineOverviewSheet
+                    focusActualMinutes={focusActualMinutes}
+                    focusDayPlan={focusDayPlan}
+                    focusPlannedMinutes={focusPlannedMinutes}
+                    plannedSubjectMinutes={plannedSubjectMinutes}
+                    subjectTotals={subjectTotals}
+                  />
+
+                  <Separator className="hidden h-8 lg:block" orientation="vertical" />
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[var(--muted)]">Zoom</span>
+                    <Button
+                      onClick={() => setHourHeight((current) => clampHourHeight(current - 8))}
+                      size="icon-sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Minus />
+                      <span className="sr-only">Zoom out</span>
+                    </Button>
+                    <div className="w-32">
+                      <Slider
+                        max={MAX_HOUR_HEIGHT}
+                        min={MIN_HOUR_HEIGHT}
+                        onValueChange={handleZoomChange}
+                        step={4}
+                        value={[hourHeight]}
+                      />
+                    </div>
+                    <Button
+                      onClick={() => setHourHeight((current) => clampHourHeight(current + 8))}
+                      size="icon-sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Plus />
+                      <span className="sr-only">Zoom in</span>
+                    </Button>
+                  </div>
+
+                  <Button onClick={handleJumpToToday} size="sm" type="button" variant="outline">
+                    <RefreshCcw data-icon="inline-start" />
+                    Jump to Today
+                  </Button>
+                </div>
               </div>
 
-              <Separator className="hidden h-8 md:block" orientation="vertical" />
-
-              <div className="text-sm text-[var(--muted)]">
-                {focusPlannedMinutes > 0
-                  ? `Planned ${formatHoursFromMinutes(focusPlannedMinutes)} · Logged ${formatHoursFromMinutes(focusActualMinutes)}`
-                  : "Outside the hardcoded plan range"}
-              </div>
-
-              <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 lg:hidden">
                 <TimelineOverviewSheet
                   focusActualMinutes={focusActualMinutes}
                   focusDayPlan={focusDayPlan}
@@ -1155,43 +1253,42 @@ export default function TimelinePage() {
                   subjectTotals={subjectTotals}
                 />
 
-                <Separator className="hidden h-8 lg:block" orientation="vertical" />
+                <Button
+                  disabled={!selectedEntry}
+                  onClick={() => setNarrowInspectorOpen(true)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {selectedEntry ? "Block details" : "Select a block"}
+                </Button>
 
-                <div className="hidden items-center gap-2 lg:flex">
-                  <span className="text-xs text-[var(--muted)]">Zoom</span>
+                <Button onClick={handleJumpToToday} size="sm" type="button" variant="outline">
+                  <RefreshCcw data-icon="inline-start" />
+                  Today
+                </Button>
+
+                <div className="ml-auto flex items-center gap-1 rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] p-1">
                   <Button
                     onClick={() => setHourHeight((current) => clampHourHeight(current - 8))}
                     size="icon-sm"
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                   >
                     <Minus />
                     <span className="sr-only">Zoom out</span>
                   </Button>
-                  <div className="w-32">
-                    <Slider
-                      max={MAX_HOUR_HEIGHT}
-                      min={MIN_HOUR_HEIGHT}
-                      onValueChange={handleZoomChange}
-                      step={4}
-                      value={[hourHeight]}
-                    />
-                  </div>
+                  <div className="px-2 text-xs text-[var(--muted)]">{hourHeight}px</div>
                   <Button
                     onClick={() => setHourHeight((current) => clampHourHeight(current + 8))}
                     size="icon-sm"
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                   >
                     <Plus />
                     <span className="sr-only">Zoom in</span>
                   </Button>
                 </div>
-
-                <Button onClick={handleJumpToToday} size="sm" type="button" variant="outline">
-                  <RefreshCcw data-icon="inline-start" />
-                  Jump to Today
-                </Button>
               </div>
             </div>
           </header>
@@ -1203,13 +1300,15 @@ export default function TimelinePage() {
           >
             {visibleDayPlans.map((dayPlan) => (
               <DayTimelineSection
+                compact={isPhoneViewport}
                 key={dayPlan.date}
                 currentMinute={currentMinute}
                 dayActualMinutes={Math.round((dayAggregates[dayPlan.date]?.totalSec ?? 0) / 60)}
                 dayPlan={dayPlan}
                 hourHeight={hourHeight}
+                hourLabelWidth={hourLabelWidth}
                 isToday={dayPlan.date === todayDate}
-                onSelectBlock={setSelectedBlockId}
+                onSelectBlock={handleSelectBlock}
                 progressByBlockId={progressByBlockId}
                 selectedBlockId={selectedBlockId}
               />
@@ -1236,6 +1335,37 @@ export default function TimelinePage() {
           />
         </div>
       </div>
+
+      {usesSheetInspector ? (
+        <Sheet open={narrowInspectorOpen} onOpenChange={setNarrowInspectorOpen}>
+          <SheetContent
+            side="bottom"
+            className="gap-0 border-[var(--panel-border)] bg-[var(--panel)] p-0 text-[var(--text)] data-[side=bottom]:max-h-[82dvh]"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>Block details</SheetTitle>
+              <SheetDescription>Log study time for the selected timeline block.</SheetDescription>
+            </SheetHeader>
+            <TimelineInspector
+              className="min-h-0 flex-1"
+              editorState={editorState}
+              onChangeMinutes={(value) =>
+                setEditorState((current) => (current ? { ...current, actualMinutes: value } : current))
+              }
+              onChangeNote={(value) =>
+                setEditorState((current) => (current ? { ...current, note: value } : current))
+              }
+              onChangeState={handleStateChange}
+              onChangeSubject={handleSubjectCommit}
+              onCommitMinutes={handleMinutesCommit}
+              onCommitNote={handleNoteCommit}
+              progress={selectedProgress}
+              saving={savingBlockId === selectedEntry?.id}
+              selectedEntry={selectedEntry}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </div>
   );
 }
