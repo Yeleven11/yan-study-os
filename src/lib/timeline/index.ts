@@ -8,6 +8,10 @@ import type {
   TimelineEntry,
   TimelineEntryKind,
 } from "@/lib/types";
+import {
+  TIMELINE_ENRICHMENT_ENTRIES,
+  type TimelineEnrichmentEntry,
+} from "./timeline-enrichment";
 import { RAW_TIMELINE_DAYS, type TimelineRawDay, type TimelineRawItem } from "./timeline-raw-plan";
 
 const DAY_MINUTES = 24 * 60;
@@ -66,6 +70,38 @@ const PLANNED_SUBJECT_MINUTES: Record<SubjectId, number> = {
   math_aa_hl: 69.5 * 60,
 };
 
+type TimelineInspectorCard = {
+  label: string;
+  value: string;
+};
+
+type TimelineInspectorPrompt = {
+  label: string;
+  value: string;
+};
+
+type TimelineInspectorContent = {
+  checklist: string[];
+  context: TimelineInspectorCard[];
+  originalPlan?: string;
+  prompt?: TimelineInspectorPrompt;
+  readOnlyMessage: string;
+  rewardPrompt?: string;
+  successCriteria: string[];
+  summary: string;
+  whyThisMatters?: string;
+};
+
+type TimelineEnrichmentLookupEntry = TimelineEnrichmentEntry & {
+  absoluteEndMinute: number;
+  absoluteStartMinute: number;
+  normalizedKind: TimelineEntryKind;
+  normalizedTitle: string;
+  startMinute: number;
+  endMinute: number;
+  subjectId?: SubjectId;
+};
+
 function parseHourString(value: string): number {
   const match = value.match(/([\d.]+)\s*h/i);
   if (!match) {
@@ -99,6 +135,11 @@ function addDays(dateKey: string, offset: number): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function toAbsoluteMinuteNumber(dateKey: string, minute: number): number {
+  const base = new Date(`${dateKey}T00:00:00Z`);
+  return Math.floor(base.getTime() / 60_000) + minute;
 }
 
 function slugify(value: string): string {
@@ -252,6 +293,351 @@ function buildDetail(text: string, title: string): string | undefined {
   }
 
   return undefined;
+}
+
+function ensureSentence(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function stripSubjectPrefix(text: string): string {
+  const prefixMatch = SUBJECT_PREFIXES.find(([prefix]) => text.startsWith(`${prefix}: `));
+  if (!prefixMatch) {
+    return text.trim();
+  }
+
+  return text.slice(prefixMatch[0].length + 2).trim();
+}
+
+function splitListItems(value: string): string[] {
+  const cleaned = value
+    .replace(/\s+/g, " ")
+    .replace(/\band\b/gi, ",")
+    .replace(/,\s*,/g, ",")
+    .trim();
+
+  const parts = cleaned
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length <= 1 || parts.length > 5) {
+    return [value.trim()];
+  }
+
+  return parts;
+}
+
+function expandChecklistSentence(sentence: string): string[] {
+  const trimmed = sentence.replace(/\.$/, "").trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const verbPatterns = ["focus on", "rebuild", "review", "learn", "keep open", "work on"];
+
+  for (const pattern of verbPatterns) {
+    if (trimmed.toLowerCase().startsWith(`${pattern} `)) {
+      const rest = trimmed.slice(pattern.length).trim();
+      const items = splitListItems(rest);
+      if (items.length > 1) {
+        const capitalizedPattern = pattern.charAt(0).toUpperCase() + pattern.slice(1);
+        return items.map((item) => ensureSentence(`${capitalizedPattern} ${item}`));
+      }
+    }
+  }
+
+  return [ensureSentence(trimmed.charAt(0).toUpperCase() + trimmed.slice(1))];
+}
+
+function uniqueSentences(items: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of items) {
+    const normalized = item.trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function buildStudyChecklist(entry: TimelineEntry): string[] {
+  const items: string[] = [];
+
+  items.push(ensureSentence(`Work through ${entry.title}`));
+
+  if (entry.detail) {
+    const normalized = entry.detail
+      .replace(/\bthen\b/gi, ". Then ")
+      .replace(/;/g, ". ")
+      .replace(/\bAdmin block only\b\.?/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const sentences = normalized
+      .split(/\.\s+/)
+      .map((part) => part.replace(/^Then\s+/i, "").trim())
+      .filter(Boolean);
+
+    for (const sentence of sentences) {
+      items.push(...expandChecklistSentence(sentence));
+    }
+  }
+
+  return uniqueSentences(items).slice(0, 6);
+}
+
+function buildSupportChecklist(entry: TimelineEntry): string[] {
+  if (entry.sourceText) {
+    return uniqueSentences(
+      stripSubjectPrefix(entry.sourceText)
+        .replace(/\bthen\b/gi, ". Then ")
+        .replace(/;/g, ". ")
+        .split(/\.\s+/)
+        .map((part) => part.replace(/^Then\s+/i, "").trim())
+        .filter(Boolean)
+        .map((part) => ensureSentence(part)),
+    ).slice(0, 4);
+  }
+
+  switch (entry.kind) {
+    case "sleep":
+      return [
+        "Treat this as protected recovery time.",
+        "No study logging is needed for this block.",
+      ];
+    case "meal":
+      return [
+        "Step away from the desk and eat before the next block.",
+        "No study logging is needed for this block.",
+      ];
+    case "outside":
+      return [
+        "Get outside and reset away from the study desk.",
+        "No study logging is needed for this block.",
+      ];
+    case "winddown":
+      return [
+        "Keep this block low-pressure so the next day starts clean.",
+        "No study logging is needed for this block.",
+      ];
+    case "exam":
+      return [
+        "This is a fixed exam slot in the hardcoded plan.",
+        "No study logging is needed for this block.",
+      ];
+    case "setup":
+    case "admin":
+      return [
+        "Use this time to prepare materials or reset the system.",
+        "No study logging is needed for this block.",
+      ];
+    default:
+      return ["No study logging is needed for this block."];
+  }
+}
+
+function buildSupportSummary(entry: TimelineEntry): string {
+  if (entry.sourceText) {
+    return ensureSentence(stripSubjectPrefix(entry.sourceText));
+  }
+
+  switch (entry.kind) {
+    case "sleep":
+      return "Protected sleep block to keep recovery and energy stable for the study plan.";
+    case "meal":
+      return "Planned meal break so the day keeps its rhythm instead of bleeding into the next study block.";
+    case "outside":
+      return "Planned outside block to reset your head and get away from the desk.";
+    case "winddown":
+      return "Planned wind-down block so the evening actually stays off and recovery remains protected.";
+    case "exam":
+      return "Fixed exam slot from the hardcoded plan.";
+    case "setup":
+    case "admin":
+      return "Short admin/setup block to get the system ready for the rest of the day.";
+    default:
+      return "Informational timeline block from the hardcoded plan.";
+  }
+}
+
+function normalizeTitleForMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/`/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getEnrichmentSubjectId(subject: string): SubjectId | undefined {
+  const normalized = subject.toLowerCase().trim();
+
+  if (!normalized || normalized === "none") {
+    return undefined;
+  }
+
+  if (normalized.includes("physics")) {
+    return "physics_hl";
+  }
+  if (normalized.includes("business")) {
+    return "business_sl";
+  }
+  if (normalized.includes("computer")) {
+    return "computer_science_hl";
+  }
+  if (normalized.includes("english")) {
+    return "english_lang_lit_sl";
+  }
+  if (normalized.includes("german")) {
+    return "german_lang_lit_sl";
+  }
+  if (normalized.includes("math")) {
+    return "math_aa_hl";
+  }
+
+  return undefined;
+}
+
+function normalizeEnrichmentKind(kind: TimelineEnrichmentEntry["kind"]): TimelineEntryKind {
+  if (kind === "recovery") {
+    return "winddown";
+  }
+
+  return kind;
+}
+
+function isCompatibleEnrichmentKind(
+  entryKind: TimelineEntryKind,
+  candidateKind: TimelineEntryKind,
+): boolean {
+  if (entryKind === candidateKind) {
+    return true;
+  }
+
+  if (
+    (entryKind === "outside" || entryKind === "winddown") &&
+    (candidateKind === "outside" || candidateKind === "winddown")
+  ) {
+    return true;
+  }
+
+  if (
+    (entryKind === "setup" || entryKind === "admin") &&
+    (candidateKind === "setup" || candidateKind === "admin")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function getOverlapMinutes(
+  leftStartMinute: number,
+  leftEndMinute: number,
+  rightStartMinute: number,
+  rightEndMinute: number,
+): number {
+  return Math.max(0, Math.min(leftEndMinute, rightEndMinute) - Math.max(leftStartMinute, rightStartMinute));
+}
+
+const TIMELINE_ENRICHMENT_LOOKUP: TimelineEnrichmentLookupEntry[] = TIMELINE_ENRICHMENT_ENTRIES.map(
+  (entry) => {
+    const startMinute = parseClock(entry.startTime);
+    const rawEndMinute = parseClock(entry.endTime);
+    const endMinute = rawEndMinute <= startMinute ? rawEndMinute + DAY_MINUTES : rawEndMinute;
+
+    return {
+      ...entry,
+      absoluteEndMinute: toAbsoluteMinuteNumber(entry.date, endMinute),
+      absoluteStartMinute: toAbsoluteMinuteNumber(entry.date, startMinute),
+      endMinute,
+      normalizedKind: normalizeEnrichmentKind(entry.kind),
+      normalizedTitle: normalizeTitleForMatch(entry.title),
+      startMinute,
+      subjectId: getEnrichmentSubjectId(entry.subject),
+    };
+  },
+);
+
+function findTimelineEnrichmentEntry(entry: TimelineEntry): TimelineEnrichmentLookupEntry | undefined {
+  const entryAbsoluteStartMinute = toAbsoluteMinuteNumber(entry.date, entry.startMinute);
+  const entryAbsoluteEndMinute = toAbsoluteMinuteNumber(entry.date, entry.endMinute);
+  const normalizedEntryTitle = normalizeTitleForMatch(entry.title);
+
+  let bestMatch: TimelineEnrichmentLookupEntry | undefined;
+  let bestScore = -1;
+
+  for (const candidate of TIMELINE_ENRICHMENT_LOOKUP) {
+    if (!isCompatibleEnrichmentKind(entry.kind, candidate.normalizedKind)) {
+      continue;
+    }
+
+    const overlapMinute = getOverlapMinutes(
+      entryAbsoluteStartMinute,
+      entryAbsoluteEndMinute,
+      candidate.absoluteStartMinute,
+      candidate.absoluteEndMinute,
+    );
+    const titleMatches = candidate.normalizedTitle === normalizedEntryTitle;
+    const subjectMatches = !entry.subjectId || !candidate.subjectId || candidate.subjectId === entry.subjectId;
+    const exactStartMatch =
+      candidate.date === entry.date && candidate.startMinute === entry.startMinute;
+    const exactEndMatch =
+      candidate.date === entry.date && candidate.endMinute % DAY_MINUTES === entry.endMinute;
+    const fullyCoversEntry =
+      candidate.absoluteStartMinute <= entryAbsoluteStartMinute &&
+      candidate.absoluteEndMinute >= entryAbsoluteEndMinute;
+
+    if (overlapMinute <= 0 && !fullyCoversEntry) {
+      continue;
+    }
+
+    let score = overlapMinute;
+
+    if (candidate.normalizedKind === entry.kind) {
+      score += 24;
+    }
+    if (candidate.date === entry.date) {
+      score += 20;
+    }
+    if (titleMatches) {
+      score += 48;
+    }
+    if (subjectMatches) {
+      score += 12;
+    }
+    if (exactStartMatch) {
+      score += 28;
+    }
+    if (exactEndMatch) {
+      score += 18;
+    }
+    if (fullyCoversEntry) {
+      score += 20;
+    }
+
+    if (score > bestScore) {
+      bestMatch = candidate;
+      bestScore = score;
+    }
+  }
+
+  return bestMatch;
 }
 
 function resolveRawRange(
@@ -503,9 +889,11 @@ const TIMELINE_DAY_PLAN_BY_DATE = new Map(
   TIMELINE_DAY_PLANS.map((dayPlan) => [dayPlan.date, dayPlan]),
 );
 
+const ENTRY_BY_ID = new Map<string, TimelineEntry>();
 const LOGGABLE_ENTRY_BY_ID = new Map<string, TimelineEntry>();
 for (const dayPlan of TIMELINE_DAY_PLANS) {
   for (const entry of dayPlan.entries) {
+    ENTRY_BY_ID.set(entry.id, entry);
     if (entry.loggable) {
       LOGGABLE_ENTRY_BY_ID.set(entry.id, entry);
     }
@@ -550,6 +938,78 @@ export function buildTimelineDateWindow(anchorDate: string, before: number, afte
 
 export function getLoggableTimelineEntry(blockId: string): TimelineEntry | undefined {
   return LOGGABLE_ENTRY_BY_ID.get(blockId);
+}
+
+export function getTimelineEntry(blockId: string): TimelineEntry | undefined {
+  return ENTRY_BY_ID.get(blockId);
+}
+
+export function buildTimelineInspectorContent(
+  entry: TimelineEntry,
+  dayPlan: TimelineDayPlan,
+): TimelineInspectorContent {
+  const enrichment = findTimelineEnrichmentEntry(entry);
+  const originalPlan = entry.sourceText ? stripSubjectPrefix(entry.sourceText) : undefined;
+  const successCriteria =
+    enrichment?.successCriteria.length
+      ? enrichment.successCriteria
+      : entry.loggable && dayPlan.checknotes.doneLooksLike
+        ? [ensureSentence(dayPlan.checknotes.doneLooksLike)]
+        : [];
+  const prompt = enrichment?.loggingPrompt
+    ? {
+        label: entry.loggable ? "Logging prompt" : "Check-in prompt",
+        value: enrichment.loggingPrompt,
+      }
+    : enrichment?.recoveryPrompt
+      ? {
+          label: "Recovery prompt",
+          value: enrichment.recoveryPrompt,
+        }
+      : undefined;
+
+  if (entry.loggable) {
+    return {
+      checklist: enrichment?.checklist.length ? enrichment.checklist : buildStudyChecklist(entry),
+      context: [
+        dayPlan.checknotes.understanding
+          ? {
+              label: "Understanding target",
+              value: ensureSentence(dayPlan.checknotes.understanding),
+            }
+          : null,
+        dayPlan.checknotes.doneLooksLike
+          ? {
+              label: "Done looks like",
+              value: ensureSentence(dayPlan.checknotes.doneLooksLike),
+            }
+          : null,
+      ].filter((item): item is { label: string; value: string } => Boolean(item)),
+      originalPlan,
+      prompt,
+      readOnlyMessage: "Log what you actually did here once the block is over.",
+      rewardPrompt: enrichment?.rewardPrompt,
+      successCriteria,
+      summary:
+        enrichment?.summary ||
+        originalPlan ||
+        entry.detail ||
+        ensureSentence(`Work through ${entry.title} in the exact scope of the plan`),
+      whyThisMatters: enrichment?.whyThisMatters,
+    };
+  }
+
+  return {
+    checklist: enrichment?.checklist.length ? enrichment.checklist : buildSupportChecklist(entry),
+    context: [],
+    originalPlan,
+    prompt,
+    readOnlyMessage: "This is a fixed support block in the hardcoded plan, so there is nothing to log here.",
+    rewardPrompt: enrichment?.rewardPrompt,
+    successCriteria,
+    summary: enrichment?.summary || buildSupportSummary(entry),
+    whyThisMatters: enrichment?.whyThisMatters,
+  };
 }
 
 export function resolveTimelineProgressMinutes(

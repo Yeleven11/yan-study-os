@@ -21,6 +21,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useWebHaptics } from "web-haptics/react";
 import { toDateKeyInTimezone } from "@/components/study-dashboard/selectors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,8 +52,9 @@ import { createDashboardRepository } from "@/lib/client/repository";
 import { SUBJECT_BY_ID, SUBJECTS } from "@/lib/constants";
 import { buildDayAggregates, buildSubjectTotals, formatDuration } from "@/lib/dashboard-utils";
 import {
+  buildTimelineInspectorContent,
   buildTimelineDateWindow,
-  getLoggableTimelineEntry,
+  getTimelineEntry,
   getTimelineDayOrShell,
   getTimelinePlannedDayMinutes,
   getTimelinePlannedSubjectMinutes,
@@ -110,6 +112,8 @@ type EntryPalette = {
   meta: string;
   surface: string;
 };
+
+type InspectorContent = ReturnType<typeof buildTimelineInspectorContent>;
 
 type SessionResponse = {
   authenticated: boolean;
@@ -175,6 +179,18 @@ function formatMinuteLabel(minute: number): string {
 
 function formatHoursFromMinutes(totalMinutes: number): string {
   return `${(totalMinutes / 60).toFixed(1)}h`;
+}
+
+function getTouchDistance(touches: TouchList): number {
+  if (touches.length < 2) {
+    return 0;
+  }
+
+  const first = touches[0];
+  const second = touches[1];
+  const x = second.clientX - first.clientX;
+  const y = second.clientY - first.clientY;
+  return Math.hypot(x, y);
 }
 
 function isDateKey(value: string | null): value is string {
@@ -466,6 +482,7 @@ function TimelineOverviewSheet({
 function TimelineInspector({
   className,
   editorState,
+  inspectorContent,
   onChangeMinutes,
   onChangeNote,
   onChangeState,
@@ -478,6 +495,7 @@ function TimelineInspector({
 }: {
   className?: string;
   editorState: TimelineEditorState | null;
+  inspectorContent: InspectorContent | null;
   onChangeMinutes: (value: string) => void;
   onChangeNote: (value: string) => void;
   onChangeState: (state: TimelineBlockState) => void;
@@ -488,13 +506,13 @@ function TimelineInspector({
   saving: boolean;
   selectedEntry: TimelineEntry | null;
 }) {
-  if (!selectedEntry || !editorState) {
+  if (!selectedEntry) {
     return (
       <aside className={cn("flex h-full flex-col", className)}>
         <div className="border-b border-[var(--panel-border)] px-4 py-4">
           <div className="text-sm font-medium text-[var(--text)]">Block details</div>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Select a study block in the schedule to log time or mark it complete.
+            Select any block in the schedule to inspect the plan details for that time window.
           </p>
         </div>
       </aside>
@@ -502,10 +520,12 @@ function TimelineInspector({
   }
 
   const actualMinutes = resolveTimelineProgressMinutes(selectedEntry, progress);
-  const subjectOptions = [
-    { label: "Use planned subject", value: PLANNED_SUBJECT_VALUE },
-    ...SUBJECTS.map((subject) => ({ label: subject.name, value: subject.id })),
-  ];
+  const subjectOptions = selectedEntry.loggable
+    ? [
+        { label: "Use planned subject", value: PLANNED_SUBJECT_VALUE },
+        ...SUBJECTS.map((subject) => ({ label: subject.name, value: subject.id })),
+      ]
+    : [];
 
   return (
     <aside className={cn("flex h-full min-h-0 flex-col", className)}>
@@ -516,113 +536,232 @@ function TimelineInspector({
           <span>{selectedEntry.date}</span>
           <span>{formatMinuteLabel(selectedEntry.startMinute)} - {formatMinuteLabel(selectedEntry.endMinute)}</span>
           <span>Planned {formatDuration(selectedEntry.plannedMinutes * 60)}</span>
+          <span>{selectedEntry.loggable ? "Loggable" : "Informational"}</span>
         </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
-          {selectedEntry.detail ? (
-            <p className="text-sm leading-6 text-[var(--muted)]">{selectedEntry.detail}</p>
+          {inspectorContent ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Plan focus
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--text)]">
+                {inspectorContent.summary}
+              </p>
+            </div>
           ) : null}
 
-          <div className="flex flex-col gap-2">
-            <div className="text-[11px] font-medium text-[var(--muted)]">Status</div>
-            <ToggleGroup
-              className="w-full"
-              onValueChange={(value) => {
-                const nextState = value[0] as TimelineBlockState | undefined;
-                if (nextState) {
-                  onChangeState(nextState);
-                }
-              }}
-              value={[editorState.state]}
-              variant="outline"
-            >
-              <ToggleGroupItem
-                aria-label="Pending"
-                className="flex-1 justify-center"
-                value="pending"
-              >
-                <Circle data-icon="inline-start" />
-                Pending
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                aria-label="Completed"
-                className="flex-1 justify-center"
-                value="completed"
-              >
-                <CheckSquare data-icon="inline-start" />
-                Done
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                aria-label="Incomplete"
-                className="flex-1 justify-center"
-                value="incomplete"
-              >
-                <XCircle data-icon="inline-start" />
-                Missed
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
-          <Separator />
-
-          <div className="flex flex-col gap-2">
-            <div className="text-[11px] font-medium text-[var(--muted)]">Actual minutes studied</div>
-            <Input
-              inputMode="numeric"
-              onBlur={onCommitMinutes}
-              onChange={(event) => onChangeMinutes(event.target.value)}
-              placeholder={String(selectedEntry.plannedMinutes)}
-              type="number"
-              value={editorState.actualMinutes}
-            />
-            <div className="text-xs text-[var(--muted)]">
-              Saved total: {formatDuration(actualMinutes * 60)}
+          {inspectorContent?.checklist.length ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Mini checklist
+              </div>
+              <div className="mt-3 flex flex-col gap-2">
+                {inspectorContent.checklist.map((item, index) => (
+                  <div key={`${selectedEntry.id}-check-${index}`} className="flex items-start gap-2 text-sm text-[var(--text)]">
+                    <span className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--focus)]" />
+                    <span className="leading-6">{item}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
 
-          <div className="flex flex-col gap-2">
-            <div className="text-[11px] font-medium text-[var(--muted)]">Subject</div>
-            <Select
-              items={subjectOptions}
-              onValueChange={(value) =>
-                onChangeSubject(
-                  value && value !== PLANNED_SUBJECT_VALUE ? String(value) : "",
-                )
-              }
-              value={editorState.actualSubjectId || PLANNED_SUBJECT_VALUE}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Use planned subject" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {subjectOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
+          {inspectorContent?.successCriteria.length ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Done looks like
+              </div>
+              <div className="mt-3 flex flex-col gap-2">
+                {inspectorContent.successCriteria.map((item, index) => (
+                  <div
+                    key={`${selectedEntry.id}-success-${index}`}
+                    className="flex items-start gap-2 text-sm text-[var(--text)]"
+                  >
+                    <span className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]" />
+                    <span className="leading-6">{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
-          <div className="flex flex-col gap-2">
-            <div className="text-[11px] font-medium text-[var(--muted)]">Note</div>
-            <Textarea
-              className="min-h-28"
-              onBlur={onCommitNote}
-              onChange={(event) => onChangeNote(event.target.value)}
-              placeholder="What happened in this block?"
-              value={editorState.note}
-            />
-          </div>
+          {inspectorContent?.whyThisMatters ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Why this matters
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--text)]">
+                {inspectorContent.whyThisMatters}
+              </p>
+            </div>
+          ) : null}
 
-          <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-            <Clock3 className="h-3.5 w-3.5" />
-            {saving ? "Saving progress..." : "Changes save to your account-backed timeline progress."}
-          </div>
+          {inspectorContent?.prompt ? (
+            <div className="rounded-xl border border-[var(--focus)]/25 bg-[var(--focus)]/10 px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                {inspectorContent.prompt.label}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--text)]">
+                {inspectorContent.prompt.value}
+              </p>
+            </div>
+          ) : null}
+
+          {inspectorContent?.rewardPrompt ? (
+            <div className="rounded-xl border border-[var(--success)]/20 bg-[var(--success)]/10 px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Completion line
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--text)]">
+                {inspectorContent.rewardPrompt}
+              </p>
+            </div>
+          ) : null}
+
+          {inspectorContent?.context.length ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {inspectorContent.context.map((item) => (
+                <div
+                  key={`${selectedEntry.id}-${item.label}`}
+                  className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4"
+                >
+                  <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                    {item.label}
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-[var(--text)]">{item.value}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {inspectorContent?.originalPlan ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Original plan wording
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                {inspectorContent.originalPlan}
+              </p>
+            </div>
+          ) : null}
+
+          {!selectedEntry.loggable ? (
+            <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--bg)] px-4 py-4">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+                Logging
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                {inspectorContent?.readOnlyMessage ||
+                  "This block is informational only and does not take manual progress updates."}
+              </p>
+            </div>
+          ) : null}
+
+          {selectedEntry.loggable && editorState ? (
+            <>
+              <div className="flex flex-col gap-2">
+                <div className="text-[11px] font-medium text-[var(--muted)]">Status</div>
+                <ToggleGroup
+                  className="w-full"
+                  onValueChange={(value) => {
+                    const nextState = value[0] as TimelineBlockState | undefined;
+                    if (nextState) {
+                      onChangeState(nextState);
+                    }
+                  }}
+                  value={[editorState.state]}
+                  variant="outline"
+                >
+                  <ToggleGroupItem
+                    aria-label="Pending"
+                    className="flex-1 justify-center"
+                    value="pending"
+                  >
+                    <Circle data-icon="inline-start" />
+                    Pending
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    aria-label="Completed"
+                    className="flex-1 justify-center"
+                    value="completed"
+                  >
+                    <CheckSquare data-icon="inline-start" />
+                    Done
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    aria-label="Incomplete"
+                    className="flex-1 justify-center"
+                    value="incomplete"
+                  >
+                    <XCircle data-icon="inline-start" />
+                    Missed
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+
+              <Separator />
+
+              <div className="flex flex-col gap-2">
+                <div className="text-[11px] font-medium text-[var(--muted)]">Actual minutes studied</div>
+                <Input
+                  inputMode="numeric"
+                  onBlur={onCommitMinutes}
+                  onChange={(event) => onChangeMinutes(event.target.value)}
+                  placeholder={String(selectedEntry.plannedMinutes)}
+                  type="number"
+                  value={editorState.actualMinutes}
+                />
+                <div className="text-xs text-[var(--muted)]">
+                  Saved total: {formatDuration(actualMinutes * 60)}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="text-[11px] font-medium text-[var(--muted)]">Subject</div>
+                <Select
+                  items={subjectOptions}
+                  onValueChange={(value) =>
+                    onChangeSubject(
+                      value && value !== PLANNED_SUBJECT_VALUE ? String(value) : "",
+                    )
+                  }
+                  value={editorState.actualSubjectId || PLANNED_SUBJECT_VALUE}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Use planned subject" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {subjectOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="text-[11px] font-medium text-[var(--muted)]">Note / reflection</div>
+                <Textarea
+                  className="min-h-28"
+                  onBlur={onCommitNote}
+                  onChange={(event) => onChangeNote(event.target.value)}
+                  placeholder={inspectorContent?.prompt?.value || "What happened in this block?"}
+                  value={editorState.note}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <Clock3 className="h-3.5 w-3.5" />
+                {saving ? "Saving progress..." : "Changes save to your account-backed timeline progress."}
+              </div>
+            </>
+          ) : null}
         </div>
       </ScrollArea>
     </aside>
@@ -781,9 +920,9 @@ function DayTimelineSection({
 
             const commonProps = {
               className: cn(
-                "absolute overflow-hidden rounded-lg border px-3 py-2 text-left transition-colors",
+                "absolute overflow-hidden rounded-lg border px-3 py-2 text-left transition-[transform,border-color,background-color] duration-100 active:scale-[0.985]",
                 compact ? "left-2 right-2" : "left-3 right-4",
-                entry.loggable && "hover:border-white/20",
+                "cursor-pointer hover:border-white/20",
                 active && "ring-2 ring-[var(--focus)]/70",
               ),
               style: {
@@ -794,14 +933,6 @@ function DayTimelineSection({
                 top,
               },
             };
-
-            if (!entry.loggable) {
-              return (
-                <div key={entry.id} {...commonProps}>
-                  {content}
-                </div>
-              );
-            }
 
             return (
               <button
@@ -834,6 +965,7 @@ function DayTimelineSection({
 export default function TimelinePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { isSupported: hapticsSupported, trigger: triggerHaptics } = useWebHaptics();
   const requestedDateParam = searchParams.get("date");
   const requestedDate = isDateKey(requestedDateParam) ? requestedDateParam : null;
   const [sessionMode, setSessionMode] = useState<DashboardSessionMode>("full");
@@ -862,9 +994,11 @@ export default function TimelinePage() {
     key: 0,
   });
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const hourHeightRef = useRef(hourHeight);
   const prependAdjustmentRef = useRef(0);
   const handledScrollRequestRef = useRef(0);
   const jumpToTodayPendingRef = useRef(false);
+  const pinchStateRef = useRef<{ initialDistance: number; initialHourHeight: number } | null>(null);
   const isPhoneViewport = useMediaQuery("(max-width: 767px)");
   const usesSheetInspector = useMediaQuery("(max-width: 1023px)");
 
@@ -876,10 +1010,30 @@ export default function TimelinePage() {
   const minuteHeight = hourHeight / 60;
   const daySectionHeight = DAY_HEADER_HEIGHT + hourHeight * 24;
 
+  const playTapHaptic = useCallback(() => {
+    if (!hapticsSupported) {
+      return;
+    }
+
+    void triggerHaptics([{ duration: 18, intensity: 0.35 }]);
+  }, [hapticsSupported, triggerHaptics]);
+
+  const playConfirmHaptic = useCallback(() => {
+    if (!hapticsSupported) {
+      return;
+    }
+
+    void triggerHaptics("success");
+  }, [hapticsSupported, triggerHaptics]);
+
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    hourHeightRef.current = hourHeight;
+  }, [hourHeight]);
 
   useEffect(() => {
     let isMounted = true;
@@ -996,6 +1150,63 @@ export default function TimelinePage() {
     }
   }, [usesSheetInspector]);
 
+  useEffect(() => {
+    if (!isPhoneViewport || !scrollRef.current) {
+      return;
+    }
+
+    const element = scrollRef.current;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) {
+        return;
+      }
+
+      pinchStateRef.current = {
+        initialDistance: getTouchDistance(event.touches),
+        initialHourHeight: hourHeightRef.current,
+      };
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!pinchStateRef.current || event.touches.length !== 2) {
+        return;
+      }
+
+      const distance = getTouchDistance(event.touches);
+      if (distance <= 0 || pinchStateRef.current.initialDistance <= 0) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const scale = distance / pinchStateRef.current.initialDistance;
+      const nextHourHeight = clampHourHeight(
+        pinchStateRef.current.initialHourHeight * scale,
+      );
+
+      if (nextHourHeight !== hourHeightRef.current) {
+        setHourHeight(nextHourHeight);
+      }
+    };
+
+    const handleTouchEnd = () => {
+      pinchStateRef.current = null;
+    };
+
+    element.addEventListener("touchstart", handleTouchStart, { passive: true });
+    element.addEventListener("touchmove", handleTouchMove, { passive: false });
+    element.addEventListener("touchend", handleTouchEnd);
+    element.addEventListener("touchcancel", handleTouchEnd);
+
+    return () => {
+      element.removeEventListener("touchstart", handleTouchStart);
+      element.removeEventListener("touchmove", handleTouchMove);
+      element.removeEventListener("touchend", handleTouchEnd);
+      element.removeEventListener("touchcancel", handleTouchEnd);
+    };
+  }, [isPhoneViewport]);
+
   const visibleDates = useMemo(
     () => buildTimelineDateWindow(anchorDate, windowState.before, windowState.after),
     [anchorDate, windowState.after, windowState.before],
@@ -1035,8 +1246,17 @@ export default function TimelinePage() {
     : 0;
   const focusPlannedMinutes = plannedDayMinutes[anchorDate] || 0;
 
-  const selectedEntry = selectedBlockId ? getLoggableTimelineEntry(selectedBlockId) || null : null;
-  const selectedProgress = selectedBlockId ? progressByBlockId.get(selectedBlockId) : undefined;
+  const selectedEntry = selectedBlockId ? getTimelineEntry(selectedBlockId) || null : null;
+  const selectedProgress =
+    selectedEntry?.loggable && selectedBlockId ? progressByBlockId.get(selectedBlockId) : undefined;
+  const selectedDayPlan = useMemo(
+    () => (selectedEntry ? getTimelineDayOrShell(selectedEntry.date) : null),
+    [selectedEntry],
+  );
+  const inspectorContent = useMemo(
+    () => (selectedEntry && selectedDayPlan ? buildTimelineInspectorContent(selectedEntry, selectedDayPlan) : null),
+    [selectedDayPlan, selectedEntry],
+  );
 
   useEffect(() => {
     if (selectedEntry) {
@@ -1052,7 +1272,7 @@ export default function TimelinePage() {
   }, [focusDayPlan.entries, selectedEntry, visibleDayPlans]);
 
   useEffect(() => {
-    if (!selectedEntry) {
+    if (!selectedEntry || !selectedEntry.loggable) {
       setEditorState(null);
       return;
     }
@@ -1156,9 +1376,14 @@ export default function TimelinePage() {
       };
 
       setEditorState(nextEditorState);
+      if (nextState === "completed") {
+        playConfirmHaptic();
+      } else {
+        playTapHaptic();
+      }
       void commitProgress(serializeEditorState(selectedEntry, nextEditorState));
     },
-    [commitProgress, editorState, selectedEntry],
+    [commitProgress, editorState, playConfirmHaptic, playTapHaptic, selectedEntry],
   );
 
   const handleMinutesCommit = useCallback(() => {
@@ -1219,6 +1444,7 @@ export default function TimelinePage() {
   );
 
   const handleJumpToToday = useCallback(() => {
+    playTapHaptic();
     setWindowState({
       after: DAY_WINDOW_AFTER,
       before: DAY_WINDOW_BEFORE,
@@ -1235,7 +1461,7 @@ export default function TimelinePage() {
       date: todayDate,
       key: previous.key + 1,
     }));
-  }, [requestedDate, router, todayDate]);
+  }, [playTapHaptic, requestedDate, router, todayDate]);
 
   const handleZoomChange = useCallback((nextValue: number | readonly number[]) => {
     const next = Array.isArray(nextValue) ? nextValue[0] : nextValue;
@@ -1290,12 +1516,13 @@ export default function TimelinePage() {
 
   const handleSelectBlock = useCallback(
     (blockId: string) => {
+      playTapHaptic();
       setSelectedBlockId(blockId);
       if (usesSheetInspector) {
         setNarrowInspectorOpen(true);
       }
     },
-    [usesSheetInspector],
+    [playTapHaptic, usesSheetInspector],
   );
 
   if (authStatus === "checking") {
@@ -1399,7 +1626,10 @@ export default function TimelinePage() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-[var(--muted)]">Zoom</span>
                     <Button
-                      onClick={() => setHourHeight((current) => clampHourHeight(current - 8))}
+                      onClick={() => {
+                        playTapHaptic();
+                        setHourHeight((current) => clampHourHeight(current - 8));
+                      }}
                       size="icon-sm"
                       type="button"
                       variant="outline"
@@ -1417,7 +1647,10 @@ export default function TimelinePage() {
                       />
                     </div>
                     <Button
-                      onClick={() => setHourHeight((current) => clampHourHeight(current + 8))}
+                      onClick={() => {
+                        playTapHaptic();
+                        setHourHeight((current) => clampHourHeight(current + 8));
+                      }}
                       size="icon-sm"
                       type="button"
                       variant="outline"
@@ -1445,7 +1678,10 @@ export default function TimelinePage() {
 
                 <Button
                   disabled={!selectedEntry}
-                  onClick={() => setNarrowInspectorOpen(true)}
+                  onClick={() => {
+                    playTapHaptic();
+                    setNarrowInspectorOpen(true);
+                  }}
                   size="sm"
                   type="button"
                   variant="outline"
@@ -1460,7 +1696,10 @@ export default function TimelinePage() {
 
                 <div className="ml-auto flex items-center gap-1 rounded-lg border border-[var(--panel-border)] bg-[var(--bg)] p-1">
                   <Button
-                    onClick={() => setHourHeight((current) => clampHourHeight(current - 8))}
+                    onClick={() => {
+                      playTapHaptic();
+                      setHourHeight((current) => clampHourHeight(current - 8));
+                    }}
                     size="icon-sm"
                     type="button"
                     variant="ghost"
@@ -1470,7 +1709,10 @@ export default function TimelinePage() {
                   </Button>
                   <div className="px-2 text-xs text-[var(--muted)]">{hourHeight}px</div>
                   <Button
-                    onClick={() => setHourHeight((current) => clampHourHeight(current + 8))}
+                    onClick={() => {
+                      playTapHaptic();
+                      setHourHeight((current) => clampHourHeight(current + 8));
+                    }}
                     size="icon-sm"
                     type="button"
                     variant="ghost"
@@ -1479,6 +1721,8 @@ export default function TimelinePage() {
                     <span className="sr-only">Zoom in</span>
                   </Button>
                 </div>
+
+                <div className="text-[11px] text-[var(--muted)]">Pinch to zoom</div>
               </div>
             </div>
           </header>
@@ -1487,6 +1731,7 @@ export default function TimelinePage() {
             ref={scrollRef}
             className="min-h-0 flex-1 overflow-y-auto"
             onScroll={handleTimelineScroll}
+            style={{ touchAction: isPhoneViewport ? "pan-y" : undefined }}
           >
             {visibleDayPlans.map((dayPlan) => (
               <DayTimelineSection
@@ -1509,6 +1754,7 @@ export default function TimelinePage() {
         <div className="hidden min-h-0 flex-col border-l border-[var(--panel-border)] bg-[var(--panel)] lg:flex">
           <TimelineInspector
             editorState={editorState}
+            inspectorContent={inspectorContent}
             onChangeMinutes={(value) =>
               setEditorState((current) => (current ? { ...current, actualMinutes: value } : current))
             }
@@ -1534,11 +1780,12 @@ export default function TimelinePage() {
           >
             <SheetHeader className="sr-only">
               <SheetTitle>Block details</SheetTitle>
-              <SheetDescription>Log study time for the selected timeline block.</SheetDescription>
+              <SheetDescription>Inspect or log the selected timeline block.</SheetDescription>
             </SheetHeader>
             <TimelineInspector
               className="min-h-0 flex-1"
               editorState={editorState}
+              inspectorContent={inspectorContent}
               onChangeMinutes={(value) =>
                 setEditorState((current) => (current ? { ...current, actualMinutes: value } : current))
               }

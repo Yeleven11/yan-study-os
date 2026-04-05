@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildTimelineInspectorContent,
   buildTimelineSyntheticStudySessions,
+  getTimelineEntry,
   getTimelinePlannedDayMinutes,
   getTimelinePlannedSubjectMinutes,
   TIMELINE_DAY_PLANS,
@@ -83,4 +85,57 @@ test("completed timeline blocks auto-fill planned minutes into synthetic study s
   assert.equal(partial.length, 1);
   assert.equal(partial[0]?.subjectId, "math_aa_hl");
   assert.equal(partial[0]?.durationSec, 32 * 60);
+});
+
+test("timeline inspector content uses enrichment note details for study blocks", () => {
+  const dayPlan = TIMELINE_DAY_PLANS.find((day) => day.date === "2026-04-06");
+  assert.ok(dayPlan);
+
+  const entry = dayPlan.entries.find((candidate) => candidate.loggable);
+  assert.ok(entry);
+
+  const inspector = buildTimelineInspectorContent(entry, dayPlan);
+
+  assert.match(inspector.summary, /A\.1 Kinematics/i);
+  assert.ok(
+    inspector.checklist.some((item) => /`6-8` short motion-graph questions/i.test(item)),
+  );
+  assert.ok(
+    inspector.successCriteria.some((item) =>
+      /The exact workload named in the block is completed/i.test(item),
+    ),
+  );
+  assert.match(inspector.whyThisMatters || "", /every solid block here buys you marks fast/i);
+  assert.equal(inspector.prompt?.label, "Logging prompt");
+  assert.match(inspector.prompt?.value || "", /still costs you the most time or marks/i);
+  assert.match(inspector.rewardPrompt || "", /little less chaotic now/i);
+  assert.equal(inspector.context.length, 2);
+});
+
+test("non-loggable support blocks can still be retrieved for the inspector", () => {
+  const sleepBlock = TIMELINE_DAY_PLANS[0]?.entries.find((entry) => entry.kind === "sleep");
+  assert.ok(sleepBlock);
+
+  const selected = getTimelineEntry(sleepBlock.id);
+  assert.equal(selected?.id, sleepBlock.id);
+  assert.equal(selected?.loggable, false);
+});
+
+test("split overnight sleep blocks inherit enrichment from the previous night", () => {
+  const dayPlan = TIMELINE_DAY_PLANS.find((day) => day.date === "2026-04-07");
+  assert.ok(dayPlan);
+
+  const sleepBlock = dayPlan.entries.find(
+    (entry) => entry.kind === "sleep" && entry.startMinute === 0 && entry.endMinute === 480,
+  );
+  assert.ok(sleepBlock);
+
+  const inspector = buildTimelineInspectorContent(sleepBlock, dayPlan);
+
+  assert.match(inspector.summary, /sleep becomes optional/i);
+  assert.ok(
+    inspector.successCriteria.some((item) => /You gave yourself a real night/i.test(item)),
+  );
+  assert.equal(inspector.prompt?.label, "Recovery prompt");
+  assert.match(inspector.prompt?.value || "", /fair chance tonight/i);
 });
