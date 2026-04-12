@@ -27,8 +27,12 @@ export async function GET(request: NextRequest) {
   }
 
   const store = getDashboardStore();
-  const data = await store.getData();
-  return NextResponse.json({ data: data.studySessions });
+  const url = new URL(request.url);
+  const cursor = url.searchParams.get("cursor") || undefined;
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
+  const page = await store.listStudySessions({ cursor, limit });
+  return NextResponse.json({ data: page.items, page: { nextCursor: page.nextCursor } });
 }
 
 export async function POST(request: NextRequest) {
